@@ -4,6 +4,7 @@ package otter.v1;
 option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
 option java_package = "app.ottermsg.proto.v1";
 option java_multiple_files = true;
+option java_outer_classname = "PrekeysProto";
 
 message SignedPreKey {
   uint32 id = 1;

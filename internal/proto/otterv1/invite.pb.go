@@ -127,8 +127,8 @@ const file_otter_v1_invite_proto_rawDesc = "" +
 	"\x0finviter_user_id\x18\x04 \x01(\fR\rinviterUserId\x12.\n" +
 	"\x13inviter_account_pub\x18\x05 \x01(\fR\x11inviterAccountPub\x120\n" +
 	"\x14inviter_identity_pub\x18\x06 \x01(\fR\x12inviterIdentityPub\x12!\n" +
-	"\finviter_name\x18\a \x01(\tR\vinviterNameBI\n" +
-	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
+	"\finviter_name\x18\a \x01(\tR\vinviterNameBV\n" +
+	"\x15app.ottermsg.proto.v1B\vInviteProtoP\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
 	file_otter_v1_invite_proto_rawDescOnce sync.Once

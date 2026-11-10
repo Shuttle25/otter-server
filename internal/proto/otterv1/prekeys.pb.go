@@ -339,8 +339,8 @@ const file_otter_v1_prekeys_proto_rawDesc = "" +
 	"\fidentity_pub\x18\x04 \x01(\fR\videntityPub\x12;\n" +
 	"\rsigned_prekey\x18\x05 \x01(\v2\x16.otter.v1.SignedPreKeyR\fsignedPrekey\x129\n" +
 	"\fkyber_prekey\x18\x06 \x01(\v2\x16.otter.v1.SignedPreKeyR\vkyberPrekey\x122\n" +
-	"\bone_time\x18\a \x01(\v2\x17.otter.v1.OneTimePreKeyR\aoneTimeBI\n" +
-	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
+	"\bone_time\x18\a \x01(\v2\x17.otter.v1.OneTimePreKeyR\aoneTimeBW\n" +
+	"\x15app.ottermsg.proto.v1B\fPrekeysProtoP\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
 	file_otter_v1_prekeys_proto_rawDescOnce sync.Once

@@ -1,0 +1,25 @@
+// Package service implements node business logic independent of transports.
+package service
+
+import (
+	"errors"
+	"fmt"
+
+	"ottermsg/server/internal/records"
+)
+
+var (
+	ErrInvalid      = errors.New("invalid")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	ErrUnauthorized = errors.New("unauthorized")
+	ErrRevoked      = errors.New("revoked")
+)
+
+// invalid maps validator errors to service errors.
+func invalid(err error) error {
+	if errors.Is(err, records.ErrRevoked) {
+		return fmt.Errorf("%w: %v", ErrRevoked, err)
+	}
+	return fmt.Errorf("%w: %v", ErrInvalid, err)
+}

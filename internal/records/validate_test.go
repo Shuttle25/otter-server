@@ -51,7 +51,7 @@ func TestValidate(t *testing.T) {
 	}
 	newPub, newPriv, _ := ed25519.GenerateKey(nil)
 	manifest := &pb.Manifest{Version: 1, NetworkPub: netPub}
-	ack := payload(&pb.Ack{EnvelopeIds: [][]byte{rid()}})
+	ack := payload(&pb.Ack{EnvelopeIds: [][]byte{make([]byte, 32)}, DeviceId: 1})
 
 	cases := []struct {
 		name string
@@ -119,6 +119,157 @@ func TestValidate(t *testing.T) {
 			r.Signature = r.Signature[:10]
 			return r
 		}, ErrMalformed},
+		{"network invite ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE, Author: netID,
+				Payload: payload(&pb.Invite{InviteId: make([]byte, 32), ExpiresMs: now.UnixMilli() + 1000})}, netPriv)
+		}, nil},
+		{"user invite ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE, Author: userID,
+				Payload: payload(&pb.Invite{InviteId: make([]byte, 32), ExpiresMs: now.UnixMilli() + 1000})}, userPriv)
+		}, nil},
+		{"invite short id", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE, Author: userID,
+				Payload: payload(&pb.Invite{InviteId: make([]byte, 31), ExpiresMs: 1})}, userPriv)
+		}, ErrBadPayload},
+		{"invite no expiry", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE, Author: userID,
+				Payload: payload(&pb.Invite{InviteId: make([]byte, 32)})}, userPriv)
+		}, ErrBadPayload},
+		{"invite_used ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_USED, Author: userID,
+				Payload: payload(&pb.InviteUsed{InviteId: make([]byte, 32), UserId: userID})}, userPriv)
+		}, nil},
+		{"invite_used short id", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_USED, Author: userID,
+				Payload: payload(&pb.InviteUsed{InviteId: make([]byte, 16), UserId: userID})}, userPriv)
+		}, ErrBadPayload},
+		{"invite_used for someone else", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_USED, Author: userID,
+				Payload: payload(&pb.InviteUsed{InviteId: make([]byte, 32), UserId: revID})}, userPriv)
+		}, ErrBadPayload},
+		{"envelope ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)
+		}, nil},
+		{"envelope shared content ok", func() *pb.Record {
+			e := envelope(userID, 1, pb.Envelope_SENDER_KEY, []*pb.Recipient{{User: revID, Device: 1}})
+			e.SharedContent = []byte{1}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
+		}, nil},
+		{"envelope spoofed sender", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(revID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope sender device 2", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 2, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope unspecified kind", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_KIND_UNSPECIFIED, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope no recipients", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, nil))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope too many recipients", func() *pb.Record {
+			rs := make([]*pb.Recipient, MaxRecipients+1)
+			for i := range rs {
+				rs[i] = &pb.Recipient{User: revID, Device: 1, Content: []byte{1}}
+			}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, rs))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope recipient short user", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID[:15], Device: 1, Content: []byte{1}}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope recipient device 0", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 0, Content: []byte{1}}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope empty content", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1}}))}, userPriv)
+		}, ErrBadPayload},
+		{"envelope content too large", func() *pb.Record {
+			half := MaxEnvelopeContent/2 + 1
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{
+					{User: revID, Device: 1, Content: make([]byte, half)}, {User: userID, Device: 1, Content: make([]byte, half)}}))}, userPriv)
+		}, ErrBadPayload},
+		{"ack bad id length", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ACK, Author: userID,
+				Payload: payload(&pb.Ack{EnvelopeIds: [][]byte{make([]byte, 16)}, DeviceId: 1})}, userPriv)
+		}, ErrBadPayload},
+		{"ack empty", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ACK, Author: userID,
+				Payload: payload(&pb.Ack{DeviceId: 1})}, userPriv)
+		}, ErrBadPayload},
+		{"ack too many ids", func() *pb.Record {
+			ids := make([][]byte, MaxAckIDs+1)
+			for i := range ids {
+				ids[i] = make([]byte, 32)
+			}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ACK, Author: userID,
+				Payload: payload(&pb.Ack{EnvelopeIds: ids, DeviceId: 1})}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID,
+				Payload: payload(validPrekeys())}, userPriv)
+		}, nil},
+		{"prekeys one-time only ok", func() *pb.Record {
+			p := validPrekeys()
+			p.SignedPrekey, p.KyberPrekey = nil, nil
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, nil},
+		{"prekeys bad device", func() *pb.Record {
+			p := validPrekeys()
+			p.DeviceId = 2
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys no registration id", func() *pb.Record {
+			p := validPrekeys()
+			p.RegistrationId = 0
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys bad signed key", func() *pb.Record {
+			p := validPrekeys()
+			p.SignedPrekey.PublicKey = make([]byte, 32)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys bad signed sig", func() *pb.Record {
+			p := validPrekeys()
+			p.SignedPrekey.Signature = make([]byte, 63)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys kyber too small", func() *pb.Record {
+			p := validPrekeys()
+			p.KyberPrekey.PublicKey = make([]byte, 999)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys kyber too large", func() *pb.Record {
+			p := validPrekeys()
+			p.KyberPrekey.PublicKey = make([]byte, 2001)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys too many one-time", func() *pb.Record {
+			p := validPrekeys()
+			for len(p.OneTime) <= MaxOneTimePrekeys {
+				p.OneTime = append(p.OneTime, &pb.OneTimePreKey{Id: uint32(len(p.OneTime) + 1), PublicKey: make([]byte, 33), OwnerNode: make([]byte, 16)})
+			}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys bad one-time pub", func() *pb.Record {
+			p := validPrekeys()
+			p.OneTime[0].PublicKey = make([]byte, 32)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
+		{"prekeys bad one-time owner", func() *pb.Record {
+			p := validPrekeys()
+			p.OneTime[0].OwnerNode = nil
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEYS, Author: userID, Payload: payload(p)}, userPriv)
+		}, ErrBadPayload},
 		{"tampered body", func() *pb.Record {
 			r := mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ACK, Author: userID, Payload: ack}, userPriv)
 			r.Body[len(r.Body)-1] ^= 1
@@ -136,4 +287,15 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func validPrekeys() *pb.PreKeys {
+	return &pb.PreKeys{DeviceId: 1, RegistrationId: 7,
+		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
+		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)},
+		OneTime:      []*pb.OneTimePreKey{{Id: 1, PublicKey: make([]byte, 33), OwnerNode: make([]byte, 16)}}}
+}
+
+func envelope(sender []byte, device uint32, kind pb.Envelope_Kind, rs []*pb.Recipient) *pb.Envelope {
+	return &pb.Envelope{SenderUser: sender, SenderDevice: device, Kind: kind, Recipients: rs}
 }

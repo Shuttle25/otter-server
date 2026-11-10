@@ -79,3 +79,13 @@ func TestPlainKeyFile(t *testing.T) {
 		t.Fatalf("roundtrip: %v", err)
 	}
 }
+
+func TestAuthMessage(t *testing.T) {
+	m := AuthMessage(bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{2}, 32), 0x0102030405060708)
+	want := append([]byte("otter-auth-v1"), bytes.Repeat([]byte{1}, 16)...)
+	want = append(want, bytes.Repeat([]byte{2}, 32)...)
+	want = append(want, 1, 2, 3, 4, 5, 6, 7, 8)
+	if !bytes.Equal(m, want) {
+		t.Fatalf("got %x", m)
+	}
+}

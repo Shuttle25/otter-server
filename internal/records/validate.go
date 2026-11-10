@@ -14,7 +14,13 @@ import (
 	pb "ottermsg/server/internal/proto/otterv1"
 )
 
-const MaxBodySize = 300 * 1024
+const (
+	MaxBodySize        = 300 * 1024
+	MaxRecipients      = 100
+	MaxEnvelopeContent = 256 * 1024
+	MaxAckIDs          = 1000
+	MaxOneTimePrekeys  = 200
+)
 
 var (
 	ErrMalformed     = errors.New("malformed record")
@@ -88,6 +94,8 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 			return nil, ErrBadAuthor
 		}
 		return v.NetworkPub, nil
+	case b.Type == pb.RecordType_INVITE && bytes.Equal(b.Author, keys.ID16(v.NetworkPub)):
+		return v.NetworkPub, nil // bootstrap invite for the first member
 	case b.Type == pb.RecordType_DIRECTORY_ENTRY:
 		var e pb.DirectoryEntry
 		if err := proto.Unmarshal(b.Payload, &e); err != nil || len(e.AccountPub) != ed25519.PublicKeySize {
@@ -134,7 +142,69 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		}
 	case pb.RecordType_ACK:
 		var a pb.Ack
-		if err := proto.Unmarshal(b.Payload, &a); err != nil || len(a.EnvelopeIds) == 0 {
+		if err := proto.Unmarshal(b.Payload, &a); err != nil || len(a.EnvelopeIds) == 0 || len(a.EnvelopeIds) > MaxAckIDs {
+			return ErrBadPayload
+		}
+		for _, id := range a.EnvelopeIds {
+			if len(id) != 32 {
+				return ErrBadPayload
+			}
+		}
+	case pb.RecordType_INVITE:
+		var i pb.Invite
+		if err := proto.Unmarshal(b.Payload, &i); err != nil || len(i.InviteId) != 32 || i.ExpiresMs <= 0 {
+			return ErrBadPayload
+		}
+	case pb.RecordType_INVITE_USED:
+		var u pb.InviteUsed
+		if err := proto.Unmarshal(b.Payload, &u); err != nil || len(u.InviteId) != 32 || !bytes.Equal(u.UserId, b.Author) {
+			return ErrBadPayload
+		}
+	case pb.RecordType_ENVELOPE:
+		return checkEnvelope(b)
+	case pb.RecordType_PREKEYS:
+		return checkPrekeys(b)
+	}
+	return nil
+}
+
+func checkEnvelope(b *pb.RecordBody) error {
+	var e pb.Envelope
+	if err := proto.Unmarshal(b.Payload, &e); err != nil {
+		return ErrBadPayload
+	}
+	if !bytes.Equal(e.SenderUser, b.Author) || e.SenderDevice != 1 || e.Kind == pb.Envelope_KIND_UNSPECIFIED ||
+		len(e.Recipients) == 0 || len(e.Recipients) > MaxRecipients {
+		return ErrBadPayload
+	}
+	total := len(e.SharedContent)
+	for _, r := range e.Recipients {
+		if len(r.User) != 16 || r.Device == 0 || (len(r.Content) == 0 && len(e.SharedContent) == 0) {
+			return ErrBadPayload
+		}
+		total += len(r.Content)
+	}
+	if total > MaxEnvelopeContent {
+		return ErrBadPayload
+	}
+	return nil
+}
+
+func checkSigned(k *pb.SignedPreKey, minPub, maxPub int) bool {
+	return k == nil || (len(k.PublicKey) >= minPub && len(k.PublicKey) <= maxPub && len(k.Signature) == 64)
+}
+
+func checkPrekeys(b *pb.RecordBody) error {
+	var p pb.PreKeys
+	if err := proto.Unmarshal(b.Payload, &p); err != nil {
+		return ErrBadPayload
+	}
+	if p.DeviceId != 1 || p.RegistrationId == 0 || !checkSigned(p.SignedPrekey, 33, 33) ||
+		!checkSigned(p.KyberPrekey, 1000, 2000) || len(p.OneTime) > MaxOneTimePrekeys {
+		return ErrBadPayload
+	}
+	for _, k := range p.OneTime {
+		if len(k.PublicKey) != 33 || len(k.OwnerNode) != 16 {
 			return ErrBadPayload
 		}
 	}

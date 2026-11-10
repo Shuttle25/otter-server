@@ -130,6 +130,7 @@ type NodeSpec struct {
 	WSSPath string
 	CDN     bool
 	Push    bool
+	Plain   bool // development only: unencrypted ws:// endpoint
 }
 
 func AddNode(dir string, s NodeSpec) (*pb.NodeInfo, error) {
@@ -165,8 +166,12 @@ func AddNode(dir string, s NodeSpec) (*pb.NodeInfo, error) {
 	if err := keys.WritePlainKey(filepath.Join(nodeDir, "node.key"), priv); err != nil {
 		return nil, err
 	}
+	kind := pb.Endpoint_WSS
+	if s.Plain {
+		kind = pb.Endpoint_WS_PLAIN
+	}
 	n := &pb.NodeInfo{NodeId: keys.ID16(pub), NodePub: pub, Label: s.Label, PushCapable: s.Push,
-		Endpoints: []*pb.Endpoint{{Kind: pb.Endpoint_WSS, Host: s.WSSHost, Port: s.WSSPort, Path: s.WSSPath, ViaCdn: s.CDN}}}
+		Endpoints: []*pb.Endpoint{{Kind: kind, Host: s.WSSHost, Port: s.WSSPort, Path: s.WSSPath, ViaCdn: s.CDN}}}
 	return n, saveNodes(dir, append(st.Nodes, n))
 }
 

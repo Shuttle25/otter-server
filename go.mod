@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/coder/websocket v1.8.15
+	github.com/mdp/qrterminal/v3 v3.2.1
 	golang.org/x/term v0.48.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
@@ -19,6 +20,7 @@ require (
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+	rsc.io/qr v0.2.0 // indirect
 )
 
 require (

@@ -14,6 +14,7 @@ func TestCLIFlow(t *testing.T) {
 		{"--dir", dir, "node", "add", "--label", "fi-1", "--wss-host", "chat.example.org"},
 		{"--dir", dir, "manifest", "sign"},
 		{"--dir", dir, "manifest", "show"},
+		{"--dir", dir, "invite", "bootstrap", "--ttl", "1h"},
 	}
 	var out bytes.Buffer
 	for _, s := range steps {
@@ -21,7 +22,8 @@ func TestCLIFlow(t *testing.T) {
 			t.Fatalf("%v: %v", s, err)
 		}
 	}
-	if !strings.Contains(out.String(), "signature OK") || !strings.Contains(out.String(), "chat.example.org") {
+	if !strings.Contains(out.String(), "signature OK") || !strings.Contains(out.String(), "chat.example.org") ||
+		!strings.Contains(out.String(), "otter://join/") || !strings.Contains(out.String(), "otter-node import") {
 		t.Fatalf("output: %s", out.String())
 	}
 }

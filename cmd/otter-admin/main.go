@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdp/qrterminal/v3"
 	"golang.org/x/term"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -22,11 +23,12 @@ import (
 
 const usage = `usage: otter-admin [--dir DIR] <command>
   network init
-  node add --label L --wss-host H [--wss-port 443] [--wss-path /p] [--cdn] [--push]
+  node add --label L --wss-host H [--wss-port 443] [--wss-path /p] [--cdn] [--push] [--plain]
   node list
   node remove --label L
   manifest sign
-  manifest show [--file F]`
+  manifest show [--file F]
+  invite bootstrap [--ttl 168h]`
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stdin); err != nil {
@@ -106,6 +108,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		fs.StringVar(&s.WSSPath, "wss-path", "", "secret WebSocket path (random if empty)")
 		fs.BoolVar(&s.CDN, "cdn", false, "endpoint is behind a CDN")
 		fs.BoolVar(&s.Push, "push", false, "node can send FCM pushes")
+		fs.BoolVar(&s.Plain, "plain", false, "development only: unencrypted ws:// endpoint")
 		if err := fs.Parse(a[2:]); err != nil {
 			return err
 		}
@@ -166,6 +169,23 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		return show(out, *dir, &rec)
+	case "invite bootstrap":
+		fs := flag.NewFlagSet("invite bootstrap", flag.ContinueOnError)
+		ttl := fs.Duration("ttl", 7*24*time.Hour, "invite validity")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		p, err := passphrase(in, false)
+		if err != nil {
+			return err
+		}
+		res, err := admin.BootstrapInvite(*dir, p, time.Now(), *ttl)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Invite for the first member (valid %s):\n%s\n\n", *ttl, res.Link)
+		qrterminal.GenerateHalfBlock(res.Link, qrterminal.L, out)
+		fmt.Fprintf(out, "\nRecord: %s\nCopy it to the node and run:\n  otter-node import --config /etc/otter/node.toml %s\n", res.File, filepath.Base(res.File))
 	default:
 		return errors.New(usage)
 	}

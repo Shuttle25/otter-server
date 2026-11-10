@@ -4,13 +4,17 @@ package vectors
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/crypto/curve25519"
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
@@ -27,6 +31,9 @@ type V1 struct {
 	ManifestRecordHex       string `json:"manifest_record_hex"`
 	DirectoryEntryRecordHex string `json:"directory_entry_record_hex"`
 	BadSignatureRecordHex   string `json:"bad_signature_record_hex"`
+	IdentityPubHex          string `json:"identity_pub_hex"`
+	AuthMessageHex          string `json:"auth_message_hex"`
+	InviteLink              string `json:"invite_link"`
 }
 
 func seq(n int, start byte) []byte {
@@ -67,6 +74,21 @@ func generate(t *testing.T) []byte {
 		SeedHex: hex.EncodeToString(seed), AccountPubHex: hex.EncodeToString(accPub), UserIDHex: hex.EncodeToString(keys.ID16(accPub)),
 		NetworkSeedHex: hex.EncodeToString(seq(32, 100)), NetworkPubHex: hex.EncodeToString(netPub), NetworkIDHex: hex.EncodeToString(keys.ID16(netPub)),
 		ManifestVersion: 7, ManifestRecordHex: enc(mrec), DirectoryEntryRecordHex: enc(drec), BadSignatureRecordHex: enc(bad),
+	}
+	idPriv, err := hkdf.Key(sha256.New, seed, nil, "otter/identity/v1", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idPub, err := curve25519.X25519(idPriv, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.IdentityPubHex = "05" + hex.EncodeToString(idPub)
+	v.AuthMessageHex = hex.EncodeToString(keys.AuthMessage(seq(16, 10), seq(32, 20), 1_800_000_000_000))
+	v.InviteLink, err = admin.EncodeInviteLink(&pb.InviteBundle{NetworkPub: netPub, Manifest: mrec, Secret: seq(32, 9),
+		InviterUserId: keys.ID16(accPub), InviterAccountPub: accPub, InviterIdentityPub: append([]byte{5}, idPub...), InviterName: "Мама"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	out, _ := json.MarshalIndent(v, "", "  ")
 	return append(out, '\n')

@@ -1,0 +1,19 @@
+syntax = "proto3";
+package otter.v1;
+
+import "otter/v1/records.proto";
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+// Encoded as otter://join/<base64url(no padding)>.
+message InviteBundle {
+  bytes network_pub = 1;
+  Record manifest = 2;
+  bytes secret = 3;               // invite_id = SHA-256(secret)
+  bytes inviter_user_id = 4;      // empty for the bootstrap invite
+  bytes inviter_account_pub = 5;
+  bytes inviter_identity_pub = 6;
+  string inviter_name = 7;
+}

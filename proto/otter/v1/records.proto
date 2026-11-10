@@ -70,5 +70,7 @@ message InviteUsed {
 }
 
 message Ack {
+  // Record keys (author || id, 32 bytes) of acknowledged ENVELOPE records.
   repeated bytes envelope_ids = 1;
+  uint32 device_id = 2;
 }

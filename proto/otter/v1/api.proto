@@ -1,0 +1,93 @@
+syntax = "proto3";
+package otter.v1;
+
+import "otter/v1/records.proto";
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+enum Status {
+  STATUS_OK = 0;
+  STATUS_RETRY_LATER = 1;
+  STATUS_UNAUTHORIZED = 2;
+  STATUS_INVALID = 3;
+  STATUS_NOT_FOUND = 4;
+  STATUS_CONFLICT = 5;
+  STATUS_REVOKED = 6;
+  STATUS_QUOTA = 7;
+  STATUS_INTERNAL = 8;
+}
+
+message Frame {
+  oneof kind {
+    Request request = 1;
+    Response response = 2;
+    Event event = 3;
+  }
+}
+
+message Request {
+  uint64 id = 1;
+  string method = 2;
+  bytes body = 3;
+}
+
+message Response {
+  uint64 id = 1;
+  Status status = 2;
+  bytes body = 3;
+  string error = 4;
+}
+
+// Server-initiated. Types: hello, envelopes (RecordBatch), directory (Empty), prekeys_low (PrekeysLow).
+message Event {
+  string type = 1;
+  bytes body = 2;
+}
+
+message Hello {
+  uint32 protocol_version = 1;
+  bytes node_id = 2;
+  bytes nonce = 3;
+  uint64 manifest_version = 4;
+  int64 server_time_ms = 5;
+}
+
+message LoginRequest {
+  bytes user_id = 1;
+  uint32 device_id = 2;
+  int64 ts_ms = 3;
+  bytes signature = 4;
+}
+
+message RegisterRequest {
+  bytes invite_secret = 1;
+  Record directory_entry = 2;
+  Record prekeys = 3;
+  Record invite_used = 4;
+}
+
+// Body of msg.send, msg.ack, prekeys.upload, invite.create.
+message RecordRequest {
+  Record record = 1;
+}
+
+message RecordBatch {
+  repeated Record records = 1;
+}
+
+message PreKeyFetchRequest {
+  bytes user_id = 1;
+  uint32 device_id = 2;
+}
+
+message ManifestResponse {
+  Record manifest = 1;
+}
+
+message PrekeysLow {
+  uint32 remaining = 1;
+}
+
+message Empty {}

@@ -1,0 +1,27 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+message Envelope {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    SIGNAL = 1;
+    PREKEY_SIGNAL = 2;
+    SENDER_KEY = 3;
+  }
+  bytes sender_user = 1;
+  uint32 sender_device = 2;
+  repeated Recipient recipients = 3;
+  Kind kind = 4;
+  bool urgent = 5;          // false for receipts; drives push in M5
+  bytes shared_content = 6; // SENDER_KEY (M3): one ciphertext for all recipients
+}
+
+message Recipient {
+  bytes user = 1;
+  uint32 device = 2;
+  bytes content = 3; // per-recipient libsignal ciphertext (1:1)
+}

@@ -1,0 +1,28 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+message Content {
+  oneof body {
+    DataMessage data = 1;
+    ReceiptMessage receipt = 2;
+  }
+  int64 sent_ms = 10;
+}
+
+message DataMessage {
+  bytes message_id = 1; // 16 random bytes chosen by sender; receipts refer to it
+  string text = 2;
+}
+
+message ReceiptMessage {
+  enum Type {
+    DELIVERED = 0;
+    READ = 1;
+  }
+  Type type = 1;
+  repeated bytes message_ids = 2;
+}

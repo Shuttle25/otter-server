@@ -25,6 +25,7 @@ message Endpoint {
   enum Kind {
     WSS = 0;
     REALITY = 1;
+    WS_PLAIN = 2; // development only: unencrypted WebSocket; release apps refuse it
   }
   Kind kind = 1;
   string host = 2;

@@ -24,8 +24,9 @@ const (
 type Endpoint_Kind int32
 
 const (
-	Endpoint_WSS     Endpoint_Kind = 0
-	Endpoint_REALITY Endpoint_Kind = 1
+	Endpoint_WSS      Endpoint_Kind = 0
+	Endpoint_REALITY  Endpoint_Kind = 1
+	Endpoint_WS_PLAIN Endpoint_Kind = 2 // development only: unencrypted WebSocket; release apps refuse it
 )
 
 // Enum value maps for Endpoint_Kind.
@@ -33,10 +34,12 @@ var (
 	Endpoint_Kind_name = map[int32]string{
 		0: "WSS",
 		1: "REALITY",
+		2: "WS_PLAIN",
 	}
 	Endpoint_Kind_value = map[string]int32{
-		"WSS":     0,
-		"REALITY": 1,
+		"WSS":      0,
+		"REALITY":  1,
+		"WS_PLAIN": 2,
 	}
 )
 
@@ -368,7 +371,7 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12!\n" +
 	"\fpush_capable\x18\x04 \x01(\bR\vpushCapable\x120\n" +
-	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\"\x8a\x03\n" +
+	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\"\x98\x03\n" +
 	"\bEndpoint\x12+\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x17.otter.v1.Endpoint.KindR\x04kind\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +
@@ -385,10 +388,11 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\fserver_names\x18\n" +
 	" \x03(\tR\vserverNames\x12 \n" +
 	"\vfingerprint\x18\v \x01(\tR\vfingerprint\x12\x1a\n" +
-	"\bpriority\x18\f \x01(\rR\bpriority\"\x1c\n" +
+	"\bpriority\x18\f \x01(\rR\bpriority\"*\n" +
 	"\x04Kind\x12\a\n" +
 	"\x03WSS\x10\x00\x12\v\n" +
-	"\aREALITY\x10\x01BI\n" +
+	"\aREALITY\x10\x01\x12\f\n" +
+	"\bWS_PLAIN\x10\x02BI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (

@@ -557,8 +557,10 @@ func (x *InviteUsed) GetUserId() []byte {
 }
 
 type Ack struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EnvelopeIds   [][]byte               `protobuf:"bytes,1,rep,name=envelope_ids,json=envelopeIds,proto3" json:"envelope_ids,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Record keys (author || id, 32 bytes) of acknowledged ENVELOPE records.
+	EnvelopeIds   [][]byte `protobuf:"bytes,1,rep,name=envelope_ids,json=envelopeIds,proto3" json:"envelope_ids,omitempty"`
+	DeviceId      uint32   `protobuf:"varint,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +600,13 @@ func (x *Ack) GetEnvelopeIds() [][]byte {
 		return x.EnvelopeIds
 	}
 	return nil
+}
+
+func (x *Ack) GetDeviceId() uint32 {
+	if x != nil {
+		return x.DeviceId
+	}
+	return 0
 }
 
 var File_otter_v1_records_proto protoreflect.FileDescriptor
@@ -645,9 +654,10 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\n" +
 	"InviteUsed\x12\x1b\n" +
 	"\tinvite_id\x18\x01 \x01(\fR\binviteId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\fR\x06userId\"(\n" +
+	"\auser_id\x18\x02 \x01(\fR\x06userId\"E\n" +
 	"\x03Ack\x12!\n" +
-	"\fenvelope_ids\x18\x01 \x03(\fR\venvelopeIds*\xf5\x01\n" +
+	"\fenvelope_ids\x18\x01 \x03(\fR\venvelopeIds\x12\x1b\n" +
+	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId*\xf5\x01\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +

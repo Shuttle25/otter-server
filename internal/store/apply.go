@@ -16,16 +16,27 @@ const (
 	batchWait = 10 * time.Millisecond
 )
 
+// Item is a validated record with its parsed body.
+type Item struct {
+	Record *pb.Record
+	Body   *pb.RecordBody
+}
+
+type item struct {
+	key, raw []byte
+	body     *pb.RecordBody
+	origin   []byte
+}
+
 type applyReq struct {
-	key  []byte
-	raw  []byte
-	body *pb.RecordBody
-	res  chan applyRes
+	items []item
+	fn    func(context.Context, *sql.Tx) error
+	res   chan applyRes
 }
 
 type applyRes struct {
-	seq     int64
-	applied bool
+	seqs    []int64
+	applied []bool
 	err     error
 }
 
@@ -34,37 +45,78 @@ type LogEntry struct {
 	Raw []byte // serialized pb.Record
 }
 
+func toItem(it Item, origin []byte) (item, error) {
+	key, err := keys.RecordKey(it.Body.Author, it.Body.Id)
+	if err != nil {
+		return item{}, err
+	}
+	raw, err := proto.Marshal(it.Record)
+	if err != nil {
+		return item{}, err
+	}
+	return item{key: key, raw: raw, body: it.Body, origin: origin}, nil
+}
+
 // Apply stores a validated record. Idempotent by author||id.
 func (s *Store) Apply(ctx context.Context, rec *pb.Record, body *pb.RecordBody) (int64, bool, error) {
-	key, err := keys.RecordKey(body.Author, body.Id)
+	return s.ApplyFrom(ctx, rec, body, nil)
+}
+
+// ApplyFrom is Apply with the node that first accepted the record (mailbox origin).
+func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBody, origin []byte) (int64, bool, error) {
+	it, err := toItem(Item{rec, body}, origin)
 	if err != nil {
 		return 0, false, err
 	}
-	raw, err := proto.Marshal(rec)
+	r, err := s.submit(ctx, &applyReq{items: []item{it}})
 	if err != nil {
 		return 0, false, err
 	}
-	req := &applyReq{key: key, raw: raw, body: body, res: make(chan applyRes, 1)}
+	return r.seqs[0], r.applied[0], nil
+}
+
+// ApplyAll applies all items atomically: either every record is stored or none.
+func (s *Store) ApplyAll(ctx context.Context, origin []byte, items []Item) ([]int64, error) {
+	req := &applyReq{}
+	for _, in := range items {
+		it, err := toItem(in, origin)
+		if err != nil {
+			return nil, err
+		}
+		req.items = append(req.items, it)
+	}
+	r, err := s.submit(ctx, req)
+	return r.seqs, err
+}
+
+// write runs fn inside the writer's transaction (savepoint-isolated).
+func (s *Store) write(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	_, err := s.submit(ctx, &applyReq{fn: fn})
+	return err
+}
+
+func (s *Store) submit(ctx context.Context, req *applyReq) (applyRes, error) {
+	req.res = make(chan applyRes, 1)
 	select {
 	case s.reqs <- req:
 	case <-s.done:
-		return 0, false, errClosed
+		return applyRes{}, errClosed
 	case <-ctx.Done():
-		return 0, false, ctx.Err()
+		return applyRes{}, ctx.Err()
 	}
 	select {
 	case r := <-req.res:
-		return r.seq, r.applied, r.err
+		return r, r.err
 	case <-s.stopped:
 		// The writer may have committed this request just before stopping.
 		select {
 		case r := <-req.res:
-			return r.seq, r.applied, r.err
+			return r, r.err
 		default:
-			return 0, false, errClosed
+			return applyRes{}, errClosed
 		}
 	case <-ctx.Done():
-		return 0, false, ctx.Err()
+		return applyRes{}, ctx.Err()
 	}
 }
 
@@ -100,7 +152,7 @@ func (s *Store) commit(batch []*applyReq) {
 	if err == nil {
 		now := s.now().UnixMilli()
 		for i, r := range batch {
-			results[i] = applyOne(ctx, tx, r, now)
+			results[i] = runReq(ctx, tx, r, now)
 		}
 		err = tx.Commit()
 	}
@@ -112,29 +164,63 @@ func (s *Store) commit(batch []*applyReq) {
 	}
 }
 
-func applyOne(ctx context.Context, tx *sql.Tx, r *applyReq, now int64) applyRes {
+// runReq executes one request inside SAVEPOINT req; any error rolls back only this request.
+func runReq(ctx context.Context, tx *sql.Tx, r *applyReq, now int64) applyRes {
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT req`); err != nil {
+		return applyRes{err: err}
+	}
+	var res applyRes
+	var err error
+	if r.fn != nil {
+		err = r.fn(ctx, tx)
+	} else {
+		for _, it := range r.items {
+			seq, applied, e := applyOne(ctx, tx, it, now)
+			if e != nil {
+				err = e
+				break
+			}
+			res.seqs = append(res.seqs, seq)
+			res.applied = append(res.applied, applied)
+		}
+	}
+	if err != nil {
+		tx.ExecContext(ctx, `ROLLBACK TO req`)
+		tx.ExecContext(ctx, `RELEASE req`)
+		return applyRes{err: err}
+	}
+	if _, err := tx.ExecContext(ctx, `RELEASE req`); err != nil {
+		return applyRes{err: err}
+	}
+	return res
+}
+
+func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool, error) {
 	var seq int64
-	err := tx.QueryRowContext(ctx, `SELECT seq FROM oplog WHERE record_key=?`, r.key).Scan(&seq)
+	err := tx.QueryRowContext(ctx, `SELECT seq FROM oplog WHERE record_key=?`, it.key).Scan(&seq)
 	if err == nil {
-		return applyRes{seq: seq, applied: false}
+		return seq, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return applyRes{err: err}
+		return 0, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO records(record_key,type,author,created_ms,expires_ms,raw) VALUES(?,?,?,?,?,?)`,
-		r.key, int32(r.body.Type), r.body.Author, r.body.CreatedMs, r.body.ExpiresMs, r.raw); err != nil {
-		return applyRes{err: err}
+		it.key, int32(it.body.Type), it.body.Author, it.body.CreatedMs, it.body.ExpiresMs, it.raw); err != nil {
+		return 0, false, err
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO oplog(record_key,type,received_ms) VALUES(?,?,?)`, r.key, int32(r.body.Type), now)
+	res, err := tx.ExecContext(ctx, `INSERT INTO oplog(record_key,type,received_ms) VALUES(?,?,?)`, it.key, int32(it.body.Type), now)
 	if err != nil {
-		return applyRes{err: err}
+		return 0, false, err
 	}
 	seq, _ = res.LastInsertId()
-	return applyRes{seq: seq, applied: true}
+	if err := applyTyped(ctx, tx, it, now); err != nil {
+		return 0, false, err
+	}
+	return seq, true, nil
 }
 
-// Since returns log entries with seq > cursor, oldest first.
+// Since returns log entries with seq > cursor, oldest first. Deleted records are skipped.
 func (s *Store) Since(ctx context.Context, cursor int64, limit int) ([]LogEntry, error) {
 	rows, err := s.r.QueryContext(ctx,
 		`SELECT o.seq, r.raw FROM oplog o JOIN records r ON r.record_key=o.record_key WHERE o.seq>? ORDER BY o.seq LIMIT ?`,

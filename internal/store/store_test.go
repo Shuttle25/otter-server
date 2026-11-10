@@ -148,7 +148,8 @@ func TestPragmasAndMigrations(t *testing.T) {
 	defer s2.Close()
 	var n int
 	s2.r.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n)
-	if n != 1 {
-		t.Fatalf("schema_migrations rows: %d", n)
+	files, _ := migrationsFS.ReadDir("migrations")
+	if n != len(files) {
+		t.Fatalf("schema_migrations rows: %d, migrations: %d", n, len(files))
 	}
 }

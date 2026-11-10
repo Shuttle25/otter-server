@@ -11,7 +11,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound          = errors.New("not found")
+	ErrUsernameTaken     = errors.New("username taken")
+	ErrInviteUnavailable = errors.New("invite unknown, used or expired")
+)
 
 var errClosed = errors.New("store closed")
 

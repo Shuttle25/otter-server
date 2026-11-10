@@ -1,0 +1,74 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+enum RecordType {
+  RECORD_TYPE_UNSPECIFIED = 0;
+  DIRECTORY_ENTRY = 1;
+  PREKEYS = 2;
+  INVITE = 3;
+  INVITE_USED = 4;
+  ENVELOPE = 5;
+  ACK = 6;
+  PREKEY_CONSUMED = 7;
+  PUSH_TOKEN = 8;
+  BLOB_META = 9;
+  BACKUP_META = 10;
+  MANIFEST = 11;
+  REVOCATION = 12;
+  INVITE_RIGHTS = 13;
+}
+
+// Signature is Ed25519 over the exact `body` bytes.
+message Record {
+  bytes body = 1;
+  bytes signature = 2;
+}
+
+message RecordBody {
+  bytes id = 1;          // 16 random bytes, unique per author
+  RecordType type = 2;
+  bytes author = 3;      // user_id | node_id | network_id (16 bytes)
+  int64 created_ms = 4;
+  int64 expires_ms = 5;  // 0 = never
+  bytes payload = 6;
+}
+
+message DirectoryEntry {
+  bytes user_id = 1;
+  string username = 2;
+  string display_name = 3;
+  bytes account_pub = 4;   // Ed25519, 32 bytes
+  bytes identity_pub = 5;  // libsignal serialized Curve25519 (33 bytes, 0x05 prefix)
+  bytes identity_sig = 6;  // XEdDSA by identity key over account_pub (checked by clients)
+  uint64 version = 7;
+  bool can_invite = 8;
+}
+
+message Revocation {
+  bytes user_id = 1;
+  string reason = 2;
+}
+
+message InviteRights {
+  bytes user_id = 1;
+  bool can_invite = 2;
+  uint64 version = 3;
+}
+
+message Invite {
+  bytes invite_id = 1;   // SHA-256(secret)
+  int64 expires_ms = 2;
+}
+
+message InviteUsed {
+  bytes invite_id = 1;
+  bytes user_id = 2;
+}
+
+message Ack {
+  repeated bytes envelope_ids = 1;
+}

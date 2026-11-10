@@ -1,0 +1,41 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+message Manifest {
+  uint64 version = 1;
+  int64 issued_ms = 2;
+  bytes network_pub = 3;
+  repeated NodeInfo nodes = 4;
+  uint32 min_app_version = 5;
+}
+
+message NodeInfo {
+  bytes node_id = 1;
+  bytes node_pub = 2;
+  string label = 3;
+  bool push_capable = 4;
+  repeated Endpoint endpoints = 5;
+}
+
+message Endpoint {
+  enum Kind {
+    WSS = 0;
+    REALITY = 1;
+  }
+  Kind kind = 1;
+  string host = 2;
+  uint32 port = 3;
+  string path = 4;
+  bytes tls_spki_pin = 5;
+  bool via_cdn = 6;
+  string vless_uuid = 7;
+  bytes reality_pub = 8;
+  repeated string short_ids = 9;
+  repeated string server_names = 10;
+  string fingerprint = 11;
+  uint32 priority = 12;
+}

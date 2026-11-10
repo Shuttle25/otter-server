@@ -3,6 +3,7 @@ module ottermsg/server
 go 1.26.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	golang.org/x/term v0.48.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0

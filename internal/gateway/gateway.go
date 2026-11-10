@@ -1,0 +1,121 @@
+// Package gateway serves the client protocol (docs/02 §4) over WebSocket.
+package gateway
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/coder/websocket"
+	"google.golang.org/protobuf/proto"
+	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/service"
+)
+
+const (
+	ProtocolVersion = 1
+	maxFrame        = 1 << 20
+	deliverBatch    = 100
+	writeTimeout    = 10 * time.Second
+)
+
+type Gateway struct {
+	svc      *service.Service
+	log      *slog.Logger
+	mu       sync.Mutex
+	sessions map[*session]struct{}
+}
+
+func New(svc *service.Service, log *slog.Logger) *Gateway {
+	g := &Gateway{svc: svc, log: log, sessions: map[*session]struct{}{}}
+	svc.Notify = g
+	return g
+}
+
+func (g *Gateway) snapshot() []*session {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]*session, 0, len(g.sessions))
+	for s := range g.sessions {
+		out = append(out, s)
+	}
+	return out
+}
+
+func (g *Gateway) add(s *session)    { g.mu.Lock(); g.sessions[s] = struct{}{}; g.mu.Unlock() }
+func (g *Gateway) remove(s *session) { g.mu.Lock(); delete(g.sessions, s); g.mu.Unlock() }
+
+// Envelope implements service.Notifier.
+func (g *Gateway) Envelope(user []byte, device uint32) {
+	for _, s := range g.snapshot() {
+		if s.is(user, device) {
+			s.kick()
+		}
+	}
+}
+
+func (g *Gateway) Directory() {
+	for _, s := range g.snapshot() {
+		if s.loggedIn() {
+			s.event("directory", &pb.Empty{})
+		}
+	}
+}
+
+func (g *Gateway) PrekeysLow(user []byte, device uint32, remaining int) {
+	for _, s := range g.snapshot() {
+		if s.is(user, device) {
+			s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(remaining)})
+		}
+	}
+}
+
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true}) // native clients send no Origin
+	if err != nil {
+		return
+	}
+	c.SetReadLimit(maxFrame)
+	ctx, cancel := context.WithCancel(r.Context())
+	nonce := make([]byte, 32)
+	rand.Read(nonce)
+	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel}
+	defer func() {
+		cancel()
+		g.remove(s)
+		c.CloseNow()
+	}()
+	go s.writeLoop()
+
+	var mv uint64
+	if _, v, err := g.svc.Manifest(ctx); err == nil {
+		mv = v
+	}
+	s.event("hello", &pb.Hello{ProtocolVersion: ProtocolVersion, NodeId: g.svc.NodeID, Nonce: nonce,
+		ManifestVersion: mv, ServerTimeMs: time.Now().UnixMilli()})
+
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) && websocket.CloseStatus(err) == -1 {
+				g.log.Debug("session read ended", "err", err)
+			}
+			return
+		}
+		if typ != websocket.MessageBinary {
+			continue
+		}
+		var f pb.Frame
+		if err := proto.Unmarshal(data, &f); err != nil {
+			c.Close(websocket.StatusUnsupportedData, "bad frame")
+			return
+		}
+		if req := f.GetRequest(); req != nil {
+			s.handle(ctx, req)
+		}
+	}
+}

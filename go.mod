@@ -3,6 +3,7 @@ module ottermsg/server
 go 1.26.0
 
 require (
+	golang.org/x/term v0.48.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
 )
@@ -20,5 +21,5 @@ require (
 
 require (
 	golang.org/x/crypto v0.58.0
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 )

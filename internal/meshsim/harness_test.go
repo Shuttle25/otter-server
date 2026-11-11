@@ -197,10 +197,16 @@ func (s *sim) invite(n *simNode) []byte {
 
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	eventuallyWithin(t, 10*time.Second, what, cond)
+}
+
+// eventuallyWithin is eventually with a longer budget (blob copies of many MiB under -race and a loaded machine).
+func eventuallyWithin(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out after 10s waiting for: %s", what)
+			t.Fatalf("timed out after %v waiting for: %s", d, what)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

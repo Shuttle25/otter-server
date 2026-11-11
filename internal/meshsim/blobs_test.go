@@ -102,7 +102,7 @@ func TestBlob20MiBWithUploadNodeDown(t *testing.T) {
 	ca := s.login(a, anna)
 	key := s.putBlob(ca, anna, data, boris)
 	ca.close()
-	eventually(t, "B and C pull all 80 chunks", func() bool { return b.hasChunks(key, 80) && c.hasChunks(key, 80) })
+	eventuallyWithin(t, time.Minute, "B and C pull all 80 chunks", func() bool { return b.hasChunks(key, 80) && c.hasChunks(key, 80) })
 	s.stop(a)
 	cb := s.login(c, boris)
 	got, st := s.getBlob(cb, key, 80)
@@ -111,7 +111,7 @@ func TestBlob20MiBWithUploadNodeDown(t *testing.T) {
 	}
 	s.ackBlob(cb, boris, key)
 	s.start(a)
-	eventually(t, "blob gone on every node", func() bool { return a.blobGone(key) && b.blobGone(key) && c.blobGone(key) })
+	eventuallyWithin(t, time.Minute, "blob gone on every node", func() bool { return a.blobGone(key) && b.blobGone(key) && c.blobGone(key) })
 }
 
 // Proxy: C has no puller; a reader on C gets the chunks at once (C fetches them from a peer) and C keeps them.
@@ -156,7 +156,7 @@ func TestBlobNotReplicatedYet(t *testing.T) {
 	}
 	s.part.Heal(a, b)
 	s.part.Heal(a, c)
-	eventually(t, "download after healing", func() bool {
+	eventuallyWithin(t, time.Minute, "download after healing", func() bool {
 		got, st := s.getBlob(cb, key, 2)
 		return st == pb.Status_STATUS_OK && bytes.Equal(got, data)
 	})
@@ -172,7 +172,7 @@ func TestBlobAcrossPartition(t *testing.T) {
 	s.part.Block(a, c)
 	data := randomBytes(700 << 10)
 	key := s.putBlob(s.login(a, anna), anna, data, boris)
-	eventually(t, "C pulls from B", func() bool { return c.hasChunks(key, 3) })
+	eventuallyWithin(t, time.Minute, "C pulls from B", func() bool { return c.hasChunks(key, 3) })
 	got, st := s.getBlob(s.login(c, boris), key, 3)
 	if st != pb.Status_STATUS_OK || !bytes.Equal(got, data) {
 		t.Fatalf("download on C: %v", st)

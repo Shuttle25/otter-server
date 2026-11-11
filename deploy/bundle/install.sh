@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Installs or updates this OtterMSG node from the bundle directory. Safe to run again. Run as root.
+set -euo pipefail
+cd "$(dirname "$0")"
+say() { printf '==> %s\n' "$*"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "run as root"
+command -v systemctl >/dev/null || die "systemd is required"
+source /etc/os-release
+[[ "$ID" == debian || "$ID" == ubuntu || "${ID_LIKE:-}" == *debian* ]] || die "Debian or Ubuntu required (found $ID)"
+case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) die "unsupported architecture $(uname -m)" ;; esac
+say "verifying SHA256SUMS"
+sha256sum --quiet -c SHA256SUMS
+source ./probe.env
+if ss -ltnH "sport = :$OTTER_PORT" | grep -q . && ! systemctl is-active --quiet otter-node; then
+  die "port $OTTER_PORT is in use: $(ss -ltnpH "sport = :$OTTER_PORT")"
+fi
+
+say "time synchronisation"
+if ! systemctl is-active --quiet chrony 2>/dev/null; then
+  if ! systemctl enable --now systemd-timesyncd 2>/dev/null; then
+    apt-get update -q && apt-get install -y -q systemd-timesyncd && systemctl enable --now systemd-timesyncd
+  fi
+fi
+for _ in $(seq 30); do [[ "$(timedatectl show -p NTPSynchronized --value)" == yes ]] && break; sleep 2; done
+[[ "$(timedatectl show -p NTPSynchronized --value)" == yes ]] || say "WARNING: clock not synchronised yet (logins need ±5 min)"
+
+if ! id otter >/dev/null 2>&1; then
+  say "creating system user otter"
+  useradd --system --home-dir /var/lib/otter --no-create-home --shell /usr/sbin/nologin otter
+fi
+if systemctl is-active --quiet otter-node; then say "stopping otter-node"; systemctl stop otter-node; fi
+
+say "installing files"
+install -d -o root -g otter -m 0750 /etc/otter
+install -d -o otter -g otter -m 0700 /var/lib/otter
+install -d -o otter -g otter -m 0755 /var/lib/otter/site
+install -d -o otter -g otter -m 0700 /var/backups/otter
+install -d -o root -g root -m 0755 /usr/local/lib/otter
+install -o root -g otter -m 0640 node.key tls.key node.toml manifest.bin tls.crt probe.env /etc/otter/
+cp -r site/. /var/lib/otter/site/
+chown -R otter:otter /var/lib/otter/site
+if [[ -x /usr/local/bin/otter-node ]] && ! cmp -s "otter-node-$arch" /usr/local/bin/otter-node; then
+  cp -p /usr/local/bin/otter-node /usr/local/bin/otter-node.prev
+fi
+install -o root -g root -m 0755 "otter-node-$arch" /usr/local/bin/otter-node
+install -o root -g root -m 0755 install.sh uninstall.sh backup.sh health.sh /usr/local/lib/otter/
+install -o root -g root -m 0644 otter-node.service otter-backup.service otter-backup.timer /etc/systemd/system/
+
+say "checking configuration"
+runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.toml
+shopt -s nullglob
+for f in invites/*.bin; do
+  say "importing $(basename "$f")"
+  runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml "$f"
+done
+
+if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then
+  say "ufw: allowing SSH and $OTTER_PORT/tcp"
+  ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp
+  ufw allow "$OTTER_PORT/tcp"
+else
+  say "WARNING: no active host firewall. Allow only SSH and $OTTER_PORT/tcp in the provider's cloud firewall (docs/11 §8)."
+fi
+
+say "starting otter-node"
+systemctl daemon-reload
+systemctl enable --quiet otter-node
+systemctl restart otter-node
+/usr/local/lib/otter/health.sh
+say "node is up: $(/usr/local/bin/otter-node version), $OTTER_PROBE_URL"
+say "single node? enable daily backups: /usr/local/lib/otter/backup.sh --install"

@@ -1,0 +1,33 @@
+[Unit]
+Description=OtterMSG node
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=otter
+Group=otter
+ExecStart=/usr/local/bin/otter-node run --config /etc/otter/node.toml
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/otter
+
+[Install]
+WantedBy=multi-user.target

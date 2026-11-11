@@ -1,0 +1,8 @@
+[Unit]
+Description=OtterMSG node database backup
+
+[Service]
+Type=oneshot
+User=otter
+Group=otter
+ExecStart=/usr/local/lib/otter/backup.sh --run

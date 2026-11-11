@@ -9,8 +9,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,6 +35,12 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
   invite bootstrap [--ttl 168h]
+  node set-ip --label L --ip A [--ip B]...
+  node rotate-tls --label L
+  node drop-old-pins --label L
+  node env --label L
+  dns records
+  dns check [--label L]
   version`
 
 var version = "dev"
@@ -157,6 +165,93 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		fmt.Fprintf(out, "node %s removed. Run 'manifest sign' to publish.\n", *label)
+	case "node set-ip":
+		fs := flag.NewFlagSet("node set-ip", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		var ips multi
+		fs.Var(&ips, "ip", "IP address (repeatable)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if len(ips) == 0 {
+			return errors.New("node set-ip: at least one --ip")
+		}
+		if err := admin.SetIPs(*dir, *label, ips); err != nil {
+			return err
+		}
+		recs, _ := admin.DNSRecords(*dir)
+		fmt.Fprintf(out, "node %s: IPs %v recorded, certificate re-issued (pin unchanged).\nUpdate DNS:\n%s", *label, []string(ips), recs)
+	case "node rotate-tls", "node drop-old-pins":
+		fs := flag.NewFlagSet(a[0]+" "+a[1], flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if a[1] == "rotate-tls" {
+			pin, err := admin.RotateTLS(*dir, *label)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "node %s: new certificate staged, pin %s added.\nRun 'manifest sign' and 'manifest publish', wait for apps to update, deploy (push.sh), then 'node drop-old-pins'.\n",
+				*label, base64.StdEncoding.EncodeToString(pin))
+		} else {
+			if err := admin.DropOldPins(*dir, *label); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "node %s: only the new pin remains. Run 'manifest sign' and 'manifest publish'.\n", *label)
+		}
+	case "node env":
+		fs := flag.NewFlagSet("node env", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		env, err := admin.NodeEnv(*dir, *label)
+		if err != nil {
+			return err
+		}
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(out, "%s=%s\n", k, admin.ShellQuote(env[k]))
+		}
+	case "dns records":
+		s, err := admin.DNSRecords(*dir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprint(out, s)
+	case "dns check":
+		fs := flag.NewFlagSet("dns check", flag.ContinueOnError)
+		label := fs.String("label", "", "only this node")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		res, err := admin.CheckDNS(context.Background(), *dir, *label, net.DefaultResolver)
+		if err != nil {
+			return err
+		}
+		bad := false
+		for _, r := range res {
+			switch {
+			case r.Skipped:
+				fmt.Fprintf(out, "%-12s %s skip (IP endpoint)\n", r.Label, r.Host)
+			case r.Err != "":
+				bad = true
+				fmt.Fprintf(out, "%-12s %s ERROR %s\n", r.Label, r.Host, r.Err)
+			case r.OK:
+				fmt.Fprintf(out, "%-12s %s ok\n", r.Label, r.Host)
+			default:
+				bad = true
+				fmt.Fprintf(out, "%-12s %s MISSING %v UNEXPECTED %v\n", r.Label, r.Host, r.Missing, r.Unexpected)
+			}
+		}
+		if bad {
+			return errors.New("DNS does not match (records may still be propagating; TTL 300)")
+		}
 	case "manifest sign":
 		p, err := passphrase(in, false)
 		if err != nil {

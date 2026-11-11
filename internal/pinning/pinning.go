@@ -56,12 +56,8 @@ func ClientConfig(host string, pins [][]byte) *tls.Config {
 	return cfg
 }
 
-// GenerateCert creates a self-signed ECDSA P-256 certificate for hosts and ips.
-func GenerateCert(hosts []string, ips []net.IP, validity time.Duration) (certPEM, keyPEM, pin []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+// IssueCert creates a self-signed certificate for an existing key (re-issuing keeps the pin).
+func IssueCert(key *ecdsa.PrivateKey, hosts []string, ips []net.IP, validity time.Duration) (certPEM, pin []byte, err error) {
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
 	cn := ""
 	if len(hosts) > 0 {
@@ -75,13 +71,47 @@ func GenerateCert(hosts []string, ips []net.IP, validity time.Duration) (certPEM
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	cert, _ := x509.ParseCertificate(der)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), SPKIPin(cert), nil
+}
+
+// GenerateCert creates a self-signed ECDSA P-256 certificate (new key) for hosts and ips.
+func GenerateCert(hosts []string, ips []net.IP, validity time.Duration) (certPEM, keyPEM, pin []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	certPEM, pin, err = IssueCert(key, hosts, ips, validity)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	kb, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), SPKIPin(cert), nil
+	return certPEM, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), pin, nil
+}
+
+// ReadKeyPEM parses an "EC PRIVATE KEY" PEM file written by GenerateCert.
+func ReadKeyPEM(b []byte) (*ecdsa.PrivateKey, error) {
+	blk, _ := pem.Decode(b)
+	if blk == nil {
+		return nil, errors.New("no PEM block")
+	}
+	return x509.ParseECPrivateKey(blk.Bytes)
+}
+
+// CertPin returns the SPKI pin of a PEM certificate.
+func CertPin(certPEM []byte) ([]byte, error) {
+	blk, _ := pem.Decode(certPEM)
+	if blk == nil {
+		return nil, errors.New("no PEM block")
+	}
+	c, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return SPKIPin(c), nil
 }

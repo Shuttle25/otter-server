@@ -19,13 +19,8 @@ type nodeMeta struct {
 
 // writeNodeTLS generates tls.crt/tls.key in nodeDir for host+ips and returns the pin.
 func writeNodeTLS(nodeDir, host string, ips []net.IP) ([]byte, error) {
-	var hosts []string
-	if ip := net.ParseIP(host); ip == nil {
-		hosts = []string{host}
-	} else {
-		ips = append(ips, ip)
-	}
-	certPEM, keyPEM, pin, err := pinning.GenerateCert(hosts, ips, CertValidity)
+	hosts, all := certNames(host, ips)
+	certPEM, keyPEM, pin, err := pinning.GenerateCert(hosts, all, CertValidity)
 	if err != nil {
 		return nil, err
 	}

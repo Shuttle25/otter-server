@@ -2,6 +2,9 @@ package pinning
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -86,5 +89,61 @@ func TestExpiredCertRejected(t *testing.T) {
 	}
 	if errors.Is(err, ErrPinMismatch) {
 		t.Fatal("wrong reason")
+	}
+}
+
+func TestIssueCertKeepsPin(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, p1, err := IssueCert(key, []string{"chat.example.org"}, []net.IP{net.ParseIP("203.0.113.10")}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, p2, err := IssueCert(key, []string{"chat.example.org"}, []net.IP{net.ParseIP("198.51.100.7")}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(p1, p2) {
+		t.Fatal("pin changed on re-issue")
+	}
+	for i, c := range [][]byte{c1, c2} {
+		blk, _ := pem.Decode(c)
+		cert, err := x509.ParseCertificate(blk.Bytes)
+		if err != nil || cert.DNSNames[0] != "chat.example.org" || len(cert.IPAddresses) != 1 {
+			t.Fatalf("cert %d: %v %v", i, err, cert)
+		}
+		pin, _ := CertPin(c)
+		if !bytes.Equal(pin, p1) {
+			t.Fatal("CertPin differs")
+		}
+	}
+	if !net.ParseIP("198.51.100.7").Equal(mustParse(t, c2).IPAddresses[0]) {
+		t.Fatal("wrong SAN")
+	}
+}
+
+func mustParse(t *testing.T, c []byte) *x509.Certificate {
+	blk, _ := pem.Decode(c)
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+func TestReadKeyPEMRoundTrip(t *testing.T) {
+	c, k, pin, err := GenerateCert([]string{"x.test"}, nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ReadKeyPEM(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, pin2, _ := IssueCert(key, []string{"x.test"}, nil, time.Hour)
+	if p, _ := CertPin(c); !bytes.Equal(p, pin) || !bytes.Equal(pin2, pin) {
+		t.Fatal("pins differ")
 	}
 }

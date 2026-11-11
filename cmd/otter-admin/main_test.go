@@ -133,3 +133,30 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("got %q", out.String())
 	}
 }
+
+func TestNodeOpsCLI(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	for _, s := range [][]string{
+		{"--dir", dir, "network", "init"},
+		{"--dir", dir, "node", "add", "--label", "fi-1", "--wss-host", "chat.example.org"},
+		{"--dir", dir, "node", "set-ip", "--label", "fi-1", "--ip", "203.0.113.10"},
+		{"--dir", dir, "node", "env", "--label", "fi-1"},
+		{"--dir", dir, "dns", "records"},
+		{"--dir", dir, "node", "rotate-tls", "--label", "fi-1"},
+		{"--dir", dir, "node", "drop-old-pins", "--label", "fi-1"},
+	} {
+		if err := run(s, &out, strings.NewReader("")); err != nil {
+			t.Fatalf("%v: %v", s, err)
+		}
+	}
+	for _, want := range []string{"OTTER_PORT='27443'", "IN  A     203.0.113.10", "pin unchanged", "only the new pin remains"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in\n%s", want, out.String())
+		}
+	}
+	if err := run([]string{"--dir", dir, "node", "set-ip", "--label", "fi-1"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("set-ip without --ip accepted")
+	}
+}

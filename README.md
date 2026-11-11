@@ -36,3 +36,9 @@ project docs (`docs/11-deployment.md`); [`deploy/README.md`](deploy/README.md) i
 
 Tests: `deploy/test/bundle_test.sh` (offline) and `deploy/test/e2e.sh [--keep]` (disposable Debian 12 VM under
 QEMU/KVM: install, upgrade, rollback, backup, uninstall).
+
+## Photos (blobs)
+
+Members' photos travel as encrypted blobs: `blob.create` (signed `BLOB_META`), `blob.put`/`blob.get` in 256 KiB chunks,
+`blob.ack` (`BLOB_FETCHED`). Chunk files live in `<data_dir>/blobs/` until every reader has fetched the blob (or it
+expires) and are not backed up. Tuning in `node.toml`: `[limits] user_quota`, `max_blob`; `[replication] blob_bandwidth`.

@@ -26,6 +26,7 @@ type Store struct {
 	done    chan struct{}
 	stopped chan struct{}
 	now     func() time.Time
+	notify  notifier
 }
 
 func dsn(path string) string {

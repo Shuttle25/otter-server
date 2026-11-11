@@ -26,6 +26,7 @@ type item struct {
 	key, raw []byte
 	body     *pb.RecordBody
 	origin   []byte
+	fromPeer bool // replicated: business conflicts never fail
 }
 
 type applyReq struct {
@@ -68,6 +69,20 @@ func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBo
 	if err != nil {
 		return 0, false, err
 	}
+	r, err := s.submit(ctx, &applyReq{items: []item{it}})
+	if err != nil {
+		return 0, false, err
+	}
+	return r.seqs[0], r.applied[0], nil
+}
+
+// ApplyReplicated applies a record received from peer `from`. Business conflicts never fail here.
+func (s *Store) ApplyReplicated(ctx context.Context, rec *pb.Record, body *pb.RecordBody, from []byte) (int64, bool, error) {
+	it, err := toItem(Item{rec, body}, from)
+	if err != nil {
+		return 0, false, err
+	}
+	it.fromPeer = true
 	r, err := s.submit(ctx, &applyReq{items: []item{it}})
 	if err != nil {
 		return 0, false, err
@@ -156,12 +171,34 @@ func (s *Store) commit(batch []*applyReq) {
 		}
 		err = tx.Commit()
 	}
+	if err == nil && anyApplied(results) {
+		s.signalChanged()
+	}
 	for i, r := range batch {
 		if err != nil {
 			results[i] = applyRes{err: err}
 		}
 		r.res <- results[i]
 	}
+}
+
+func anyApplied(results []applyRes) bool {
+	for _, r := range results {
+		if r.err != nil {
+			continue
+		}
+		for _, a := range r.applied {
+			if a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// expiring types leave the oplog after RetentionMs; a peer re-sending one must not resurrect it.
+func expiring(t pb.RecordType) bool {
+	return t == pb.RecordType_ENVELOPE || t == pb.RecordType_ACK || t == pb.RecordType_PREKEY_CONSUMED
 }
 
 // runReq executes one request inside SAVEPOINT req; any error rolls back only this request.
@@ -203,6 +240,9 @@ func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool,
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
+	}
+	if it.fromPeer && expiring(it.body.Type) && it.body.CreatedMs < now-RetentionMs {
+		return 0, false, nil
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO records(record_key,type,author,created_ms,expires_ms,raw) VALUES(?,?,?,?,?,?)`,

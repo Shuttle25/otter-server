@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -36,27 +37,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := proto.Unmarshal(b.Payload, &e); err != nil {
 			return err
 		}
-		var owner []byte
-		err := tx.QueryRowContext(ctx, `SELECT user_id FROM users WHERE username=?`, e.Username).Scan(&owner)
-		if err == nil && !bytes.Equal(owner, e.UserId) {
-			return ErrUsernameTaken
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		var cur uint64
-		err = tx.QueryRowContext(ctx, `SELECT version FROM users WHERE user_id=?`, e.UserId).Scan(&cur)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			_, err = tx.ExecContext(ctx,
-				`INSERT INTO users(user_id,username,account_pub,entry_key,version,can_invite,created_ms) VALUES(?,?,?,?,?,?,?)`,
-				e.UserId, e.Username, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now)
-		case err != nil:
-		case e.Version > cur:
-			_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=? WHERE user_id=?`,
-				e.Username, it.key, e.Version, e.UserId)
-		}
-		return err
+		return applyDirectoryEntry(ctx, tx, it, &e, b.CreatedMs, now)
 
 	case pb.RecordType_INVITE:
 		var i pb.Invite
@@ -77,8 +58,8 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return ErrInviteUnavailable
+		if n, _ := res.RowsAffected(); n == 0 && !it.fromPeer {
+			return ErrInviteUnavailable // replicated: the first used_by wins, the record is still stored
 		}
 		return nil
 
@@ -169,6 +150,20 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		return nil
 
+	case pb.RecordType_PREKEY_CONSUMED:
+		var c pb.PrekeyConsumed
+		if err := proto.Unmarshal(b.Payload, &c); err != nil {
+			return err
+		}
+		for _, id := range c.KeyIds {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE prekeys SET consumed=1 WHERE user_id=? AND device_id=? AND kind=? AND key_id=? AND owner_node=?`,
+				c.UserId, c.DeviceId, PrekeyOneTime, id, b.Author); err != nil {
+				return err
+			}
+		}
+		return nil
+
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil {
@@ -178,4 +173,58 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		return err
 	}
 	return nil
+}
+
+func conflictName(name string, userID []byte) string {
+	return name + "#" + hex.EncodeToString(userID[:4])
+}
+
+// wins reports whether (createdA, idA) beats (createdB, idB) for a username.
+func wins(createdA int64, idA []byte, createdB int64, idB []byte) bool {
+	if createdA != createdB {
+		return createdA < createdB
+	}
+	return bytes.Compare(idA, idB) < 0
+}
+
+// applyDirectoryEntry upserts the users row. A username clash fails for local submissions; for replicated
+// entries the lower (entry created_ms, user_id) keeps the name and the other becomes name#<hex>.
+func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, created, now int64) error {
+	var cur uint64
+	err := tx.QueryRowContext(ctx, `SELECT version FROM users WHERE user_id=?`, e.UserId).Scan(&cur)
+	exists := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if exists && e.Version <= cur {
+		return nil // older or same version: stored as a record, users row unchanged
+	}
+	name, conflict := e.Username, 0
+	var owner []byte
+	var ownerCreated int64
+	err = tx.QueryRowContext(ctx, `SELECT user_id, entry_created_ms FROM users WHERE username=?`, e.Username).Scan(&owner, &ownerCreated)
+	switch {
+	case errors.Is(err, sql.ErrNoRows) || (err == nil && bytes.Equal(owner, e.UserId)):
+	case err != nil:
+		return err
+	case !it.fromPeer:
+		return ErrUsernameTaken
+	case wins(created, e.UserId, ownerCreated, owner):
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
+			conflictName(e.Username, owner), owner); err != nil {
+			return err
+		}
+	default:
+		name, conflict = conflictName(e.Username, e.UserId), 1
+	}
+	if !exists {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO users(user_id,username,account_pub,entry_key,version,can_invite,created_ms,entry_created_ms,username_conflict)
+			 VALUES(?,?,?,?,?,?,?,?,?)`,
+			e.UserId, name, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now, created, conflict)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, entry_created_ms=?, username_conflict=? WHERE user_id=?`,
+		name, it.key, e.Version, created, conflict, e.UserId)
+	return err
 }

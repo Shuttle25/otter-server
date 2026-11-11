@@ -1,0 +1,70 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"google.golang.org/protobuf/proto"
+	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
+)
+
+// ApplyReplicated validates and applies a record received from peer `from`.
+// Returns ErrRetryLater if the author is not known yet (its directory entry hasn't arrived).
+func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Record) (bool, error) {
+	body, err := s.validator(nil).Validate(rec)
+	switch {
+	case errors.Is(err, records.ErrUnknownAuthor):
+		return false, fmt.Errorf("%w: %v", ErrRetryLater, err)
+	case errors.Is(err, records.ErrExpired):
+		return false, nil
+	case err != nil:
+		return false, invalid(err)
+	}
+	_, applied, err := s.Store.ApplyReplicated(ctx, rec, body, from)
+	if err != nil || !applied {
+		return applied, err
+	}
+	s.afterApply(ctx, body)
+	return true, nil
+}
+
+func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody) {
+	switch body.Type {
+	case pb.RecordType_ENVELOPE:
+		var e pb.Envelope
+		if proto.Unmarshal(body.Payload, &e) == nil {
+			for _, r := range e.Recipients {
+				s.Notify.Envelope(r.User, r.Device)
+			}
+		}
+	case pb.RecordType_DIRECTORY_ENTRY:
+		s.Notify.Directory()
+	case pb.RecordType_MANIFEST:
+		if changed, err := s.LoadManifest(ctx); err == nil && changed {
+			s.Notify.Manifest(s.CurrentManifest().Version)
+		}
+	}
+}
+
+// PublishManifest accepts a network-signed manifest newer than the current one.
+func (s *Service) PublishManifest(ctx context.Context, rec *pb.Record) error {
+	body, err := s.validator(nil).Validate(rec)
+	if err != nil {
+		return invalid(err)
+	}
+	if body.Type != pb.RecordType_MANIFEST {
+		return fmt.Errorf("%w: not a manifest", ErrInvalid)
+	}
+	var m pb.Manifest
+	_ = proto.Unmarshal(body.Payload, &m)
+	if cur := s.CurrentManifest(); cur != nil && m.Version <= cur.Version {
+		return fmt.Errorf("%w: manifest version %d is not newer than %d", ErrConflict, m.Version, cur.Version)
+	}
+	if _, _, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID); err != nil {
+		return err
+	}
+	s.afterApply(ctx, body)
+	return nil
+}

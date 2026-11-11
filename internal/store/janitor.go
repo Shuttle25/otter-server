@@ -43,5 +43,9 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 		}
 		return exec(&st.Oplog, `DELETE FROM oplog WHERE record_key NOT IN (SELECT record_key FROM records)`)
 	})
-	return st, err
+	if err != nil {
+		// e.g. ctx cancelled: the writer may still be filling st, so it must not be read here
+		return ExpireStats{}, err
+	}
+	return st, nil
 }

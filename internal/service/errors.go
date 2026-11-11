@@ -14,6 +14,8 @@ var (
 	ErrConflict     = errors.New("conflict")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrRevoked      = errors.New("revoked")
+	// ErrRetryLater: the data is probably not replicated to this node yet.
+	ErrRetryLater = errors.New("retry later")
 )
 
 // invalid maps validator errors to service errors.

@@ -31,7 +31,8 @@ func startNode(t *testing.T) *node {
 		t.Fatal(err)
 	}
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	svc := service.New(st, []byte("node-node-node-1"), pub)
+	_, nodeKey, _ := ed25519.GenerateKey(nil)
+	svc := service.New(st, nodeKey, pub)
 	gw := New(svc, slog.New(slog.DiscardHandler))
 	srv := httptest.NewServer(gw)
 	t.Cleanup(func() { srv.Close(); st.Close() })

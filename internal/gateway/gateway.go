@@ -66,13 +66,16 @@ func (g *Gateway) Directory() {
 	}
 }
 
-func (g *Gateway) PrekeysLow(user []byte, device uint32, remaining int) {
+func (g *Gateway) PrekeysLow(user []byte, device uint32, owner []byte, remaining int) {
 	for _, s := range g.snapshot() {
 		if s.is(user, device) {
-			s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(remaining)})
+			s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(remaining), OwnerNode: owner})
 		}
 	}
 }
+
+// Manifest implements service.Notifier (manifest events arrive with the mesh wiring).
+func (g *Gateway) Manifest(version uint64) {}
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true}) // native clients send no Origin

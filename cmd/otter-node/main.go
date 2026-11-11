@@ -4,7 +4,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -69,8 +68,7 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodeID := keys.ID16(nodeKey.Public().(ed25519.PublicKey))
-	svc := service.New(st, nodeID, netPub)
+	svc := service.New(st, nodeKey, netPub)
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
 }
 

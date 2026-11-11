@@ -18,13 +18,19 @@ import (
 )
 
 type rec struct {
-	env, dir int
-	low      []int
+	env, dir  int
+	low       []int
+	lowOwner  [][]byte
+	manifests []uint64
 }
 
-func (r *rec) Envelope([]byte, uint32)              { r.env++ }
-func (r *rec) Directory()                           { r.dir++ }
-func (r *rec) PrekeysLow(_ []byte, _ uint32, n int) { r.low = append(r.low, n) }
+func (r *rec) Envelope([]byte, uint32) { r.env++ }
+func (r *rec) Directory()              { r.dir++ }
+func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
+	r.low = append(r.low, n)
+	r.lowOwner = append(r.lowOwner, owner)
+}
+func (r *rec) Manifest(v uint64) { r.manifests = append(r.manifests, v) }
 
 type fx struct {
 	t       *testing.T
@@ -40,10 +46,24 @@ func newFx(t *testing.T) *fx {
 	}
 	t.Cleanup(func() { st.Close() })
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	s := New(st, []byte("node-node-node-1"), pub)
+	_, nodeKey, _ := ed25519.GenerateKey(nil)
+	s := New(st, nodeKey, pub)
 	n := &rec{}
 	s.Notify = n
 	return &fx{t: t, svc: s, netPriv: priv, notes: n}
+}
+
+// manifestRec builds a network-signed manifest listing this node (plus extra nodes).
+func (f *fx) manifestRec(version uint64, extra ...*pb.NodeInfo) *pb.Record {
+	nodes := append([]*pb.NodeInfo{{NodeId: f.svc.NodeID, NodePub: f.svc.NodeKeyPriv.Public().(ed25519.PublicKey), Label: "self"}}, extra...)
+	m := &pb.Manifest{Version: version, NetworkPub: f.svc.NetworkPub, Nodes: nodes}
+	return sign(f.t, pb.RecordType_MANIFEST, keys.ID16(f.svc.NetworkPub), m, f.netPriv)
+}
+
+func (f *fx) withManifest(version uint64, extra ...*pb.NodeInfo) {
+	if _, err := f.svc.ImportRecord(context.Background(), f.manifestRec(version, extra...)); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func r16() []byte { b := make([]byte, 16); rand.Read(b); return b }
@@ -179,7 +199,7 @@ func TestLogin(t *testing.T) {
 	if err := f.svc.VerifyLogin(ctx, nonce, stale); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("stale: %v", err)
 	}
-	if err := f.svc.VerifyLogin(ctx, nonce, &pb.LoginRequest{UserId: r16(), DeviceId: 1, TsMs: ts}); !errors.Is(err, ErrUnauthorized) {
+	if err := f.svc.VerifyLogin(ctx, nonce, &pb.LoginRequest{UserId: r16(), DeviceId: 1, TsMs: ts}); !errors.Is(err, ErrRetryLater) {
 		t.Fatal("unknown user")
 	}
 }
@@ -215,7 +235,7 @@ func TestSubmitAndPrekeys(t *testing.T) {
 
 	ghost := &pb.Envelope{SenderUser: b.id, SenderDevice: 1, Kind: pb.Envelope_SIGNAL,
 		Recipients: []*pb.Recipient{{User: r16(), Device: 1, Content: []byte("x")}}}
-	if _, err := f.svc.Submit(ctx, b.id, sign(t, pb.RecordType_ENVELOPE, b.id, ghost, b.priv), pb.RecordType_ENVELOPE); !errors.Is(err, ErrNotFound) {
+	if _, err := f.svc.Submit(ctx, b.id, sign(t, pb.RecordType_ENVELOPE, b.id, ghost, b.priv), pb.RecordType_ENVELOPE); !errors.Is(err, ErrRetryLater) {
 		t.Fatalf("unknown recipient: %v", err)
 	}
 
@@ -315,7 +335,7 @@ func TestMiscErrors(t *testing.T) {
 	if err := f.svc.VerifyLogin(ctx, nonce, ahead); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("future ts: %v", err)
 	}
-	if _, err := f.svc.FetchPrekeys(ctx, &pb.PreKeyFetchRequest{UserId: r16(), DeviceId: 1}); !errors.Is(err, ErrNotFound) {
+	if _, err := f.svc.FetchPrekeys(ctx, &pb.PreKeyFetchRequest{UserId: r16(), DeviceId: 1}); !errors.Is(err, ErrRetryLater) {
 		t.Fatalf("prekeys unknown user: %v", err)
 	}
 	if _, _, err := f.svc.Manifest(ctx); !errors.Is(err, ErrNotFound) {

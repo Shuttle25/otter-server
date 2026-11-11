@@ -34,7 +34,10 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 			if err != nil {
 				return nil, err
 			}
-			if u == nil || u.Revoked {
+			if u == nil {
+				return nil, fmt.Errorf("%w: recipient %x not known here yet", ErrRetryLater, r.User)
+			}
+			if u.Revoked {
 				return nil, fmt.Errorf("%w: recipient %x", ErrNotFound, r.User)
 			}
 		}
@@ -47,10 +50,8 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 	if err != nil {
 		return nil, err
 	}
-	if applied && env != nil {
-		for _, r := range env.Recipients {
-			s.Notify.Envelope(r.User, r.Device)
-		}
+	if applied {
+		s.afterApply(ctx, body)
 	}
 	return body, nil
 }

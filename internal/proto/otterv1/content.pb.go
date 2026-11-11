@@ -21,6 +21,76 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type GroupEvent_Type int32
+
+const (
+	GroupEvent_TYPE_UNSPECIFIED GroupEvent_Type = 0
+	GroupEvent_CREATED          GroupEvent_Type = 1
+	GroupEvent_ADDED            GroupEvent_Type = 2
+	GroupEvent_REMOVED          GroupEvent_Type = 3
+	GroupEvent_LEFT             GroupEvent_Type = 4
+	GroupEvent_RENAMED          GroupEvent_Type = 5
+	GroupEvent_ADMIN_GRANTED    GroupEvent_Type = 6
+	GroupEvent_ADMIN_REVOKED    GroupEvent_Type = 7
+	GroupEvent_YOU_WERE_REMOVED GroupEvent_Type = 8
+	GroupEvent_UNDECRYPTABLE    GroupEvent_Type = 9
+)
+
+// Enum value maps for GroupEvent_Type.
+var (
+	GroupEvent_Type_name = map[int32]string{
+		0: "TYPE_UNSPECIFIED",
+		1: "CREATED",
+		2: "ADDED",
+		3: "REMOVED",
+		4: "LEFT",
+		5: "RENAMED",
+		6: "ADMIN_GRANTED",
+		7: "ADMIN_REVOKED",
+		8: "YOU_WERE_REMOVED",
+		9: "UNDECRYPTABLE",
+	}
+	GroupEvent_Type_value = map[string]int32{
+		"TYPE_UNSPECIFIED": 0,
+		"CREATED":          1,
+		"ADDED":            2,
+		"REMOVED":          3,
+		"LEFT":             4,
+		"RENAMED":          5,
+		"ADMIN_GRANTED":    6,
+		"ADMIN_REVOKED":    7,
+		"YOU_WERE_REMOVED": 8,
+		"UNDECRYPTABLE":    9,
+	}
+)
+
+func (x GroupEvent_Type) Enum() *GroupEvent_Type {
+	p := new(GroupEvent_Type)
+	*p = x
+	return p
+}
+
+func (x GroupEvent_Type) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GroupEvent_Type) Descriptor() protoreflect.EnumDescriptor {
+	return file_otter_v1_content_proto_enumTypes[0].Descriptor()
+}
+
+func (GroupEvent_Type) Type() protoreflect.EnumType {
+	return &file_otter_v1_content_proto_enumTypes[0]
+}
+
+func (x GroupEvent_Type) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GroupEvent_Type.Descriptor instead.
+func (GroupEvent_Type) EnumDescriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{7, 0}
+}
+
 type ReceiptMessage_Type int32
 
 const (
@@ -51,11 +121,11 @@ func (x ReceiptMessage_Type) String() string {
 }
 
 func (ReceiptMessage_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_otter_v1_content_proto_enumTypes[0].Descriptor()
+	return file_otter_v1_content_proto_enumTypes[1].Descriptor()
 }
 
 func (ReceiptMessage_Type) Type() protoreflect.EnumType {
-	return &file_otter_v1_content_proto_enumTypes[0]
+	return &file_otter_v1_content_proto_enumTypes[1]
 }
 
 func (x ReceiptMessage_Type) Number() protoreflect.EnumNumber {
@@ -64,7 +134,7 @@ func (x ReceiptMessage_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ReceiptMessage_Type.Descriptor instead.
 func (ReceiptMessage_Type) EnumDescriptor() ([]byte, []int) {
-	return file_otter_v1_content_proto_rawDescGZIP(), []int{2, 0}
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{8, 0}
 }
 
 type Content struct {
@@ -73,6 +143,8 @@ type Content struct {
 	//
 	//	*Content_Data
 	//	*Content_Receipt
+	//	*Content_GroupUpdate
+	//	*Content_SenderKey
 	Body          isContent_Body `protobuf_oneof:"body"`
 	SentMs        int64          `protobuf:"varint,10,opt,name=sent_ms,json=sentMs,proto3" json:"sent_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -134,6 +206,24 @@ func (x *Content) GetReceipt() *ReceiptMessage {
 	return nil
 }
 
+func (x *Content) GetGroupUpdate() *GroupUpdate {
+	if x != nil {
+		if x, ok := x.Body.(*Content_GroupUpdate); ok {
+			return x.GroupUpdate
+		}
+	}
+	return nil
+}
+
+func (x *Content) GetSenderKey() *SenderKeyDistribution {
+	if x != nil {
+		if x, ok := x.Body.(*Content_SenderKey); ok {
+			return x.SenderKey
+		}
+	}
+	return nil
+}
+
 func (x *Content) GetSentMs() int64 {
 	if x != nil {
 		return x.SentMs
@@ -153,14 +243,27 @@ type Content_Receipt struct {
 	Receipt *ReceiptMessage `protobuf:"bytes,2,opt,name=receipt,proto3,oneof"`
 }
 
+type Content_GroupUpdate struct {
+	GroupUpdate *GroupUpdate `protobuf:"bytes,3,opt,name=group_update,json=groupUpdate,proto3,oneof"`
+}
+
+type Content_SenderKey struct {
+	SenderKey *SenderKeyDistribution `protobuf:"bytes,4,opt,name=sender_key,json=senderKey,proto3,oneof"`
+}
+
 func (*Content_Data) isContent_Body() {}
 
 func (*Content_Receipt) isContent_Body() {}
+
+func (*Content_GroupUpdate) isContent_Body() {}
+
+func (*Content_SenderKey) isContent_Body() {}
 
 type DataMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MessageId     []byte                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"` // 16 random bytes chosen by sender; receipts refer to it
 	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	Group         *GroupContext          `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"` // set for group messages (sent as SENDER_KEY envelopes)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -209,6 +312,393 @@ func (x *DataMessage) GetText() string {
 	return ""
 }
 
+func (x *DataMessage) GetGroup() *GroupContext {
+	if x != nil {
+		return x.Group
+	}
+	return nil
+}
+
+type GroupContext struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       []byte                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupContext) Reset() {
+	*x = GroupContext{}
+	mi := &file_otter_v1_content_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupContext) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupContext) ProtoMessage() {}
+
+func (x *GroupContext) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupContext.ProtoReflect.Descriptor instead.
+func (*GroupContext) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *GroupContext) GetGroupId() []byte {
+	if x != nil {
+		return x.GroupId
+	}
+	return nil
+}
+
+// Group state (M3). Travels only inside E2E content; nodes never see it.
+type GroupState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       []byte                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`        // 16 random bytes
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                             // 1–64 chars, trimmed
+	Members       [][]byte               `protobuf:"bytes,3,rep,name=members,proto3" json:"members,omitempty"`                       // user ids, unique, 1–100
+	Admins        [][]byte               `protobuf:"bytes,4,rep,name=admins,proto3" json:"admins,omitempty"`                         // subset of members, non-empty while members is non-empty
+	Version       uint64                 `protobuf:"varint,5,opt,name=version,proto3" json:"version,omitempty"`                      // 1 at creation, +1 per change
+	Family        bool                   `protobuf:"varint,6,opt,name=family,proto3" json:"family,omitempty"`                        // D34, immutable
+	CreatedBy     []byte                 `protobuf:"bytes,7,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`  // immutable
+	CreatedMs     int64                  `protobuf:"varint,8,opt,name=created_ms,json=createdMs,proto3" json:"created_ms,omitempty"` // immutable
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupState) Reset() {
+	*x = GroupState{}
+	mi := &file_otter_v1_content_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupState) ProtoMessage() {}
+
+func (x *GroupState) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupState.ProtoReflect.Descriptor instead.
+func (*GroupState) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *GroupState) GetGroupId() []byte {
+	if x != nil {
+		return x.GroupId
+	}
+	return nil
+}
+
+func (x *GroupState) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GroupState) GetMembers() [][]byte {
+	if x != nil {
+		return x.Members
+	}
+	return nil
+}
+
+func (x *GroupState) GetAdmins() [][]byte {
+	if x != nil {
+		return x.Admins
+	}
+	return nil
+}
+
+func (x *GroupState) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *GroupState) GetFamily() bool {
+	if x != nil {
+		return x.Family
+	}
+	return false
+}
+
+func (x *GroupState) GetCreatedBy() []byte {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return nil
+}
+
+func (x *GroupState) GetCreatedMs() int64 {
+	if x != nil {
+		return x.CreatedMs
+	}
+	return 0
+}
+
+// signature = Ed25519(signer account key, "otter-group-v1" || state)
+type SignedGroupState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         []byte                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`   // serialized GroupState (signed as is)
+	Signer        []byte                 `protobuf:"bytes,2,opt,name=signer,proto3" json:"signer,omitempty"` // signer user id
+	Signature     []byte                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignedGroupState) Reset() {
+	*x = SignedGroupState{}
+	mi := &file_otter_v1_content_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignedGroupState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignedGroupState) ProtoMessage() {}
+
+func (x *SignedGroupState) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignedGroupState.ProtoReflect.Descriptor instead.
+func (*SignedGroupState) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SignedGroupState) GetState() []byte {
+	if x != nil {
+		return x.State
+	}
+	return nil
+}
+
+func (x *SignedGroupState) GetSigner() []byte {
+	if x != nil {
+		return x.Signer
+	}
+	return nil
+}
+
+func (x *SignedGroupState) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+type GroupUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         *SignedGroupState      `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupUpdate) Reset() {
+	*x = GroupUpdate{}
+	mi := &file_otter_v1_content_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupUpdate) ProtoMessage() {}
+
+func (x *GroupUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupUpdate.ProtoReflect.Descriptor instead.
+func (*GroupUpdate) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GroupUpdate) GetState() *SignedGroupState {
+	if x != nil {
+		return x.State
+	}
+	return nil
+}
+
+// A member's sender-key distribution message for one group and distribution id, sent 1:1.
+type SenderKeyDistribution struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	GroupId        []byte                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	DistributionId []byte                 `protobuf:"bytes,2,opt,name=distribution_id,json=distributionId,proto3" json:"distribution_id,omitempty"` // 16-byte UUID
+	Message        []byte                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`                                     // libsignal SenderKeyDistributionMessage
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SenderKeyDistribution) Reset() {
+	*x = SenderKeyDistribution{}
+	mi := &file_otter_v1_content_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SenderKeyDistribution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SenderKeyDistribution) ProtoMessage() {}
+
+func (x *SenderKeyDistribution) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SenderKeyDistribution.ProtoReflect.Descriptor instead.
+func (*SenderKeyDistribution) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SenderKeyDistribution) GetGroupId() []byte {
+	if x != nil {
+		return x.GroupId
+	}
+	return nil
+}
+
+func (x *SenderKeyDistribution) GetDistributionId() []byte {
+	if x != nil {
+		return x.DistributionId
+	}
+	return nil
+}
+
+func (x *SenderKeyDistribution) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+// Client-local storage of a group system event (messages.system_data); never sent.
+type GroupEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          GroupEvent_Type        `protobuf:"varint,1,opt,name=type,proto3,enum=otter.v1.GroupEvent_Type" json:"type,omitempty"`
+	Actor         []byte                 `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	Targets       [][]byte               `protobuf:"bytes,3,rep,name=targets,proto3" json:"targets,omitempty"`
+	Name          string                 `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GroupEvent) Reset() {
+	*x = GroupEvent{}
+	mi := &file_otter_v1_content_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GroupEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GroupEvent) ProtoMessage() {}
+
+func (x *GroupEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GroupEvent.ProtoReflect.Descriptor instead.
+func (*GroupEvent) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GroupEvent) GetType() GroupEvent_Type {
+	if x != nil {
+		return x.Type
+	}
+	return GroupEvent_TYPE_UNSPECIFIED
+}
+
+func (x *GroupEvent) GetActor() []byte {
+	if x != nil {
+		return x.Actor
+	}
+	return nil
+}
+
+func (x *GroupEvent) GetTargets() [][]byte {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
+func (x *GroupEvent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
 type ReceiptMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          ReceiptMessage_Type    `protobuf:"varint,1,opt,name=type,proto3,enum=otter.v1.ReceiptMessage_Type" json:"type,omitempty"`
@@ -219,7 +709,7 @@ type ReceiptMessage struct {
 
 func (x *ReceiptMessage) Reset() {
 	*x = ReceiptMessage{}
-	mi := &file_otter_v1_content_proto_msgTypes[2]
+	mi := &file_otter_v1_content_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +721,7 @@ func (x *ReceiptMessage) String() string {
 func (*ReceiptMessage) ProtoMessage() {}
 
 func (x *ReceiptMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_content_proto_msgTypes[2]
+	mi := &file_otter_v1_content_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +734,7 @@ func (x *ReceiptMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReceiptMessage.ProtoReflect.Descriptor instead.
 func (*ReceiptMessage) Descriptor() ([]byte, []int) {
-	return file_otter_v1_content_proto_rawDescGZIP(), []int{2}
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ReceiptMessage) GetType() ReceiptMessage_Type {
@@ -265,17 +755,62 @@ var File_otter_v1_content_proto protoreflect.FileDescriptor
 
 const file_otter_v1_content_proto_rawDesc = "" +
 	"\n" +
-	"\x16otter/v1/content.proto\x12\botter.v1\"\x8d\x01\n" +
+	"\x16otter/v1/content.proto\x12\botter.v1\"\x8b\x02\n" +
 	"\aContent\x12+\n" +
 	"\x04data\x18\x01 \x01(\v2\x15.otter.v1.DataMessageH\x00R\x04data\x124\n" +
-	"\areceipt\x18\x02 \x01(\v2\x18.otter.v1.ReceiptMessageH\x00R\areceipt\x12\x17\n" +
+	"\areceipt\x18\x02 \x01(\v2\x18.otter.v1.ReceiptMessageH\x00R\areceipt\x12:\n" +
+	"\fgroup_update\x18\x03 \x01(\v2\x15.otter.v1.GroupUpdateH\x00R\vgroupUpdate\x12@\n" +
+	"\n" +
+	"sender_key\x18\x04 \x01(\v2\x1f.otter.v1.SenderKeyDistributionH\x00R\tsenderKey\x12\x17\n" +
 	"\asent_ms\x18\n" +
 	" \x01(\x03R\x06sentMsB\x06\n" +
-	"\x04body\"@\n" +
+	"\x04body\"n\n" +
 	"\vDataMessage\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\fR\tmessageId\x12\x12\n" +
-	"\x04text\x18\x02 \x01(\tR\x04text\"\x85\x01\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12,\n" +
+	"\x05group\x18\x03 \x01(\v2\x16.otter.v1.GroupContextR\x05group\")\n" +
+	"\fGroupContext\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\fR\agroupId\"\xdd\x01\n" +
+	"\n" +
+	"GroupState\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\fR\agroupId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\amembers\x18\x03 \x03(\fR\amembers\x12\x16\n" +
+	"\x06admins\x18\x04 \x03(\fR\x06admins\x12\x18\n" +
+	"\aversion\x18\x05 \x01(\x04R\aversion\x12\x16\n" +
+	"\x06family\x18\x06 \x01(\bR\x06family\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\a \x01(\fR\tcreatedBy\x12\x1d\n" +
+	"\n" +
+	"created_ms\x18\b \x01(\x03R\tcreatedMs\"^\n" +
+	"\x10SignedGroupState\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\fR\x05state\x12\x16\n" +
+	"\x06signer\x18\x02 \x01(\fR\x06signer\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\"?\n" +
+	"\vGroupUpdate\x120\n" +
+	"\x05state\x18\x01 \x01(\v2\x1a.otter.v1.SignedGroupStateR\x05state\"u\n" +
+	"\x15SenderKeyDistribution\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\fR\agroupId\x12'\n" +
+	"\x0fdistribution_id\x18\x02 \x01(\fR\x0edistributionId\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\fR\amessage\"\xa9\x02\n" +
+	"\n" +
+	"GroupEvent\x12-\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x19.otter.v1.GroupEvent.TypeR\x04type\x12\x14\n" +
+	"\x05actor\x18\x02 \x01(\fR\x05actor\x12\x18\n" +
+	"\atargets\x18\x03 \x03(\fR\atargets\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04name\"\xa7\x01\n" +
+	"\x04Type\x12\x14\n" +
+	"\x10TYPE_UNSPECIFIED\x10\x00\x12\v\n" +
+	"\aCREATED\x10\x01\x12\t\n" +
+	"\x05ADDED\x10\x02\x12\v\n" +
+	"\aREMOVED\x10\x03\x12\b\n" +
+	"\x04LEFT\x10\x04\x12\v\n" +
+	"\aRENAMED\x10\x05\x12\x11\n" +
+	"\rADMIN_GRANTED\x10\x06\x12\x11\n" +
+	"\rADMIN_REVOKED\x10\a\x12\x14\n" +
+	"\x10YOU_WERE_REMOVED\x10\b\x12\x11\n" +
+	"\rUNDECRYPTABLE\x10\t\"\x85\x01\n" +
 	"\x0eReceiptMessage\x121\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x1d.otter.v1.ReceiptMessage.TypeR\x04type\x12\x1f\n" +
 	"\vmessage_ids\x18\x02 \x03(\fR\n" +
@@ -297,23 +832,35 @@ func file_otter_v1_content_proto_rawDescGZIP() []byte {
 	return file_otter_v1_content_proto_rawDescData
 }
 
-var file_otter_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_otter_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_otter_v1_content_proto_goTypes = []any{
-	(ReceiptMessage_Type)(0), // 0: otter.v1.ReceiptMessage.Type
-	(*Content)(nil),          // 1: otter.v1.Content
-	(*DataMessage)(nil),      // 2: otter.v1.DataMessage
-	(*ReceiptMessage)(nil),   // 3: otter.v1.ReceiptMessage
+	(GroupEvent_Type)(0),          // 0: otter.v1.GroupEvent.Type
+	(ReceiptMessage_Type)(0),      // 1: otter.v1.ReceiptMessage.Type
+	(*Content)(nil),               // 2: otter.v1.Content
+	(*DataMessage)(nil),           // 3: otter.v1.DataMessage
+	(*GroupContext)(nil),          // 4: otter.v1.GroupContext
+	(*GroupState)(nil),            // 5: otter.v1.GroupState
+	(*SignedGroupState)(nil),      // 6: otter.v1.SignedGroupState
+	(*GroupUpdate)(nil),           // 7: otter.v1.GroupUpdate
+	(*SenderKeyDistribution)(nil), // 8: otter.v1.SenderKeyDistribution
+	(*GroupEvent)(nil),            // 9: otter.v1.GroupEvent
+	(*ReceiptMessage)(nil),        // 10: otter.v1.ReceiptMessage
 }
 var file_otter_v1_content_proto_depIdxs = []int32{
-	2, // 0: otter.v1.Content.data:type_name -> otter.v1.DataMessage
-	3, // 1: otter.v1.Content.receipt:type_name -> otter.v1.ReceiptMessage
-	0, // 2: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3,  // 0: otter.v1.Content.data:type_name -> otter.v1.DataMessage
+	10, // 1: otter.v1.Content.receipt:type_name -> otter.v1.ReceiptMessage
+	7,  // 2: otter.v1.Content.group_update:type_name -> otter.v1.GroupUpdate
+	8,  // 3: otter.v1.Content.sender_key:type_name -> otter.v1.SenderKeyDistribution
+	4,  // 4: otter.v1.DataMessage.group:type_name -> otter.v1.GroupContext
+	6,  // 5: otter.v1.GroupUpdate.state:type_name -> otter.v1.SignedGroupState
+	0,  // 6: otter.v1.GroupEvent.type:type_name -> otter.v1.GroupEvent.Type
+	1,  // 7: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
+	8,  // [8:8] is the sub-list for method output_type
+	8,  // [8:8] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_content_proto_init() }
@@ -324,14 +871,16 @@ func file_otter_v1_content_proto_init() {
 	file_otter_v1_content_proto_msgTypes[0].OneofWrappers = []any{
 		(*Content_Data)(nil),
 		(*Content_Receipt)(nil),
+		(*Content_GroupUpdate)(nil),
+		(*Content_SenderKey)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_content_proto_rawDesc), len(file_otter_v1_content_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   3,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

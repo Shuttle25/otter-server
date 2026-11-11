@@ -9,6 +9,8 @@ message Content {
   oneof body {
     DataMessage data = 1;
     ReceiptMessage receipt = 2;
+    GroupUpdate group_update = 3;
+    SenderKeyDistribution sender_key = 4;
   }
   int64 sent_ms = 10;
 }
@@ -16,6 +18,61 @@ message Content {
 message DataMessage {
   bytes message_id = 1; // 16 random bytes chosen by sender; receipts refer to it
   string text = 2;
+  GroupContext group = 3; // set for group messages (sent as SENDER_KEY envelopes)
+}
+
+message GroupContext {
+  bytes group_id = 1;
+}
+
+// Group state (M3). Travels only inside E2E content; nodes never see it.
+message GroupState {
+  bytes group_id = 1;         // 16 random bytes
+  string name = 2;            // 1–64 chars, trimmed
+  repeated bytes members = 3; // user ids, unique, 1–100
+  repeated bytes admins = 4;  // subset of members, non-empty while members is non-empty
+  uint64 version = 5;         // 1 at creation, +1 per change
+  bool family = 6;            // D34, immutable
+  bytes created_by = 7;       // immutable
+  int64 created_ms = 8;       // immutable
+}
+
+// signature = Ed25519(signer account key, "otter-group-v1" || state)
+message SignedGroupState {
+  bytes state = 1; // serialized GroupState (signed as is)
+  bytes signer = 2; // signer user id
+  bytes signature = 3;
+}
+
+message GroupUpdate {
+  SignedGroupState state = 1;
+}
+
+// A member's sender-key distribution message for one group and distribution id, sent 1:1.
+message SenderKeyDistribution {
+  bytes group_id = 1;
+  bytes distribution_id = 2; // 16-byte UUID
+  bytes message = 3;         // libsignal SenderKeyDistributionMessage
+}
+
+// Client-local storage of a group system event (messages.system_data); never sent.
+message GroupEvent {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    CREATED = 1;
+    ADDED = 2;
+    REMOVED = 3;
+    LEFT = 4;
+    RENAMED = 5;
+    ADMIN_GRANTED = 6;
+    ADMIN_REVOKED = 7;
+    YOU_WERE_REMOVED = 8;
+    UNDECRYPTABLE = 9;
+  }
+  Type type = 1;
+  bytes actor = 2;
+  repeated bytes targets = 3;
+  string name = 4;
 }
 
 message ReceiptMessage {

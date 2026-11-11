@@ -2,6 +2,7 @@
 
 The full procedure (requirements, DNS, security checklist) is in the project docs: `docs/11-deployment.md`.
 Every script prints its actions (`==> …`) and stops at the first error.
+First real deployment step by step (what gets installed, every command): [FIRST-DEPLOY.md](FIRST-DEPLOY.md).
 
 ## Build
 

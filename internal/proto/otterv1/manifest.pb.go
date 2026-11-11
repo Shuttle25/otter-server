@@ -228,7 +228,7 @@ type Endpoint struct {
 	Host          string                 `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
 	Port          uint32                 `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`
 	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
-	TlsSpkiPin    []byte                 `protobuf:"bytes,5,opt,name=tls_spki_pin,json=tlsSpkiPin,proto3" json:"tls_spki_pin,omitempty"`
+	TlsSpkiPins   [][]byte               `protobuf:"bytes,5,rep,name=tls_spki_pins,json=tlsSpkiPins,proto3" json:"tls_spki_pins,omitempty"` // SHA-256 of the leaf certificate's SubjectPublicKeyInfo; several during rotation
 	ViaCdn        bool                   `protobuf:"varint,6,opt,name=via_cdn,json=viaCdn,proto3" json:"via_cdn,omitempty"`
 	VlessUuid     string                 `protobuf:"bytes,7,opt,name=vless_uuid,json=vlessUuid,proto3" json:"vless_uuid,omitempty"`
 	RealityPub    []byte                 `protobuf:"bytes,8,opt,name=reality_pub,json=realityPub,proto3" json:"reality_pub,omitempty"`
@@ -298,9 +298,9 @@ func (x *Endpoint) GetPath() string {
 	return ""
 }
 
-func (x *Endpoint) GetTlsSpkiPin() []byte {
+func (x *Endpoint) GetTlsSpkiPins() [][]byte {
 	if x != nil {
-		return x.TlsSpkiPin
+		return x.TlsSpkiPins
 	}
 	return nil
 }
@@ -371,14 +371,13 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12!\n" +
 	"\fpush_capable\x18\x04 \x01(\bR\vpushCapable\x120\n" +
-	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\"\x98\x03\n" +
+	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\"\x9a\x03\n" +
 	"\bEndpoint\x12+\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x17.otter.v1.Endpoint.KindR\x04kind\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x03 \x01(\rR\x04port\x12\x12\n" +
-	"\x04path\x18\x04 \x01(\tR\x04path\x12 \n" +
-	"\ftls_spki_pin\x18\x05 \x01(\fR\n" +
-	"tlsSpkiPin\x12\x17\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\"\n" +
+	"\rtls_spki_pins\x18\x05 \x03(\fR\vtlsSpkiPins\x12\x17\n" +
 	"\avia_cdn\x18\x06 \x01(\bR\x06viaCdn\x12\x1d\n" +
 	"\n" +
 	"vless_uuid\x18\a \x01(\tR\tvlessUuid\x12\x1f\n" +

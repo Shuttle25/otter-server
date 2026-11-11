@@ -31,7 +31,7 @@ message Endpoint {
   string host = 2;
   uint32 port = 3;
   string path = 4;
-  bytes tls_spki_pin = 5;
+  repeated bytes tls_spki_pins = 5; // SHA-256 of the leaf certificate's SubjectPublicKeyInfo; several during rotation
   bool via_cdn = 6;
   string vless_uuid = 7;
   bytes reality_pub = 8;

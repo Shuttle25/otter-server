@@ -69,6 +69,13 @@ message InviteUsed {
   bytes user_id = 2;
 }
 
+// Payload of PREKEY_CONSUMED (author = the node that handed the key out).
+message PrekeyConsumed {
+  bytes user_id = 1;
+  uint32 device_id = 2;
+  repeated uint32 key_ids = 3;
+}
+
 message Ack {
   // Record keys (author || id, 32 bytes) of acknowledged ENVELOPE records.
   repeated bytes envelope_ids = 1;

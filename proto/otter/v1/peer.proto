@@ -1,0 +1,60 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+// Node-to-node frames on <secret path>/peer. Handshake: acceptor sends hello, dialer sends auth,
+// acceptor answers auth_ok. Then both sides send subscribe and exchange batches.
+message PeerFrame {
+  oneof kind {
+    PeerHello hello = 1;
+    PeerAuth auth = 2;
+    PeerAuthOk auth_ok = 3;
+    PeerSubscribe subscribe = 4;
+    PeerBatch batch = 5;
+    PeerBatchAck batch_ack = 6;
+    PeerError error = 7;
+  }
+}
+
+message PeerHello {
+  uint32 protocol_version = 1;
+  bytes node_id = 2;
+  bytes nonce = 3;
+  uint64 manifest_version = 4;
+}
+
+// signature = Ed25519(node key, PeerAuthMessage(acceptor_id, acceptor_nonce, ts_ms))
+message PeerAuth {
+  bytes node_id = 1;
+  int64 ts_ms = 2;
+  bytes signature = 3;
+  bytes nonce = 4; // challenge for the acceptor
+  uint64 manifest_version = 5;
+}
+
+// signature = Ed25519(acceptor key, PeerAuthMessage(dialer_id, dialer_nonce, ts_ms))
+message PeerAuthOk {
+  int64 ts_ms = 1;
+  bytes signature = 2;
+}
+
+message PeerSubscribe {
+  int64 cursor = 1; // "send me your oplog entries with seq > cursor"
+}
+
+message PeerBatch {
+  repeated bytes records = 1; // serialized Record
+  int64 last_seq = 2;
+  bool caught_up = 3;
+}
+
+message PeerBatchAck {
+  int64 seq = 1;
+}
+
+message PeerError {
+  string message = 1;
+}

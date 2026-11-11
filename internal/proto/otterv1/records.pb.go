@@ -556,6 +556,67 @@ func (x *InviteUsed) GetUserId() []byte {
 	return nil
 }
 
+// Payload of PREKEY_CONSUMED (author = the node that handed the key out).
+type PrekeyConsumed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        []byte                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	DeviceId      uint32                 `protobuf:"varint,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	KeyIds        []uint32               `protobuf:"varint,3,rep,packed,name=key_ids,json=keyIds,proto3" json:"key_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrekeyConsumed) Reset() {
+	*x = PrekeyConsumed{}
+	mi := &file_otter_v1_records_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrekeyConsumed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrekeyConsumed) ProtoMessage() {}
+
+func (x *PrekeyConsumed) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrekeyConsumed.ProtoReflect.Descriptor instead.
+func (*PrekeyConsumed) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PrekeyConsumed) GetUserId() []byte {
+	if x != nil {
+		return x.UserId
+	}
+	return nil
+}
+
+func (x *PrekeyConsumed) GetDeviceId() uint32 {
+	if x != nil {
+		return x.DeviceId
+	}
+	return 0
+}
+
+func (x *PrekeyConsumed) GetKeyIds() []uint32 {
+	if x != nil {
+		return x.KeyIds
+	}
+	return nil
+}
+
 type Ack struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Record keys (author || id, 32 bytes) of acknowledged ENVELOPE records.
@@ -567,7 +628,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_otter_v1_records_proto_msgTypes[7]
+	mi := &file_otter_v1_records_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +640,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[7]
+	mi := &file_otter_v1_records_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +653,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{7}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Ack) GetEnvelopeIds() [][]byte {
@@ -654,7 +715,11 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\n" +
 	"InviteUsed\x12\x1b\n" +
 	"\tinvite_id\x18\x01 \x01(\fR\binviteId\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\fR\x06userId\"E\n" +
+	"\auser_id\x18\x02 \x01(\fR\x06userId\"_\n" +
+	"\x0ePrekeyConsumed\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1b\n" +
+	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\x12\x17\n" +
+	"\akey_ids\x18\x03 \x03(\rR\x06keyIds\"E\n" +
 	"\x03Ack\x12!\n" +
 	"\fenvelope_ids\x18\x01 \x03(\fR\venvelopeIds\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId*\xf5\x01\n" +
@@ -693,7 +758,7 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_otter_v1_records_proto_goTypes = []any{
 	(RecordType)(0),        // 0: otter.v1.RecordType
 	(*Record)(nil),         // 1: otter.v1.Record
@@ -703,7 +768,8 @@ var file_otter_v1_records_proto_goTypes = []any{
 	(*InviteRights)(nil),   // 5: otter.v1.InviteRights
 	(*Invite)(nil),         // 6: otter.v1.Invite
 	(*InviteUsed)(nil),     // 7: otter.v1.InviteUsed
-	(*Ack)(nil),            // 8: otter.v1.Ack
+	(*PrekeyConsumed)(nil), // 8: otter.v1.PrekeyConsumed
+	(*Ack)(nil),            // 9: otter.v1.Ack
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
 	0, // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
@@ -725,7 +791,7 @@ func file_otter_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

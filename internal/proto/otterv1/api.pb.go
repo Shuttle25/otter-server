@@ -767,6 +767,7 @@ func (x *ManifestResponse) GetManifest() *Record {
 type PrekeysLow struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Remaining     uint32                 `protobuf:"varint,1,opt,name=remaining,proto3" json:"remaining,omitempty"`
+	OwnerNode     []byte                 `protobuf:"bytes,2,opt,name=owner_node,json=ownerNode,proto3" json:"owner_node,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -806,6 +807,13 @@ func (x *PrekeysLow) GetRemaining() uint32 {
 		return x.Remaining
 	}
 	return 0
+}
+
+func (x *PrekeysLow) GetOwnerNode() []byte {
+	if x != nil {
+		return x.OwnerNode
+	}
+	return nil
 }
 
 type Empty struct {
@@ -891,10 +899,12 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\"@\n" +
 	"\x10ManifestResponse\x12,\n" +
-	"\bmanifest\x18\x01 \x01(\v2\x10.otter.v1.RecordR\bmanifest\"*\n" +
+	"\bmanifest\x18\x01 \x01(\v2\x10.otter.v1.RecordR\bmanifest\"I\n" +
 	"\n" +
 	"PrekeysLow\x12\x1c\n" +
-	"\tremaining\x18\x01 \x01(\rR\tremaining\"\a\n" +
+	"\tremaining\x18\x01 \x01(\rR\tremaining\x12\x1d\n" +
+	"\n" +
+	"owner_node\x18\x02 \x01(\fR\townerNode\"\a\n" +
 	"\x05Empty*\xc2\x01\n" +
 	"\x06Status\x12\r\n" +
 	"\tSTATUS_OK\x10\x00\x12\x16\n" +

@@ -4,6 +4,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +22,8 @@ import (
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/nodecheck"
+	"ottermsg/server/internal/probe"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/replication"
 	"ottermsg/server/internal/service"
@@ -29,9 +33,12 @@ import (
 
 var version = "dev"
 
-const usage = `usage: otter-node <command> --config FILE
-  run                  serve clients
-  import FILE...       apply signed record files (manifest, bootstrap invite)
+const usage = `usage: otter-node <command>
+  run --config FILE            serve clients
+  import --config FILE FILE... apply signed record files (manifest, bootstrap invite)
+  check --config FILE          verify config, keys, manifest and TLS before starting
+  backup --config FILE --out F consistent database copy (safe while running)
+  probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
   version`
 
 func main() {
@@ -94,10 +101,27 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintln(out, version)
 		return nil
 	}
+	if cmd == "probe" {
+		return runProbe(ctx, args[1:], out)
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/otter/node.toml", "config file")
+	outPath := fs.String("out", "", "backup file (backup)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
+	}
+	if cmd == "check" { // must not touch the database
+		lines, err := nodecheck.Run(*cfgPath)
+		for _, l := range lines {
+			fmt.Fprintln(out, l)
+		}
+		return err
+	}
+	if cmd != "run" && cmd != "import" && cmd != "backup" {
+		return errors.New(usage)
+	}
+	if cmd == "backup" && *outPath == "" {
+		return errors.New("backup: --out is required")
 	}
 	a, err := open(*cfgPath, out)
 	if err != nil {
@@ -121,6 +145,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			}
 			fmt.Fprintf(out, "%s: %s\n", f, state)
 		}
+		return nil
+	case "backup":
+		if err := a.st.Backup(ctx, *outPath); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "backup written to %s\n", *outPath)
 		return nil
 	case "run":
 		return serve(ctx, a)
@@ -176,4 +206,46 @@ func serve(ctx context.Context, a *app) error {
 		defer cancel()
 		return srv.Shutdown(sctx)
 	}
+}
+
+func runProbe(ctx context.Context, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	var o probe.Options
+	var pins pinList
+	var expect string
+	fs.StringVar(&o.URL, "url", "", "wss://host:port/path")
+	fs.Var(&pins, "pin", "base64 SHA-256 SPKI pin (repeatable)")
+	fs.StringVar(&o.Addr, "addr", "", "connect to HOST:PORT instead of the URL host")
+	fs.BoolVar(&o.Insecure, "insecure", false, "no pin: skip certificate verification")
+	fs.StringVar(&expect, "expect-node", "", "expected node id (hex)")
+	fs.DurationVar(&o.Timeout, "timeout", 10*time.Second, "overall timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	o.Pins = pins
+	if expect != "" {
+		id, err := hex.DecodeString(expect)
+		if err != nil {
+			return fmt.Errorf("--expect-node: %w", err)
+		}
+		o.ExpectNode = id
+	}
+	r, err := probe.Run(ctx, o)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "ok node_id=%x protocol=%d rtt=%dms\n", r.NodeID, r.Protocol, r.RTT.Milliseconds())
+	return nil
+}
+
+type pinList [][]byte
+
+func (p *pinList) String() string { return fmt.Sprint(len(*p)) }
+func (p *pinList) Set(v string) error {
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil || len(b) != 32 {
+		return fmt.Errorf("pin must be base64 of 32 bytes")
+	}
+	*p = append(*p, b)
+	return nil
 }

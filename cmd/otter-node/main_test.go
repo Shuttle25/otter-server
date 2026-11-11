@@ -125,3 +125,19 @@ path = %q
 		t.Fatal("run did not stop")
 	}
 }
+
+func TestProbeNeedsPin(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"probe", "--url", "wss://x:1/p"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "--pin") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestBackupNeedsOut(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"backup", "--config", "/nonexistent.toml"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "--out") {
+		t.Fatalf("got %v", err)
+	}
+}

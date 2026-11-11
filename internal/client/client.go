@@ -51,17 +51,39 @@ func URL(ep *pb.Endpoint, allowPlain bool) (string, error) {
 	}
 }
 
+// DialOptions tune Dial for operator tools.
+type DialOptions struct {
+	AllowPlain bool
+	Addr       string // dial this host:port instead of the endpoint's; SNI and checks still use ep.Host
+	Insecure   bool   // without pins: skip certificate verification (decoy checks only)
+}
+
 // Dial connects to ep (pinned TLS for WSS) and waits for the node's hello.
 func Dial(ctx context.Context, ep *pb.Endpoint, allowPlain bool) (*Conn, error) {
-	url, err := URL(ep, allowPlain)
+	return DialWith(ctx, ep, DialOptions{AllowPlain: allowPlain})
+}
+
+// DialWith connects to ep (pinned TLS for WSS) and waits for the node's hello.
+func DialWith(ctx context.Context, ep *pb.Endpoint, o DialOptions) (*Conn, error) {
+	url, err := URL(ep, o.AllowPlain)
 	if err != nil {
 		return nil, err
 	}
-	opts := &websocket.DialOptions{}
+	tr := &http.Transport{}
 	if ep.Kind == pb.Endpoint_WSS {
-		opts.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: pinning.ClientConfig(ep.Host, ep.TlsSpkiPins)}}
+		cfg := pinning.ClientConfig(ep.Host, ep.TlsSpkiPins)
+		if o.Insecure && len(ep.TlsSpkiPins) == 0 {
+			cfg.InsecureSkipVerify = true
+		}
+		tr.TLSClientConfig = cfg
 	}
-	c, _, err := websocket.Dial(ctx, url, opts)
+	if o.Addr != "" {
+		d := &net.Dialer{}
+		tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, network, o.Addr)
+		}
+	}
+	c, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPClient: &http.Client{Transport: tr}})
 	if err != nil {
 		return nil, err
 	}

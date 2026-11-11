@@ -45,9 +45,15 @@ type UserResolver interface {
 	UserKey(userID []byte) (UserKey, bool)
 }
 
+// NodeResolver looks up nodes of the current manifest (node-authored records).
+type NodeResolver interface {
+	NodeKey(nodeID []byte) (ed25519.PublicKey, bool)
+}
+
 type Validator struct {
 	NetworkPub ed25519.PublicKey
 	Users      UserResolver
+	Nodes      NodeResolver // nil: node-authored records are rejected
 	Now        func() time.Time
 }
 
@@ -113,6 +119,15 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 			}
 		}
 		return ed25519.PublicKey(e.AccountPub), nil
+	case b.Type == pb.RecordType_PREKEY_CONSUMED:
+		if v.Nodes == nil {
+			return nil, ErrUnknownAuthor
+		}
+		k, ok := v.Nodes.NodeKey(b.Author)
+		if !ok {
+			return nil, ErrUnknownAuthor
+		}
+		return k, nil
 	default:
 		k, ok := v.Users.UserKey(b.Author)
 		if !ok {
@@ -158,6 +173,12 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 	case pb.RecordType_INVITE_USED:
 		var u pb.InviteUsed
 		if err := proto.Unmarshal(b.Payload, &u); err != nil || len(u.InviteId) != 32 || !bytes.Equal(u.UserId, b.Author) {
+			return ErrBadPayload
+		}
+	case pb.RecordType_PREKEY_CONSUMED:
+		var c pb.PrekeyConsumed
+		if err := proto.Unmarshal(b.Payload, &c); err != nil || len(c.UserId) != 16 || c.DeviceId == 0 ||
+			len(c.KeyIds) == 0 || len(c.KeyIds) > MaxOneTimePrekeys {
 			return ErrBadPayload
 		}
 	case pb.RecordType_ENVELOPE:

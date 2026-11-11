@@ -299,3 +299,53 @@ func validPrekeys() *pb.PreKeys {
 func envelope(sender []byte, device uint32, kind pb.Envelope_Kind, rs []*pb.Recipient) *pb.Envelope {
 	return &pb.Envelope{SenderUser: sender, SenderDevice: device, Kind: kind, Recipients: rs}
 }
+
+type fakeNodes map[string]ed25519.PublicKey
+
+func (f fakeNodes) NodeKey(id []byte) (ed25519.PublicKey, bool) { k, ok := f[string(id)]; return k, ok }
+
+func TestNodeAuthoredRecords(t *testing.T) {
+	netPub, _, _ := ed25519.GenerateKey(nil)
+	nodePub, nodePriv, _ := ed25519.GenerateKey(nil)
+	nodeID := keys.ID16(nodePub)
+	otherPub, otherPriv, _ := ed25519.GenerateKey(nil)
+	userPub, userPriv, _ := ed25519.GenerateKey(nil)
+	userID := keys.ID16(userPub)
+	users := fakeUsers{string(userID): {Pub: userPub}}
+	v := &Validator{NetworkPub: netPub, Users: users, Nodes: fakeNodes{string(nodeID): nodePub}, Now: func() time.Time { return now }}
+	consumed := func(ids ...uint32) []byte {
+		return payload(&pb.PrekeyConsumed{UserId: userID, DeviceId: 1, KeyIds: ids})
+	}
+	many := make([]uint32, MaxOneTimePrekeys+1)
+
+	cases := []struct {
+		name string
+		v    *Validator
+		rec  *pb.Record
+		want error
+	}{
+		{"node signed ok", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID, Payload: consumed(7)}, nodePriv), nil},
+		{"unknown node", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: keys.ID16(otherPub), Payload: consumed(7)}, otherPriv), ErrUnknownAuthor},
+		{"user signed", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: userID, Payload: consumed(7)}, userPriv), ErrUnknownAuthor},
+		{"wrong node key", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID, Payload: consumed(7)}, otherPriv), ErrBadSignature},
+		{"no key ids", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID, Payload: consumed()}, nodePriv), ErrBadPayload},
+		{"too many key ids", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID, Payload: consumed(many...)}, nodePriv), ErrBadPayload},
+		{"short user id", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID,
+			Payload: payload(&pb.PrekeyConsumed{UserId: userID[:15], DeviceId: 1, KeyIds: []uint32{1}})}, nodePriv), ErrBadPayload},
+		{"device 0", v, mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID,
+			Payload: payload(&pb.PrekeyConsumed{UserId: userID, KeyIds: []uint32{1}})}, nodePriv), ErrBadPayload},
+		{"no node resolver", &Validator{NetworkPub: netPub, Users: users, Now: v.Now},
+			mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_PREKEY_CONSUMED, Author: nodeID, Payload: consumed(7)}, nodePriv), ErrUnknownAuthor},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := c.v.Validate(c.rec)
+			if c.want == nil && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if c.want != nil && !errors.Is(err, c.want) {
+				t.Fatalf("want %v, got %v", c.want, err)
+			}
+		})
+	}
+}

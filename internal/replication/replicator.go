@@ -197,3 +197,13 @@ func (r *Replicator) Status() []PeerStatus {
 	}
 	return out
 }
+
+// DropPeer closes the session with node id, if any (used to simulate a cut link; the next dial may reconnect).
+func (r *Replicator) DropPeer(id []byte) {
+	r.reg.mu.Lock()
+	s := r.reg.byPeer[string(id)]
+	r.reg.mu.Unlock()
+	if s != nil {
+		s.close()
+	}
+}

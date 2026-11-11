@@ -185,3 +185,21 @@ func (s *Store) LatestManifest(ctx context.Context) (uint64, []byte, error) {
 	}
 	return v, raw, err
 }
+
+// RecordKeys lists all stored record keys in order (for convergence checks in tests and diagnostics).
+func (s *Store) RecordKeys(ctx context.Context) ([][]byte, error) {
+	rows, err := s.r.QueryContext(ctx, `SELECT record_key FROM records ORDER BY record_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][]byte
+	for rows.Next() {
+		var k []byte
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}

@@ -17,6 +17,8 @@ type User struct {
 	Revoked    bool
 	CanInvite  bool
 	EntryRaw   []byte // serialized pb.Record of the current DIRECTORY_ENTRY
+	// UsernameConflict: the user lost a replicated username clash; Username is "<original>#<hex>".
+	UsernameConflict bool
 }
 
 type InviteState struct {
@@ -50,18 +52,18 @@ func (s *Store) UserKey(id []byte) (records.UserKey, bool) {
 // UserByID returns nil, nil when the user does not exist.
 func (s *Store) UserByID(ctx context.Context, id []byte) (*User, error) {
 	u := &User{ID: id}
-	var revoked, canInvite int
+	var revoked, canInvite, conflict int
 	err := s.r.QueryRowContext(ctx,
-		`SELECT u.username, u.account_pub, u.version, u.revoked, u.can_invite, r.raw
+		`SELECT u.username, u.account_pub, u.version, u.revoked, u.can_invite, u.username_conflict, r.raw
 		 FROM users u JOIN records r ON r.record_key=u.entry_key WHERE u.user_id=?`, id).
-		Scan(&u.Username, &u.AccountPub, &u.Version, &revoked, &canInvite, &u.EntryRaw)
+		Scan(&u.Username, &u.AccountPub, &u.Version, &revoked, &canInvite, &conflict, &u.EntryRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	u.Revoked, u.CanInvite = revoked != 0, canInvite != 0
+	u.Revoked, u.CanInvite, u.UsernameConflict = revoked != 0, canInvite != 0, conflict != 0
 	return u, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -188,10 +189,18 @@ func wins(createdA int64, idA []byte, createdB int64, idB []byte) bool {
 }
 
 // applyDirectoryEntry upserts the users row. A username clash fails for local submissions; for replicated
-// entries the lower (entry created_ms, user_id) keeps the name and the other becomes name#<hex>.
+// entries (and local updates of a user who already lost that clash) the lower (registration time, user_id) keeps the
+// name and the other becomes name#<hex>. Registration time = registered_ms, or the entry's created_ms when 0 (D40).
 func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, created, now int64) error {
+	rank := created
+	if e.RegisteredMs > 0 {
+		rank = e.RegisteredMs
+	}
 	var cur uint64
-	err := tx.QueryRowContext(ctx, `SELECT version FROM users WHERE user_id=?`, e.UserId).Scan(&cur)
+	var curName string
+	var curConflict int
+	err := tx.QueryRowContext(ctx, `SELECT version, username, username_conflict FROM users WHERE user_id=?`, e.UserId).
+		Scan(&cur, &curName, &curConflict)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -199,6 +208,8 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 	if exists && e.Version <= cur {
 		return nil // older or same version: stored as a record, users row unchanged
 	}
+	// an update by a user who already lost this clash is ranked like a replicated entry
+	lostBefore := exists && curConflict != 0 && strings.HasPrefix(curName, e.Username+"#")
 	name, conflict := e.Username, 0
 	var owner []byte
 	var ownerCreated int64
@@ -207,9 +218,9 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 	case errors.Is(err, sql.ErrNoRows) || (err == nil && bytes.Equal(owner, e.UserId)):
 	case err != nil:
 		return err
-	case !it.fromPeer:
+	case !it.fromPeer && !lostBefore:
 		return ErrUsernameTaken
-	case wins(created, e.UserId, ownerCreated, owner):
+	case wins(rank, e.UserId, ownerCreated, owner):
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
 			conflictName(e.Username, owner), owner); err != nil {
 			return err
@@ -221,10 +232,10 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO users(user_id,username,account_pub,entry_key,version,can_invite,created_ms,entry_created_ms,username_conflict)
 			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			e.UserId, name, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now, created, conflict)
+			e.UserId, name, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now, rank, conflict)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, entry_created_ms=?, username_conflict=? WHERE user_id=?`,
-		name, it.key, e.Version, created, conflict, e.UserId)
+		name, it.key, e.Version, rank, conflict, e.UserId)
 	return err
 }

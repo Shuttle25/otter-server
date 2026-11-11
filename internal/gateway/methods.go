@@ -119,6 +119,15 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, err
 		}
 		return svc.FetchPrekeys(ctx, &r)
+	case "directory.update":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return &pb.Empty{}, svc.UpdateDirectoryEntry(ctx, s.user, r.Record)
 	case "prekeys.upload", "msg.send", "msg.ack", "invite.create":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {

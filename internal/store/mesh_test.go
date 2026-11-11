@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -215,5 +216,53 @@ func TestExpire(t *testing.T) {
 	}
 	if box, _ := s.Mailbox(ctx, rcpt, 1, 10); len(box) != 0 {
 		t.Fatal("mailbox resurrected")
+	}
+}
+
+// D40: a profile update (v2, created late) keeps the clash rank of the first registration.
+func TestClashRankUsesRegisteredMs(t *testing.T) {
+	for _, order := range []string{"x-first", "y-first"} {
+		s, _ := open(t)
+		ctx := context.Background()
+		x, y := r16(), r16()
+		ex := entry(x, "anna", 2)
+		ex.RegisteredMs = 1000
+		ix := mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, x, ex, 9000)
+		iy := mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, y, entry(y, "anna", 1), 5000)
+		if order == "x-first" {
+			replicate(t, s, ix)
+			replicate(t, s, iy)
+		} else {
+			replicate(t, s, iy)
+			replicate(t, s, ix)
+		}
+		ux, _ := s.UserByID(ctx, x)
+		uy, _ := s.UserByID(ctx, y)
+		if ux.Username != "anna" || uy.Username != "anna#"+hex.EncodeToString(y[:4]) || !uy.UsernameConflict {
+			t.Fatalf("%s: x=%s y=%s", order, ux.Username, uy.Username)
+		}
+	}
+}
+
+// A member who lost a clash can still publish a profile update locally (keeps the suffixed name).
+func TestSuffixedUserUpdatesLocally(t *testing.T) {
+	s, _ := open(t)
+	ctx := context.Background()
+	x, y := r16(), r16()
+	replicate(t, s, mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, x, entry(x, "anna", 1), 1000))
+	replicate(t, s, mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, y, entry(y, "anna", 1), 5000))
+	ey := entry(y, "anna", 2)
+	ey.RegisteredMs = 5000
+	if err := apply(t, s, mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, y, ey, 9000)); err != nil {
+		t.Fatalf("suffixed user's update refused: %v", err)
+	}
+	uy, _ := s.UserByID(ctx, y)
+	if uy.Version != 2 || uy.Username != "anna#"+hex.EncodeToString(y[:4]) {
+		t.Fatalf("%+v", uy)
+	}
+	// a brand-new local registration of a taken name still fails
+	z := r16()
+	if err := apply(t, s, mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, z, entry(z, "anna", 1), 9500)); !errors.Is(err, ErrUsernameTaken) {
+		t.Fatalf("want ErrUsernameTaken, got %v", err)
 	}
 }

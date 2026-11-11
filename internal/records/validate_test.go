@@ -82,6 +82,16 @@ func TestValidate(t *testing.T) {
 			e.DisplayName = strings.Repeat("я", 65)
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_DIRECTORY_ENTRY, Author: keys.ID16(newPub), Payload: payload(e)}, newPriv)
 		}, ErrBadPayload},
+		{"directory entry registered_ms = created_ms ok", func() *pb.Record {
+			e := entry(newPub, "mama")
+			e.RegisteredMs = now.UnixMilli()
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_DIRECTORY_ENTRY, Author: keys.ID16(newPub), CreatedMs: now.UnixMilli(), Payload: payload(e)}, newPriv)
+		}, nil},
+		{"directory entry registered after created", func() *pb.Record {
+			e := entry(newPub, "mama")
+			e.RegisteredMs = now.Add(10 * time.Minute).UnixMilli()
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_DIRECTORY_ENTRY, Author: keys.ID16(newPub), CreatedMs: now.UnixMilli(), Payload: payload(e)}, newPriv)
+		}, ErrBadPayload},
 		{"directory entry author != user_id", func() *pb.Record {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_DIRECTORY_ENTRY, Author: userID, Payload: payload(entry(newPub, "mama"))}, newPriv)
 		}, ErrBadAuthor},

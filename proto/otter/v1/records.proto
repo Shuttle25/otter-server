@@ -46,6 +46,7 @@ message DirectoryEntry {
   bytes identity_sig = 6;  // XEdDSA by identity key over account_pub (checked by clients)
   uint64 version = 7;
   bool can_invite = 8;
+  int64 registered_ms = 9; // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
 }
 
 message Revocation {

@@ -155,6 +155,9 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 			len(e.IdentityPub) != 33 || len(e.IdentitySig) != 64 || e.Version == 0 {
 			return ErrBadPayload
 		}
+		if e.RegisteredMs > b.CreatedMs+int64(5*time.Minute/time.Millisecond) { // D40: registration precedes the entry
+			return ErrBadPayload
+		}
 	case pb.RecordType_ACK:
 		var a pb.Ack
 		if err := proto.Unmarshal(b.Payload, &a); err != nil || len(a.EnvelopeIds) == 0 || len(a.EnvelopeIds) > MaxAckIDs {

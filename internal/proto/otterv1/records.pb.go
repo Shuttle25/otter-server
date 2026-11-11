@@ -250,6 +250,7 @@ type DirectoryEntry struct {
 	IdentitySig   []byte                 `protobuf:"bytes,6,opt,name=identity_sig,json=identitySig,proto3" json:"identity_sig,omitempty"` // XEdDSA by identity key over account_pub (checked by clients)
 	Version       uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
 	CanInvite     bool                   `protobuf:"varint,8,opt,name=can_invite,json=canInvite,proto3" json:"can_invite,omitempty"`
+	RegisteredMs  int64                  `protobuf:"varint,9,opt,name=registered_ms,json=registeredMs,proto3" json:"registered_ms,omitempty"` // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -338,6 +339,13 @@ func (x *DirectoryEntry) GetCanInvite() bool {
 		return x.CanInvite
 	}
 	return false
+}
+
+func (x *DirectoryEntry) GetRegisteredMs() int64 {
+	if x != nil {
+		return x.RegisteredMs
+	}
+	return 0
 }
 
 type Revocation struct {
@@ -687,7 +695,7 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"created_ms\x18\x04 \x01(\x03R\tcreatedMs\x12\x1d\n" +
 	"\n" +
 	"expires_ms\x18\x05 \x01(\x03R\texpiresMs\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\x88\x02\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\"\xad\x02\n" +
 	"\x0eDirectoryEntry\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +
@@ -698,7 +706,8 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\fidentity_sig\x18\x06 \x01(\fR\videntitySig\x12\x18\n" +
 	"\aversion\x18\a \x01(\x04R\aversion\x12\x1d\n" +
 	"\n" +
-	"can_invite\x18\b \x01(\bR\tcanInvite\"=\n" +
+	"can_invite\x18\b \x01(\bR\tcanInvite\x12#\n" +
+	"\rregistered_ms\x18\t \x01(\x03R\fregisteredMs\"=\n" +
 	"\n" +
 	"Revocation\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x16\n" +

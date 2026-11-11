@@ -14,9 +14,13 @@ type Config struct {
 	SiteDir string
 }
 
-func NewServer(cfg Config, ws http.Handler) *http.Server {
+// NewServer routes cfg.Path to the client handler and cfg.Path+"/peer" to the peer handler (nil: not mounted).
+func NewServer(cfg Config, ws, peer http.Handler) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle(cfg.Path, ws)
+	if peer != nil {
+		mux.Handle(cfg.Path+"/peer", peer)
+	}
 	var site http.Handler = http.NotFoundHandler()
 	if cfg.SiteDir != "" {
 		site = http.FileServer(http.Dir(cfg.SiteDir))

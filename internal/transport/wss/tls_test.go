@@ -36,7 +36,7 @@ func TestServeTLS(t *testing.T) {
 	ln.Close()
 	cfg := Config{Listen: addr, Path: "/p", TLSCert: certFile, TLSKey: keyFile}
 	ws := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(299) })
-	srv := NewServer(cfg, ws)
+	srv := NewServer(cfg, ws, nil)
 	go Serve(srv, cfg)
 	defer srv.Close()
 

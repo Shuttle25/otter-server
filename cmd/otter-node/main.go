@@ -21,6 +21,7 @@ import (
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/replication"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 	"ottermsg/server/internal/transport/wss"
@@ -149,11 +150,18 @@ func serve(ctx context.Context, a *app) error {
 			a.log.Warn("this node is not listed in the manifest", "manifest_version", v, "node_id", fmt.Sprintf("%x", a.svc.NodeID))
 		}
 	}
-	gw := gateway.New(a.svc, a.log)
-	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
-	srv := wss.NewServer(wcfg, gw)
+	a.svc.Log = a.log
+	if _, err := a.svc.LoadManifest(ctx); err != nil {
+		return fmt.Errorf("load manifest: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	gw := gateway.New(a.svc, a.log)
+	repl := replication.New(a.svc, replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, a.log)
+	go repl.Run(ctx) // before serving, so accepted peer sessions use the run context
+	go a.svc.RunJanitor(ctx, 10*time.Minute)
+	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
+	srv := wss.NewServer(wcfg, gw, repl)
 	errc := make(chan error, 1)
 	go func() { errc <- wss.Serve(srv, wcfg) }()
 	a.log.Info("otter-node started", "listen", a.cfg.WSS.Listen, "node_id", fmt.Sprintf("%x", a.svc.NodeID), "version", version)

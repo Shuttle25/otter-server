@@ -10,7 +10,7 @@ import (
 	"ottermsg/server/internal/service"
 )
 
-var public = map[string]bool{"ping": true, "manifest.get": true, "register": true, "auth.login": true}
+var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true, "auth.login": true}
 
 func status(err error) pb.Status {
 	switch {
@@ -24,6 +24,8 @@ func status(err error) pb.Status {
 		return pb.Status_STATUS_UNAUTHORIZED
 	case errors.Is(err, service.ErrRevoked):
 		return pb.Status_STATUS_REVOKED
+	case errors.Is(err, service.ErrRetryLater):
+		return pb.Status_STATUS_RETRY_LATER
 	default:
 		return pb.Status_STATUS_INTERNAL
 	}
@@ -87,10 +89,24 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		s.mu.Lock()
 		s.user, s.device = r.UserId, r.DeviceId
 		s.mu.Unlock()
-		s.g.add(s)
 		go s.deliverLoop()
 		s.kick()
+		// prekey owners that are running low (this or other nodes): the client tops them up
+		if low, err := svc.PrekeyStatus(ctx, r.UserId, r.DeviceId); err == nil {
+			for _, l := range low {
+				s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(l.Remaining), OwnerNode: l.Node})
+			}
+		}
 		return &pb.Empty{}, nil
+	case "manifest.publish":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return &pb.Empty{}, svc.PublishManifest(ctx, r.Record)
 	case "directory.sync":
 		recs, err := svc.Directory(ctx)
 		if err != nil {

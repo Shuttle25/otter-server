@@ -18,6 +18,11 @@ type WSS struct {
 	SiteDir string `toml:"site_dir"`
 }
 
+type Mesh struct {
+	// AllowPlain lets this node dial peers' WS_PLAIN endpoints (development only).
+	AllowPlain bool `toml:"allow_plain"`
+}
+
 type Config struct {
 	DataDir      string `toml:"data_dir"`
 	NodeKey      string `toml:"node_key"`
@@ -25,6 +30,7 @@ type Config struct {
 	ManifestFile string `toml:"manifest_file"`
 	LogLevel     string `toml:"log_level"`
 	WSS          WSS    `toml:"wss"`
+	Mesh         Mesh   `toml:"mesh"`
 }
 
 func Load(path string) (*Config, error) {

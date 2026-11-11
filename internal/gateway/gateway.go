@@ -74,8 +74,16 @@ func (g *Gateway) PrekeysLow(user []byte, device uint32, owner []byte, remaining
 	}
 }
 
-// Manifest implements service.Notifier (manifest events arrive with the mesh wiring).
-func (g *Gateway) Manifest(version uint64) {}
+// Manifest broadcasts the new manifest to every connected session (logged in or not).
+func (g *Gateway) Manifest(version uint64) {
+	rec, v, err := g.svc.Manifest(context.Background())
+	if err != nil || v != version {
+		return
+	}
+	for _, s := range g.snapshot() {
+		s.event("manifest", &pb.ManifestResponse{Manifest: rec})
+	}
+}
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true}) // native clients send no Origin
@@ -92,6 +100,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.remove(s)
 		c.CloseNow()
 	}()
+	g.add(s) // every connected session receives manifest events
 	go s.writeLoop()
 
 	var mv uint64

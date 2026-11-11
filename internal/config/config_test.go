@@ -58,3 +58,14 @@ func TestInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestMeshAllowPlain(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.Mesh.AllowPlain {
+		t.Fatalf("default must be false: %v %v", c.Mesh.AllowPlain, err)
+	}
+	c, err = Load(write(t, valid+"[mesh]\nallow_plain = true\n"))
+	if err != nil || !c.Mesh.AllowPlain {
+		t.Fatalf("allow_plain: %v %v", c, err)
+	}
+}

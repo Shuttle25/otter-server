@@ -18,6 +18,8 @@ type session struct {
 	nonce  []byte
 	ctx    context.Context
 	cancel context.CancelFunc
+	// blob.get may wait on a peer (proxy): run up to 4 off the read loop
+	blobSem chan struct{}
 
 	mu     sync.Mutex
 	user   []byte

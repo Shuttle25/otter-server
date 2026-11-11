@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
@@ -46,7 +47,11 @@ type Service struct {
 	Notify      Notifier
 	Now         func() time.Time
 	Log         *slog.Logger
+	Blobs       *blobs.Dir   // chunk files; nil = blob methods unavailable
+	Fetcher     ChunkFetcher // asks peers for missing chunks; nil = no peers
+	Limits      Limits
 
+	sweep      chan struct{}
 	mu         sync.RWMutex
 	manifest   *pb.Manifest
 	onManifest []func(*pb.Manifest)
@@ -54,7 +59,8 @@ type Service struct {
 
 func New(st *store.Store, nodeKey ed25519.PrivateKey, networkPub ed25519.PublicKey) *Service {
 	return &Service{Store: st, NodeKeyPriv: nodeKey, NodeID: keys.ID16(nodeKey.Public().(ed25519.PublicKey)),
-		NetworkPub: networkPub, Notify: nopNotifier{}, Now: time.Now, Log: slog.Default()}
+		NetworkPub: networkPub, Notify: nopNotifier{}, Now: time.Now, Log: slog.Default(),
+		Limits: Limits{UserQuota: 2 << 30, MaxBlob: 100 << 20}, sweep: make(chan struct{}, 1)}
 }
 
 // OnManifest registers a callback fired whenever the cached manifest version changes.

@@ -69,3 +69,33 @@ func TestMeshAllowPlain(t *testing.T) {
 		t.Fatalf("allow_plain: %v %v", c, err)
 	}
 }
+
+func TestLimits(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.UserQuotaBytes != 2<<30 || c.MaxBlobBytes != 100<<20 || c.BlobBytesPerSec != 2_000_000 {
+		t.Fatalf("defaults: %d %d %d %v", c.UserQuotaBytes, c.MaxBlobBytes, c.BlobBytesPerSec, err)
+	}
+	c, err = Load(write(t, valid+"[limits]\nuser_quota = \"1MiB\"\nmax_blob = \"500KB\"\n[replication]\nblob_bandwidth = \"0\"\n"))
+	if err != nil || c.UserQuotaBytes != 1<<20 || c.MaxBlobBytes != 500_000 || c.BlobBytesPerSec != 0 {
+		t.Fatalf("set: %d %d %d %v", c.UserQuotaBytes, c.MaxBlobBytes, c.BlobBytesPerSec, err)
+	}
+	for _, bad := range []string{
+		"[limits]\nuser_quota = \"lots\"\n", "[limits]\nmax_blob = \"200MiB\"\n", "[limits]\nmax_blob = \"-1MiB\"\n",
+		"[replication]\nblob_bandwidth = \"2MB\"\n",
+	} {
+		if _, err := Load(write(t, valid+bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	for in, want := range map[string]int64{"10": 10, "10B": 10, "1KiB": 1024, "1.5 MiB": 3 << 19, "2GiB": 2 << 30, "3KB": 3000, "2MB": 2e6, "1GB": 1e9} {
+		if got, err := ParseSize(in); err != nil || got != want {
+			t.Errorf("%q: %d %v", in, got, err)
+		}
+	}
+	if got, err := ParseRate("2MB/s"); err != nil || got != 2e6 {
+		t.Errorf("rate %d %v", got, err)
+	}
+}

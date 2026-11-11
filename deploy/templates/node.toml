@@ -11,3 +11,11 @@ path     = "${OTTER_PATH}"
 tls_cert = "/etc/otter/tls.crt"
 tls_key  = "/etc/otter/tls.key"
 site_dir = "/var/lib/otter/site"
+
+# Blob limits (photos, D44) and replication bandwidth for blob chunks (D45). Defaults shown.
+# [limits]
+# user_quota = "2GiB"     # live blobs per member
+# max_blob   = "100MiB"   # one blob (protocol maximum)
+#
+# [replication]
+# blob_bandwidth = "2MB/s"  # background chunk pulls from peers; "0" = unlimited

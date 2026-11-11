@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
@@ -77,6 +78,13 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 		return nil, err
 	}
 	svc := service.New(st, nodeKey, netPub)
+	bd, err := blobs.New(filepath.Join(cfg.DataDir, "blobs"))
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	svc.Blobs = bd
+	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes}
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
 }
 

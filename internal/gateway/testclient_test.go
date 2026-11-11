@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 )
@@ -33,6 +34,11 @@ func startNode(t *testing.T) *node {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	_, nodeKey, _ := ed25519.GenerateKey(nil)
 	svc := service.New(st, nodeKey, pub)
+	bd, err := blobs.New(filepath.Join(t.TempDir(), "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Blobs = bd
 	gw := New(svc, slog.New(slog.DiscardHandler))
 	srv := httptest.NewServer(gw)
 	t.Cleanup(func() { srv.Close(); st.Close() })

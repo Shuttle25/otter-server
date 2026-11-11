@@ -52,6 +52,8 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody) {
 		}
 	case pb.RecordType_DIRECTORY_ENTRY:
 		s.Notify.Directory()
+	case pb.RecordType_BLOB_FETCHED:
+		s.kickSweep() // the blob may be gone now: remove its files soon
 	case pb.RecordType_MANIFEST:
 		if changed, err := s.LoadManifest(ctx); err == nil && changed {
 			s.Notify.Manifest(s.CurrentManifest().Version)

@@ -16,6 +16,8 @@ var (
 	ErrRevoked      = errors.New("revoked")
 	// ErrRetryLater: the data is probably not replicated to this node yet.
 	ErrRetryLater = errors.New("retry later")
+	// ErrQuota: blob larger than max_blob, or the author's live blobs would exceed user_quota (D44).
+	ErrQuota = errors.New("quota")
 )
 
 // invalid maps validator errors to service errors.

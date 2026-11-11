@@ -94,7 +94,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
-	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel}
+	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel,
+		blobSem: make(chan struct{}, 4)}
 	defer func() {
 		cancel()
 		g.remove(s)
@@ -127,6 +128,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req := f.GetRequest(); req != nil {
+			if req.Method == "blob.get" {
+				select {
+				case s.blobSem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				go func() { defer func() { <-s.blobSem }(); s.handle(ctx, req) }()
+				continue
+			}
 			s.handle(ctx, req)
 		}
 	}

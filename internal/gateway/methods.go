@@ -26,6 +26,8 @@ func status(err error) pb.Status {
 		return pb.Status_STATUS_REVOKED
 	case errors.Is(err, service.ErrRetryLater):
 		return pb.Status_STATUS_RETRY_LATER
+	case errors.Is(err, service.ErrQuota):
+		return pb.Status_STATUS_QUOTA
 	default:
 		return pb.Status_STATUS_INTERNAL
 	}
@@ -128,7 +130,32 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.UpdateDirectoryEntry(ctx, s.user, r.Record)
-	case "prekeys.upload", "msg.send", "msg.ack", "invite.create":
+	case "blob.create":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return svc.CreateBlob(ctx, s.user, r.Record)
+	case "blob.put":
+		var r pb.BlobPutRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		return &pb.Empty{}, svc.PutChunk(ctx, s.user, r.BlobKey, r.Index, r.Data)
+	case "blob.get":
+		var r pb.BlobGetRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		data, err := svc.GetChunk(ctx, s.user, r.BlobKey, r.Index)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.BlobChunk{Data: data}, nil
+	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
@@ -137,7 +164,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		allowed := map[string]pb.RecordType{"prekeys.upload": pb.RecordType_PREKEYS, "msg.send": pb.RecordType_ENVELOPE,
-			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE}[req.Method]
+			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE, "blob.ack": pb.RecordType_BLOB_FETCHED}[req.Method]
 		_, err := svc.Submit(ctx, s.user, r.Record, allowed)
 		return &pb.Empty{}, err
 	default:

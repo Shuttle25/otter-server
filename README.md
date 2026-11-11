@@ -19,3 +19,20 @@ bin/otter-admin --dir .dev-mesh/admin manifest publish --allow-plain
 ```
 
 These setups are for development only: traffic is unencrypted and the admin passphrase is fixed. Production nodes use WSS on port 27443 with self-signed certificates pinned in the manifest.
+
+## Releases and deployment
+
+```
+make release VERSION=0.2.0                         # dist/otter-node_0.2.0_linux_{amd64,arm64}, otter-admin, SHA256SUMS
+deploy/push.sh fi-1 root@203.0.113.10              # bundle → install → checks
+deploy/check.sh fi-1 root@203.0.113.10             # PASS/FAIL table
+deploy/upgrade.sh root@203.0.113.10 dist/otter-node_0.2.1_linux_amd64   # automatic rollback (exit 2)
+```
+
+Node operator commands: `otter-node check --config F` (before start), `otter-node backup --config F --out FILE`
+(consistent copy while running), `otter-node probe --url wss://H:P/path --pin B64` (pinned hello). Admin:
+`otter-admin dns records|check`, `node set-ip|rotate-tls|drop-old-pins|env`. The step-by-step procedure is in the
+project docs (`docs/11-deployment.md`); [`deploy/README.md`](deploy/README.md) is the one-screen reference.
+
+Tests: `deploy/test/bundle_test.sh` (offline) and `deploy/test/e2e.sh [--keep]` (disposable Debian 12 VM under
+QEMU/KVM: install, upgrade, rollback, backup, uninstall).

@@ -198,7 +198,8 @@ func anyApplied(results []applyRes) bool {
 
 // expiring types leave the oplog after RetentionMs; a peer re-sending one must not resurrect it.
 func expiring(t pb.RecordType) bool {
-	return t == pb.RecordType_ENVELOPE || t == pb.RecordType_ACK || t == pb.RecordType_PREKEY_CONSUMED
+	return t == pb.RecordType_ENVELOPE || t == pb.RecordType_ACK || t == pb.RecordType_PREKEY_CONSUMED ||
+		t == pb.RecordType_BLOB_META || t == pb.RecordType_BLOB_FETCHED
 }
 
 // runReq executes one request inside SAVEPOINT req; any error rolls back only this request.

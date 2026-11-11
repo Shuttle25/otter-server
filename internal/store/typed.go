@@ -165,6 +165,43 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		return nil
 
+	case pb.RecordType_BLOB_META:
+		var m pb.BlobMeta
+		if err := proto.Unmarshal(b.Payload, &m); err != nil {
+			return err
+		}
+		var x int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM blob_tombstones WHERE blob_key=?`, it.key).Scan(&x)
+		if err == nil { // deleted earlier: a lagging peer must not resurrect it
+			_, err = tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+			return err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO blobs(blob_key,owner,size,chunks,expires_ms,created_ms) VALUES(?,?,?,?,?,?)`,
+			it.key, b.Author, m.Size, len(m.ChunkSha256), b.ExpiresMs, b.CreatedMs); err != nil {
+			return err
+		}
+		for _, r := range m.Readers {
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO blob_readers(blob_key,user_id) VALUES(?,?)`, it.key, r); err != nil {
+				return err
+			}
+		}
+		return gcBlob(ctx, tx, it.key, false) // fetches that arrived before the meta count
+
+	case pb.RecordType_BLOB_FETCHED:
+		var f pb.BlobFetched
+		if err := proto.Unmarshal(b.Payload, &f); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO blob_fetched(blob_key,user_id,at_ms) VALUES(?,?,?)`,
+			f.BlobKey, b.Author, now); err != nil {
+			return err
+		}
+		return gcBlob(ctx, tx, f.BlobKey, false)
+
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil {
@@ -174,6 +211,38 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		return err
 	}
 	return nil
+}
+
+// gcBlob deletes a blob whose readers all fetched it (or, with force, unconditionally) and tombstones its key until
+// expiry + 1 day (D45). Chunk files are removed later by service.SweepBlobFiles.
+func gcBlob(ctx context.Context, tx *sql.Tx, key []byte, force bool) error {
+	var expires int64
+	err := tx.QueryRowContext(ctx, `SELECT expires_ms FROM blobs WHERE blob_key=?`, key).Scan(&expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !force {
+		var waiting int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blob_readers r WHERE r.blob_key=? AND NOT EXISTS
+			(SELECT 1 FROM blob_fetched f WHERE f.blob_key=r.blob_key AND f.user_id=r.user_id)`, key).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting > 0 {
+			return nil
+		}
+	}
+	for _, q := range []string{`DELETE FROM blobs WHERE blob_key=?`, `DELETE FROM blob_chunks WHERE blob_key=?`,
+		`DELETE FROM blob_readers WHERE blob_key=?`, `DELETE FROM records WHERE record_key=?`} {
+		if _, err := tx.ExecContext(ctx, q, key); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR REPLACE INTO blob_tombstones(blob_key,until_ms) VALUES(?,?)`,
+		key, expires+24*time.Hour.Milliseconds())
+	return err
 }
 
 func conflictName(name string, userID []byte) string {

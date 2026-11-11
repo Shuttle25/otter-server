@@ -20,6 +20,10 @@ const (
 	MaxEnvelopeContent = 256 * 1024
 	MaxAckIDs          = 1000
 	MaxOneTimePrekeys  = 200
+	MaxBlobSize        = 100 << 20 // ciphertext bytes of one blob (D44)
+	BlobChunkSize      = 256 << 10
+	MaxBlobReaders     = 100
+	MaxBlobTTL         = 31 * 24 * time.Hour
 )
 
 var (
@@ -142,6 +146,13 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 
 func (v *Validator) checkPayload(b *pb.RecordBody) error {
 	switch b.Type {
+	case pb.RecordType_BLOB_META:
+		return checkBlobMeta(b)
+	case pb.RecordType_BLOB_FETCHED:
+		var f pb.BlobFetched
+		if err := proto.Unmarshal(b.Payload, &f); err != nil || len(f.BlobKey) != 32 {
+			return ErrBadPayload
+		}
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil || !bytes.Equal(m.NetworkPub, v.NetworkPub) || m.Version == 0 {
@@ -236,6 +247,40 @@ func checkPrekeys(b *pb.RecordBody) error {
 		if len(k.PublicKey) != 33 || len(k.OwnerNode) != 16 {
 			return ErrBadPayload
 		}
+	}
+	return nil
+}
+
+// checkBlobMeta: size, chunk layout, hashes, readers and expiry of a blob announcement (D44).
+func checkBlobMeta(b *pb.RecordBody) error {
+	var m pb.BlobMeta
+	if err := proto.Unmarshal(b.Payload, &m); err != nil {
+		return ErrBadPayload
+	}
+	if m.Size == 0 || m.Size > MaxBlobSize || m.ChunkSize != BlobChunkSize {
+		return ErrBadPayload
+	}
+	n := (m.Size + BlobChunkSize - 1) / BlobChunkSize
+	if uint64(len(m.ChunkSha256)) != n {
+		return ErrBadPayload
+	}
+	for _, h := range m.ChunkSha256 {
+		if len(h) != 32 {
+			return ErrBadPayload
+		}
+	}
+	if len(m.Readers) == 0 || len(m.Readers) > MaxBlobReaders {
+		return ErrBadPayload
+	}
+	seen := map[string]bool{}
+	for _, r := range m.Readers {
+		if len(r) != 16 || bytes.Equal(r, b.Author) || seen[string(r)] {
+			return ErrBadPayload
+		}
+		seen[string(r)] = true
+	}
+	if b.ExpiresMs == 0 || b.ExpiresMs > b.CreatedMs+MaxBlobTTL.Milliseconds() {
+		return ErrBadPayload
 	}
 	return nil
 }

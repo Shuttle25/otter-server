@@ -19,6 +19,19 @@ message DataMessage {
   bytes message_id = 1; // 16 random bytes chosen by sender; receipts refer to it
   string text = 2;
   GroupContext group = 3; // set for group messages (sent as SENDER_KEY envelopes)
+  repeated Attachment attachments = 4; // V1 sends at most one photo (D47); text is its caption
+}
+
+// An encrypted blob the receiver downloads (D46). Client-only: nodes never see it in plaintext.
+message Attachment {
+  bytes blob_key = 1;   // 32 bytes: record key of the BLOB_META
+  bytes key = 2;        // 32-byte streaming AEAD key
+  bytes digest = 3;     // SHA-256 of the whole ciphertext
+  uint64 size = 4;      // ciphertext bytes
+  string mime = 5;      // "image/jpeg"
+  uint32 width = 6;
+  uint32 height = 7;
+  bytes thumbnail = 8;  // JPEG, long edge 64 px, <= 4 KiB
 }
 
 message GroupContext {

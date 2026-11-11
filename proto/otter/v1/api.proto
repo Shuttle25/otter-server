@@ -92,3 +92,24 @@ message PrekeysLow {
 }
 
 message Empty {}
+
+message BlobPutRequest {
+  bytes blob_key = 1;
+  uint32 index = 2;
+  bytes data = 3;
+}
+
+message BlobGetRequest {
+  bytes blob_key = 1;
+  uint32 index = 2;
+}
+
+message BlobChunk {
+  bytes data = 1;
+}
+
+// Result of blob.create: total chunks and the indexes this node does not hold yet.
+message BlobStatus {
+  uint32 chunks = 1;
+  repeated uint32 missing = 2;
+}

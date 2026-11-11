@@ -16,6 +16,8 @@ message PeerFrame {
     PeerBatch batch = 5;
     PeerBatchAck batch_ack = 6;
     PeerError error = 7;
+    PeerBlobGet blob_get = 8;
+    PeerBlobChunk blob_chunk = 9;
   }
 }
 
@@ -57,4 +59,17 @@ message PeerBatchAck {
 
 message PeerError {
   string message = 1;
+}
+
+// Asks the peer for one chunk it holds (D45); answered by PeerBlobChunk with the same req.
+message PeerBlobGet {
+  uint64 req = 1;
+  bytes blob_key = 2;
+  uint32 index = 3;
+}
+
+message PeerBlobChunk {
+  uint64 req = 1;
+  bytes data = 2;
+  bool missing = 3;
 }

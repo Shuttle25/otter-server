@@ -20,6 +20,7 @@ enum RecordType {
   MANIFEST = 11;
   REVOCATION = 12;
   INVITE_RIGHTS = 13;
+  BLOB_FETCHED = 14;
 }
 
 // Signature is Ed25519 over the exact `body` bytes.
@@ -81,4 +82,17 @@ message Ack {
   // Record keys (author || id, 32 bytes) of acknowledged ENVELOPE records.
   repeated bytes envelope_ids = 1;
   uint32 device_id = 2;
+}
+
+// BLOB_META: announces a blob. Its record key (author‖id) is the blob key (D44).
+message BlobMeta {
+  uint64 size = 1;                  // ciphertext bytes
+  uint32 chunk_size = 2;            // 262144 in V1
+  repeated bytes chunk_sha256 = 3;  // SHA-256 of every chunk, in order
+  repeated bytes readers = 4;       // user ids allowed to fetch; not the author
+}
+
+// BLOB_FETCHED: authored by a reader after a verified download (D45).
+message BlobFetched {
+  bytes blob_key = 1;
 }

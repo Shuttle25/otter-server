@@ -38,6 +38,7 @@ const (
 	RecordType_MANIFEST                RecordType = 11
 	RecordType_REVOCATION              RecordType = 12
 	RecordType_INVITE_RIGHTS           RecordType = 13
+	RecordType_BLOB_FETCHED            RecordType = 14
 )
 
 // Enum value maps for RecordType.
@@ -57,6 +58,7 @@ var (
 		11: "MANIFEST",
 		12: "REVOCATION",
 		13: "INVITE_RIGHTS",
+		14: "BLOB_FETCHED",
 	}
 	RecordType_value = map[string]int32{
 		"RECORD_TYPE_UNSPECIFIED": 0,
@@ -73,6 +75,7 @@ var (
 		"MANIFEST":                11,
 		"REVOCATION":              12,
 		"INVITE_RIGHTS":           13,
+		"BLOB_FETCHED":            14,
 	}
 )
 
@@ -678,6 +681,120 @@ func (x *Ack) GetDeviceId() uint32 {
 	return 0
 }
 
+// BLOB_META: announces a blob. Its record key (author‖id) is the blob key (D44).
+type BlobMeta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Size          uint64                 `protobuf:"varint,1,opt,name=size,proto3" json:"size,omitempty"`                                 // ciphertext bytes
+	ChunkSize     uint32                 `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`      // 262144 in V1
+	ChunkSha256   [][]byte               `protobuf:"bytes,3,rep,name=chunk_sha256,json=chunkSha256,proto3" json:"chunk_sha256,omitempty"` // SHA-256 of every chunk, in order
+	Readers       [][]byte               `protobuf:"bytes,4,rep,name=readers,proto3" json:"readers,omitempty"`                            // user ids allowed to fetch; not the author
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BlobMeta) Reset() {
+	*x = BlobMeta{}
+	mi := &file_otter_v1_records_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlobMeta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlobMeta) ProtoMessage() {}
+
+func (x *BlobMeta) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlobMeta.ProtoReflect.Descriptor instead.
+func (*BlobMeta) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *BlobMeta) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *BlobMeta) GetChunkSize() uint32 {
+	if x != nil {
+		return x.ChunkSize
+	}
+	return 0
+}
+
+func (x *BlobMeta) GetChunkSha256() [][]byte {
+	if x != nil {
+		return x.ChunkSha256
+	}
+	return nil
+}
+
+func (x *BlobMeta) GetReaders() [][]byte {
+	if x != nil {
+		return x.Readers
+	}
+	return nil
+}
+
+// BLOB_FETCHED: authored by a reader after a verified download (D45).
+type BlobFetched struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BlobKey       []byte                 `protobuf:"bytes,1,opt,name=blob_key,json=blobKey,proto3" json:"blob_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BlobFetched) Reset() {
+	*x = BlobFetched{}
+	mi := &file_otter_v1_records_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlobFetched) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlobFetched) ProtoMessage() {}
+
+func (x *BlobFetched) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlobFetched.ProtoReflect.Descriptor instead.
+func (*BlobFetched) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *BlobFetched) GetBlobKey() []byte {
+	if x != nil {
+		return x.BlobKey
+	}
+	return nil
+}
+
 var File_otter_v1_records_proto protoreflect.FileDescriptor
 
 const file_otter_v1_records_proto_rawDesc = "" +
@@ -731,7 +848,15 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\akey_ids\x18\x03 \x03(\rR\x06keyIds\"E\n" +
 	"\x03Ack\x12!\n" +
 	"\fenvelope_ids\x18\x01 \x03(\fR\venvelopeIds\x12\x1b\n" +
-	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId*\xf5\x01\n" +
+	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\"z\n" +
+	"\bBlobMeta\x12\x12\n" +
+	"\x04size\x18\x01 \x01(\x04R\x04size\x12\x1d\n" +
+	"\n" +
+	"chunk_size\x18\x02 \x01(\rR\tchunkSize\x12!\n" +
+	"\fchunk_sha256\x18\x03 \x03(\fR\vchunkSha256\x12\x18\n" +
+	"\areaders\x18\x04 \x03(\fR\areaders\"(\n" +
+	"\vBlobFetched\x12\x19\n" +
+	"\bblob_key\x18\x01 \x01(\fR\ablobKey*\x87\x02\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
@@ -751,7 +876,8 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\bMANIFEST\x10\v\x12\x0e\n" +
 	"\n" +
 	"REVOCATION\x10\f\x12\x11\n" +
-	"\rINVITE_RIGHTS\x10\rBI\n" +
+	"\rINVITE_RIGHTS\x10\r\x12\x10\n" +
+	"\fBLOB_FETCHED\x10\x0eBI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -767,7 +893,7 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_otter_v1_records_proto_goTypes = []any{
 	(RecordType)(0),        // 0: otter.v1.RecordType
 	(*Record)(nil),         // 1: otter.v1.Record
@@ -779,6 +905,8 @@ var file_otter_v1_records_proto_goTypes = []any{
 	(*InviteUsed)(nil),     // 7: otter.v1.InviteUsed
 	(*PrekeyConsumed)(nil), // 8: otter.v1.PrekeyConsumed
 	(*Ack)(nil),            // 9: otter.v1.Ack
+	(*BlobMeta)(nil),       // 10: otter.v1.BlobMeta
+	(*BlobFetched)(nil),    // 11: otter.v1.BlobFetched
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
 	0, // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
@@ -800,7 +928,7 @@ func file_otter_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

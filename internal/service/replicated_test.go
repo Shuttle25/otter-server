@@ -150,3 +150,24 @@ func TestJanitorRuns(t *testing.T) {
 		t.Fatal("janitor did not stop")
 	}
 }
+
+func TestPrekeyConsumedFromUnknownNodeIsSkipped(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	f.withManifest(1)
+	anna := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	_, ghostPriv, _ := ed25519.GenerateKey(nil)
+	ghostID := keys.ID16(ghostPriv.Public().(ed25519.PublicKey))
+	rec := sign(t, pb.RecordType_PREKEY_CONSUMED, ghostID,
+		&pb.PrekeyConsumed{UserId: anna.id, DeviceId: 1, KeyIds: []uint32{1}}, ghostPriv)
+	applied, err := f.svc.ApplyReplicated(ctx, peerID, rec)
+	if err != nil || applied {
+		t.Fatalf("unknown node consumption: applied=%v err=%v", applied, err)
+	}
+	// other record types from unknown authors still wait for their author
+	env := sign(t, pb.RecordType_ENVELOPE, ghostID, &pb.Envelope{SenderUser: ghostID, SenderDevice: 1, Kind: pb.Envelope_SIGNAL,
+		Recipients: []*pb.Recipient{{User: anna.id, Device: 1, Content: []byte("x")}}}, ghostPriv)
+	if _, err := f.svc.ApplyReplicated(ctx, peerID, env); !errors.Is(err, ErrRetryLater) {
+		t.Fatalf("unknown user envelope: %v", err)
+	}
+}

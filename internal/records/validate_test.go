@@ -156,6 +156,30 @@ func TestValidate(t *testing.T) {
 			e.SharedContent = []byte{1}
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
 		}, nil},
+		{"sender_key with per-recipient content", func() *pb.Record {
+			e := envelope(userID, 1, pb.Envelope_SENDER_KEY, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}})
+			e.SharedContent = []byte{1}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
+		}, ErrBadPayload},
+		{"sender_key without shared content", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
+				Payload: payload(envelope(userID, 1, pb.Envelope_SENDER_KEY, []*pb.Recipient{{User: revID, Device: 1}}))}, userPriv)
+		}, ErrBadPayload},
+		{"sender_key many recipients ok", func() *pb.Record {
+			e := envelope(userID, 1, pb.Envelope_SENDER_KEY, []*pb.Recipient{{User: revID, Device: 1}, {User: userID, Device: 1}})
+			e.SharedContent = make([]byte, 100)
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
+		}, nil},
+		{"signal with shared content", func() *pb.Record {
+			e := envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}})
+			e.SharedContent = []byte{1}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
+		}, ErrBadPayload},
+		{"prekey_signal with shared content only", func() *pb.Record {
+			e := envelope(userID, 1, pb.Envelope_PREKEY_SIGNAL, []*pb.Recipient{{User: revID, Device: 1}})
+			e.SharedContent = []byte{1}
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID, Payload: payload(e)}, userPriv)
+		}, ErrBadPayload},
 		{"envelope spoofed sender", func() *pb.Record {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
 				Payload: payload(envelope(revID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)

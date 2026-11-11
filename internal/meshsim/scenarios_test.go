@@ -208,3 +208,35 @@ func TestSameEnvelopeFromTwoNodes(t *testing.T) {
 		t.Fatalf("keys differ: %x vs %x", onA, onB)
 	}
 }
+
+// 9. A group (SENDER_KEY) envelope sent via A to members logged in on A, B and C reaches all of them;
+// ACKs from all members remove it everywhere.
+func TestGroupEnvelopeAcrossNodes(t *testing.T) {
+	s := newSim(t, "a", "b", "c")
+	a, b, c := s.node("a"), s.node("b"), s.node("c")
+	sender := s.register(a, "sender")
+	ma, mb, mc := s.register(a, "member_a"), s.register(b, "member_b"), s.register(c, "member_c")
+	eventually(t, "users known everywhere", func() bool {
+		return s.all(func(n *simNode) bool { return n.knows(sender) && n.knows(ma) && n.knows(mb) && n.knows(mc) })
+	})
+	cl := map[*account]*client{ma: s.login(a, ma), mb: s.login(b, mb), mc: s.login(c, mc)}
+	r := s.signAs(sender, pb.RecordType_ENVELOPE, &pb.Envelope{SenderUser: sender.id, SenderDevice: 1, Kind: pb.Envelope_SENDER_KEY,
+		SharedContent: []byte("group"), Recipients: []*pb.Recipient{{User: ma.id, Device: 1}, {User: mb.id, Device: 1}, {User: mc.id, Device: 1}}})
+	s.login(a, sender).mustCall("msg.send", &pb.RecordRequest{Record: r}, nil)
+	k := recordKey(r)
+	for m, c := range cl {
+		if !contains(c.envelopes(), k) {
+			t.Fatalf("%s did not receive the group envelope", m.name)
+		}
+	}
+	s.ack(cl[ma], ma, k)
+	s.ack(cl[mb], mb, k)
+	time.Sleep(200 * time.Millisecond)
+	if !c.has(k) || !a.has(k) {
+		t.Fatal("record removed before the last member acked")
+	}
+	s.ack(cl[mc], mc, k)
+	eventually(t, "group envelope gone everywhere", func() bool {
+		return s.all(func(n *simNode) bool { return !n.has(k) && n.mailbox(ma) == 0 && n.mailbox(mb) == 0 && n.mailbox(mc) == 0 })
+	})
+}

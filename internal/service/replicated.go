@@ -11,10 +11,16 @@ import (
 )
 
 // ApplyReplicated validates and applies a record received from peer `from`.
-// Returns ErrRetryLater if the author is not known yet (its directory entry hasn't arrived).
+// Returns ErrRetryLater if the author is not known yet (its directory entry hasn't arrived);
+// a PREKEY_CONSUMED from a node outside our manifest is skipped instead.
 func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Record) (bool, error) {
 	body, err := s.validator(nil).Validate(rec)
 	switch {
+	case errors.Is(err, records.ErrUnknownAuthor) && isPrekeyConsumed(rec):
+		// Consumption only feeds refill counts. A node missing from our manifest must not stall the
+		// peer session; the next manifest brings the node and its owner never re-issues those keys.
+		s.Log.Debug("skipping PREKEY_CONSUMED from unknown node", "err", err)
+		return false, nil
 	case errors.Is(err, records.ErrUnknownAuthor):
 		return false, fmt.Errorf("%w: %v", ErrRetryLater, err)
 	case errors.Is(err, records.ErrExpired):
@@ -28,6 +34,11 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 	}
 	s.afterApply(ctx, body)
 	return true, nil
+}
+
+func isPrekeyConsumed(rec *pb.Record) bool {
+	var b pb.RecordBody
+	return proto.Unmarshal(rec.GetBody(), &b) == nil && b.Type == pb.RecordType_PREKEY_CONSUMED
 }
 
 func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody) {

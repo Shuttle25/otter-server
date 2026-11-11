@@ -198,9 +198,14 @@ func checkEnvelope(b *pb.RecordBody) error {
 		len(e.Recipients) == 0 || len(e.Recipients) > MaxRecipients {
 		return ErrBadPayload
 	}
+	// SENDER_KEY: one shared ciphertext, no per-recipient content; SIGNAL/PREKEY_SIGNAL: the opposite.
+	isGroup := e.Kind == pb.Envelope_SENDER_KEY
+	if isGroup != (len(e.SharedContent) > 0) {
+		return ErrBadPayload
+	}
 	total := len(e.SharedContent)
 	for _, r := range e.Recipients {
-		if len(r.User) != 16 || r.Device == 0 || (len(r.Content) == 0 && len(e.SharedContent) == 0) {
+		if len(r.User) != 16 || r.Device == 0 || isGroup != (len(r.Content) == 0) {
 			return ErrBadPayload
 		}
 		total += len(r.Content)

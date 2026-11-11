@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/admin"
+	"ottermsg/server/internal/client"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 )
@@ -29,6 +31,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node remove --label L
   manifest sign
   manifest show [--file F]
+  manifest publish [--via LABEL]... [--allow-plain]
   invite bootstrap [--ttl 168h]`
 
 func main() {
@@ -175,6 +178,15 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		return show(out, *dir, &rec)
+	case "manifest publish":
+		fs := flag.NewFlagSet("manifest publish", flag.ContinueOnError)
+		var via multi
+		fs.Var(&via, "via", "node label to publish through (repeatable; default: every node in the manifest)")
+		allowPlain := fs.Bool("allow-plain", false, "allow plain ws:// endpoints (development only)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		return publishManifest(out, *dir, via, *allowPlain)
 	case "invite bootstrap":
 		fs := flag.NewFlagSet("invite bootstrap", flag.ContinueOnError)
 		ttl := fs.Duration("ttl", 7*24*time.Hour, "invite validity")
@@ -231,3 +243,72 @@ type multi []string
 
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
+
+// publishManifest sends manifest.bin to the selected nodes; succeeds if at least one node took it or already had it.
+func publishManifest(out io.Writer, dir string, via []string, allowPlain bool) error {
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.bin"))
+	if err != nil {
+		return fmt.Errorf("no signed manifest (run 'manifest sign' first): %w", err)
+	}
+	var rec pb.Record
+	if err := proto.Unmarshal(raw, &rec); err != nil {
+		return err
+	}
+	var body pb.RecordBody
+	var m pb.Manifest
+	if err := proto.Unmarshal(rec.Body, &body); err != nil {
+		return err
+	}
+	if err := proto.Unmarshal(body.Payload, &m); err != nil {
+		return err
+	}
+	selected := map[string]bool{}
+	for _, l := range via {
+		selected[l] = true
+	}
+	good := 0
+	for _, n := range m.Nodes {
+		if len(selected) > 0 && !selected[n.Label] {
+			continue
+		}
+		delete(selected, n.Label)
+		res := publishTo(n, &rec, allowPlain)
+		if res == "ok" || res == "already current" {
+			good++
+		}
+		fmt.Fprintf(out, "%-12s %s\n", n.Label, res)
+	}
+	for l := range selected {
+		fmt.Fprintf(out, "%-12s error: not in the manifest\n", l)
+	}
+	if good == 0 {
+		return errors.New("the manifest was not published to any node")
+	}
+	return nil
+}
+
+func publishTo(n *pb.NodeInfo, rec *pb.Record, allowPlain bool) string {
+	lastErr := "error: no usable endpoint"
+	for _, ep := range n.Endpoints {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		c, err := client.Dial(ctx, ep, allowPlain)
+		if err != nil {
+			cancel()
+			lastErr = "error: " + err.Error()
+			continue
+		}
+		err = c.Call(ctx, "manifest.publish", &pb.RecordRequest{Record: rec}, nil)
+		c.Close()
+		cancel()
+		var se *client.StatusError
+		switch {
+		case err == nil:
+			return "ok"
+		case errors.As(err, &se) && se.Status == pb.Status_STATUS_CONFLICT:
+			return "already current"
+		default:
+			lastErr = "error: " + err.Error()
+		}
+	}
+	return lastErr
+}

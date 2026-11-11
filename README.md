@@ -4,9 +4,18 @@ The OtterMSG node and admin tooling (Go module `ottermsg/server`). It owns the s
 
 ## Local development
 
-`scripts/dev-node.sh` creates a throwaway network in `.dev/` (gitignored) with one node advertising a plain `ws://` endpoint at `10.0.2.2:8080` (the Android emulator's alias for this machine), imports the signed manifest and a bootstrap invite, prints the invite link and a QR code, and runs the node in the foreground (Ctrl-C stops it). Paste or scan the link in the app on the emulator to register the first member.
+`scripts/dev-node.sh` runs one development node with a plain `ws://` endpoint at `10.0.2.2:8080` (the Android emulator's alias for this machine). On the first run it creates a network in `.dev/` (gitignored), imports the signed manifest and a bootstrap invite, and prints the invite link and a QR code; **later runs reuse that network**, so apps that already joined keep working. Ctrl-C stops the node.
 
-- `scripts/dev-node.sh --keep` reuses the existing `.dev/` network and just runs the node.
-- `scripts/dev-node.sh --host 192.168.x.y` advertises your PC's LAN IP instead, for a real phone on the same Wi-Fi.
+- `--host 192.168.x.y` advertises your PC's LAN IP instead, for a real phone on the same Wi-Fi (only when the network is created).
+- `--reset` creates a new network. Apps that joined the old one must be reinstalled (or have their data cleared) and join again, so it asks for confirmation; `--yes` skips the prompt. `--keep` is accepted and ignored.
 
-This setup is for development only: traffic is unencrypted and the admin passphrase is fixed.
+`scripts/dev-mesh.sh` does the same for three replicating nodes `a`, `b`, `c` on ports 8081–8083 (`.dev-mesh/`, logs in `.dev-mesh/<n>.log`), started in the background: `scripts/dev-mesh.sh stop` stops them, `kill b` / `start b` stops or starts one node for failover testing.
+
+After changing nodes, sign and push the new manifest to the running nodes:
+
+```
+bin/otter-admin --dir .dev-mesh/admin manifest sign
+bin/otter-admin --dir .dev-mesh/admin manifest publish --allow-plain
+```
+
+These setups are for development only: traffic is unencrypted and the admin passphrase is fixed. Production nodes use WSS on port 27443 with self-signed certificates pinned in the manifest.

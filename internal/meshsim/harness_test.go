@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -43,6 +44,7 @@ type simNode struct {
 	id     []byte
 	dbPath string
 	addr   string
+	noPull bool // test knob: no background chunk puller (proxy scenario)
 
 	mu     sync.Mutex
 	st     *store.Store
@@ -129,6 +131,11 @@ func (s *sim) start(n *simNode) {
 	}
 	svc := service.New(st, n.key, s.netPub)
 	svc.Log = quiet
+	bd, err := blobs.New(filepath.Join(filepath.Dir(n.dbPath), "blobs-"+n.label))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	svc.Blobs = bd
 	if _, err := svc.LoadManifest(context.Background()); err != nil {
 		s.t.Fatal(err)
 	}
@@ -136,6 +143,10 @@ func (s *sim) start(n *simNode) {
 	repl := replication.New(svc, s.part.dialer(n.id), quiet)
 	ctx, cancel := context.WithCancel(context.Background())
 	go repl.Run(ctx)
+	svc.Fetcher = repl
+	if !n.noPull {
+		go repl.RunPuller(ctx, 0)
+	}
 	var ln net.Listener
 	for i := 0; i < 50; i++ { // the port may linger briefly after a stop
 		if ln, err = net.Listen("tcp", n.addr); err == nil {

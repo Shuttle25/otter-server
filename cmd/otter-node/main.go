@@ -197,6 +197,8 @@ func serve(ctx context.Context, a *app) error {
 	gw := gateway.New(a.svc, a.log)
 	repl := replication.New(a.svc, replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, a.log)
 	go repl.Run(ctx) // before serving, so accepted peer sessions use the run context
+	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)
+	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
 	srv := wss.NewServer(wcfg, gw, repl)

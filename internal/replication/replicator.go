@@ -24,6 +24,7 @@ type Replicator struct {
 	log    *slog.Logger
 	ctx    context.Context
 	reg    registry
+	last   lastPeers
 
 	mu      sync.Mutex
 	backoff map[string]time.Duration
@@ -95,6 +96,7 @@ var (
 func SetTestTimings(dial, backoff time.Duration) {
 	dialEvery, minBackoff, retryLaterDelay = dial, backoff, backoff
 	maxBackoff = 10 * backoff
+	pullRetryMin, pullRetryMax, pullIdle = backoff, 10*backoff, 10*backoff
 }
 
 func (r *Replicator) baseCtx() context.Context { r.mu.Lock(); defer r.mu.Unlock(); return r.ctx }

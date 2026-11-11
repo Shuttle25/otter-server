@@ -39,3 +39,14 @@ func (g *registry) has(peer []byte) bool {
 	defer g.mu.Unlock()
 	return g.byPeer[string(peer)] != nil
 }
+
+// all returns the live sessions.
+func (g *registry) all() []*session {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]*session, 0, len(g.byPeer))
+	for _, s := range g.byPeer {
+		out = append(out, s)
+	}
+	return out
+}

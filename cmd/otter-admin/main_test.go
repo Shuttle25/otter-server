@@ -123,3 +123,13 @@ func TestManifestPublish(t *testing.T) {
 		t.Fatalf("unknown label: %v\n%s", err, out.String())
 	}
 }
+
+func TestVersion(t *testing.T) {
+	var out bytes.Buffer
+	if err := run([]string{"version"}, &out, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out.String()) != version {
+		t.Fatalf("got %q", out.String())
+	}
+}

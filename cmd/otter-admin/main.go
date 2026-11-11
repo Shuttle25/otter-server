@@ -32,7 +32,10 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   manifest sign
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
-  invite bootstrap [--ttl 168h]`
+  invite bootstrap [--ttl 168h]
+  version`
+
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stdin); err != nil {
@@ -88,6 +91,10 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		return err
 	}
 	a := root.Args()
+	if len(a) == 1 && a[0] == "version" {
+		fmt.Fprintln(out, version)
+		return nil
+	}
 	if len(a) < 2 {
 		return errors.New(usage)
 	}

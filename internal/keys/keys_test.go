@@ -89,3 +89,16 @@ func TestAuthMessage(t *testing.T) {
 		t.Fatalf("got %x", m)
 	}
 }
+
+func TestPeerAuthMessage(t *testing.T) {
+	m := PeerAuthMessage(bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{2}, 32), 0x0102030405060708)
+	want := append([]byte("otter-peer-v1"), bytes.Repeat([]byte{1}, 16)...)
+	want = append(want, bytes.Repeat([]byte{2}, 32)...)
+	want = append(want, 1, 2, 3, 4, 5, 6, 7, 8)
+	if !bytes.Equal(m, want) {
+		t.Fatalf("got %x", m)
+	}
+	if bytes.Equal(m[:13], AuthMessage(nil, nil, 0)[:13]) {
+		t.Fatal("peer and client contexts must differ")
+	}
+}

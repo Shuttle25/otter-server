@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,7 +24,7 @@ import (
 
 const usage = `usage: otter-admin [--dir DIR] <command>
   network init
-  node add --label L --wss-host H [--wss-port 443] [--wss-path /p] [--cdn] [--push] [--plain]
+  node add --label L --wss-host H [--ip A]... [--wss-port 27443] [--wss-path /p] [--cdn] [--push] [--plain]
   node list
   node remove --label L
   manifest sign
@@ -104,7 +105,8 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		var port uint
 		fs.StringVar(&s.Label, "label", "", "node label")
 		fs.StringVar(&s.WSSHost, "wss-host", "", "WSS host")
-		fs.UintVar(&port, "wss-port", 443, "WSS port")
+		fs.UintVar(&port, "wss-port", admin.DefaultPort, "WSS port")
+		fs.Var((*multi)(&s.IPs), "ip", "additional IP address in the certificate (repeatable)")
 		fs.StringVar(&s.WSSPath, "wss-path", "", "secret WebSocket path (random if empty)")
 		fs.BoolVar(&s.CDN, "cdn", false, "endpoint is behind a CDN")
 		fs.BoolVar(&s.Push, "push", false, "node can send FCM pushes")
@@ -128,7 +130,11 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		for _, n := range st.Nodes {
 			for _, e := range n.Endpoints {
-				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn)
+				pin := "-"
+				if len(e.TlsSpkiPins) > 0 {
+					pin = base64.StdEncoding.EncodeToString(e.TlsSpkiPins[0])
+				}
+				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin)
 			}
 		}
 	case "node remove":
@@ -219,3 +225,9 @@ func defaultDir() string {
 	h, _ := os.UserHomeDir()
 	return filepath.Join(h, ".otter-admin")
 }
+
+// multi is a repeatable string flag.
+type multi []string
+
+func (m *multi) String() string     { return strings.Join(*m, ",") }
+func (m *multi) Set(v string) error { *m = append(*m, v); return nil }

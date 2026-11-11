@@ -3,6 +3,9 @@ package admin
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 )
@@ -135,5 +139,51 @@ func TestBootstrapInvite(t *testing.T) {
 	}
 	if _, err := DecodeInviteLink(InvitePrefix + "!!!"); err == nil {
 		t.Fatal("base64")
+	}
+}
+
+func TestNodeTLS(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitNetwork(dir, pass); err != nil {
+		t.Fatal(err)
+	}
+	n, err := AddNode(dir, NodeSpec{Label: "fi-1", WSSHost: "chat.example.org", IPs: []string{"203.0.113.10"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nd := filepath.Join(dir, "nodes", "fi-1")
+	b, _ := os.ReadFile(filepath.Join(nd, "tls.crt"))
+	blk, _ := pem.Decode(b)
+	cert, err := x509.ParseCertificate(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.VerifyHostname("chat.example.org") != nil || cert.VerifyHostname("203.0.113.10") != nil {
+		t.Fatal("SAN must contain host and ip")
+	}
+	e := n.Endpoints[0]
+	if e.Port != DefaultPort || len(e.TlsSpkiPins) != 1 || !bytes.Equal(e.TlsSpkiPins[0], pinning.SPKIPin(cert)) {
+		t.Fatalf("endpoint %v", e)
+	}
+	if st, _ := os.Stat(filepath.Join(nd, "tls.key")); st.Mode().Perm() != 0o600 {
+		t.Fatal("tls.key mode")
+	}
+	var meta nodeMeta
+	mb, _ := os.ReadFile(filepath.Join(nd, "meta.json"))
+	if json.Unmarshal(mb, &meta) != nil || len(meta.IPs) != 1 {
+		t.Fatalf("meta %s", mb)
+	}
+	if _, err := AddNode(dir, NodeSpec{Label: "bad", WSSHost: "x", IPs: []string{"nope"}}); err == nil {
+		t.Fatal("bad ip accepted")
+	}
+	p, err := AddNode(dir, NodeSpec{Label: "dev", WSSHost: "10.0.2.2", WSSPort: 8080, Plain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Endpoints[0].TlsSpkiPins) != 0 {
+		t.Fatal("plain endpoint must have no pins")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "nodes", "dev", "tls.crt")); !os.IsNotExist(err) {
+		t.Fatal("plain node must have no cert")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -131,7 +132,11 @@ type NodeSpec struct {
 	CDN     bool
 	Push    bool
 	Plain   bool // development only: unencrypted ws:// endpoint
+	IPs     []string
 }
+
+// DefaultPort is the node port for clients and peers (docs/11 D25).
+const DefaultPort = 27443
 
 func AddNode(dir string, s NodeSpec) (*pb.NodeInfo, error) {
 	if !labelRe.MatchString(s.Label) {
@@ -150,7 +155,15 @@ func AddNode(dir string, s NodeSpec) (*pb.NodeInfo, error) {
 		}
 	}
 	if s.WSSPort == 0 {
-		s.WSSPort = 443
+		s.WSSPort = DefaultPort
+	}
+	var ips []net.IP
+	for _, a := range s.IPs {
+		ip := net.ParseIP(a)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid ip %q", a)
+		}
+		ips = append(ips, ip)
 	}
 	if s.WSSPath == "" {
 		s.WSSPath = randPath()
@@ -166,12 +179,22 @@ func AddNode(dir string, s NodeSpec) (*pb.NodeInfo, error) {
 	if err := keys.WritePlainKey(filepath.Join(nodeDir, "node.key"), priv); err != nil {
 		return nil, err
 	}
+	if err := writeNodeMeta(nodeDir, s.IPs); err != nil {
+		return nil, err
+	}
 	kind := pb.Endpoint_WSS
+	var pins [][]byte
 	if s.Plain {
 		kind = pb.Endpoint_WS_PLAIN
+	} else {
+		pin, err := writeNodeTLS(nodeDir, s.WSSHost, ips)
+		if err != nil {
+			return nil, err
+		}
+		pins = [][]byte{pin}
 	}
 	n := &pb.NodeInfo{NodeId: keys.ID16(pub), NodePub: pub, Label: s.Label, PushCapable: s.Push,
-		Endpoints: []*pb.Endpoint{{Kind: kind, Host: s.WSSHost, Port: s.WSSPort, Path: s.WSSPath, ViaCdn: s.CDN}}}
+		Endpoints: []*pb.Endpoint{{Kind: kind, Host: s.WSSHost, Port: s.WSSPort, Path: s.WSSPath, ViaCdn: s.CDN, TlsSpkiPins: pins}}}
 	return n, saveNodes(dir, append(st.Nodes, n))
 }
 

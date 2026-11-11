@@ -6,16 +6,20 @@ import (
 	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/curve25519"
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 )
@@ -34,6 +38,8 @@ type V1 struct {
 	IdentityPubHex          string `json:"identity_pub_hex"`
 	AuthMessageHex          string `json:"auth_message_hex"`
 	InviteLink              string `json:"invite_link"`
+	TLSCertDERHex           string `json:"tls_cert_der_hex"`
+	TLSSPKIPinHex           string `json:"tls_spki_pin_hex"`
 }
 
 func seq(n int, start byte) []byte {
@@ -90,6 +96,13 @@ func generate(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	der := tlsCertDER(t)
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.TLSCertDERHex = hex.EncodeToString(der)
+	v.TLSSPKIPinHex = hex.EncodeToString(pinning.SPKIPin(cert))
 	out, _ := json.MarshalIndent(v, "", "  ")
 	return append(out, '\n')
 }
@@ -111,4 +124,24 @@ func TestVectorsV1(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatal("vectors changed: derivation or encoding drifted; regenerate only if intentional")
 	}
+}
+
+// tlsCertDER returns the committed test certificate (created once, intentionally, with OTTER_WRITE_VECTORS=1).
+func tlsCertDER(t *testing.T) []byte {
+	path := filepath.Join("..", "..", "testdata", "vectors", "tls_cert.der")
+	if _, err := os.Stat(path); os.IsNotExist(err) && os.Getenv("OTTER_WRITE_VECTORS") == "1" {
+		certPEM, _, _, err := pinning.GenerateCert([]string{"node.example"}, nil, 10*365*24*time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := pem.Decode(certPEM)
+		if err := os.WriteFile(path, b.Bytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	der, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("missing tls_cert.der (run with OTTER_WRITE_VECTORS=1): %v", err)
+	}
+	return der
 }

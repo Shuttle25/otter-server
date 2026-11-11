@@ -53,7 +53,11 @@ runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.tom
 shopt -s nullglob
 for f in invites/*.bin; do
   say "importing $(basename "$f")"
-  runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml "$f"
+  # the bundle directory is root-only: hand the record to otter through its data directory
+  tmp=/var/lib/otter/import-$(basename "$f")
+  install -o otter -g otter -m 0600 "$f" "$tmp"
+  runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml "$tmp"
+  rm -f "$tmp"
 done
 
 if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then

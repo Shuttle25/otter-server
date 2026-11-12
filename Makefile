@@ -6,7 +6,7 @@ GOOS_HOST := $(shell go env GOOS)
 GOARCH_HOST := $(shell go env GOARCH)
 LDFLAGS = -s -w -X main.version=$(VERSION)
 
-.PHONY: gen check test vet build release
+.PHONY: gen check test vet build release deploy-test
 gen:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
 	$(BUF) lint
@@ -28,3 +28,8 @@ release:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" \
 	  -o dist/otter-admin_$(VERSION)_$(GOOS_HOST)_$(GOARCH_HOST) ./cmd/otter-admin
 	cd dist && sha256sum otter-*_* > SHA256SUMS
+deploy-test:
+	deploy/test/scripts_test.sh
+	deploy/test/bundle_test.sh
+	deploy/test/e2e.sh
+	deploy/test/e2e-mesh.sh

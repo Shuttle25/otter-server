@@ -1,7 +1,12 @@
 package nodecheck
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,8 +59,49 @@ tls_key = %q
 func TestCheckOK(t *testing.T) {
 	cfg, _ := setup(t, "")
 	lines, err := Run(cfg)
-	if err != nil || len(lines) != 5 {
+	if err != nil || len(lines) != 6 || lines[5] != "ok push off (no key file)" {
 		t.Fatalf("%v %q", err, lines)
+	}
+}
+
+// withPush adds [push] fcm_credentials to the config and writes key (nil: no file).
+func withPush(t *testing.T, cfg string, key []byte) {
+	p := filepath.Join(t.TempDir(), "fcm.json")
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, "[push]\nfcm_credentials = %q\n", p)
+	f.Close()
+	if key != nil {
+		if err := os.WriteFile(p, key, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCheckPushKey(t *testing.T) {
+	cfg, _ := setup(t, "")
+	withPush(t, cfg, nil)
+	if lines, err := Run(cfg); err != nil || lines[len(lines)-1] != "ok push off (no key file)" {
+		t.Fatalf("missing key file: %v %q", err, lines)
+	}
+
+	cfg, _ = setup(t, "")
+	withPush(t, cfg, []byte(`{"type":"service_account"}`))
+	if _, err := Run(cfg); err == nil || !strings.Contains(err.Error(), "push key") {
+		t.Fatalf("want push key error, got %v", err)
+	}
+
+	cfg, _ = setup(t, "")
+	k, _ := rsa.GenerateKey(rand.Reader, 2048)
+	der, _ := x509.MarshalPKCS8PrivateKey(k)
+	sa, _ := json.Marshal(map[string]string{"type": "service_account", "project_id": "otter-test",
+		"private_key_id": "k1", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+		"client_email": "otter@otter-test.iam.gserviceaccount.com", "token_uri": "https://oauth2.invalid/token"})
+	withPush(t, cfg, sa)
+	if lines, err := Run(cfg); err != nil || lines[len(lines)-1] != "ok push key (project otter-test)" {
+		t.Fatalf("valid key: %v %q", err, lines)
 	}
 }
 

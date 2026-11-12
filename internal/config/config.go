@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,11 @@ type Replication struct {
 	BlobBandwidth string `toml:"blob_bandwidth"`
 }
 
+// Push (D59): the Firebase service-account key; a missing file means push is off.
+type Push struct {
+	FCMCredentials string `toml:"fcm_credentials"`
+}
+
 // MaxBlobLimit equals records.MaxBlobSize (kept here to avoid an import cycle).
 const MaxBlobLimit = 100 << 20
 
@@ -48,6 +54,7 @@ type Config struct {
 	Mesh         Mesh        `toml:"mesh"`
 	Limits       Limits      `toml:"limits"`
 	Replication  Replication `toml:"replication"`
+	Push         Push        `toml:"push"`
 
 	// parsed by Load
 	UserQuotaBytes  int64 `toml:"-"`
@@ -110,6 +117,15 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: log_level %q (debug|info|warn|error)", c.LogLevel)
 	}
 	return nil
+}
+
+// PushEnabled reports whether a key file is configured and present.
+func (c *Config) PushEnabled() bool {
+	if c.Push.FCMCredentials == "" {
+		return false
+	}
+	_, err := os.Stat(c.Push.FCMCredentials)
+	return err == nil
 }
 
 func (c *Config) NetworkPubKey() (ed25519.PublicKey, error) {

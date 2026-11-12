@@ -17,6 +17,7 @@ import (
 	"ottermsg/server/internal/keys"
 	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/records"
 )
 
@@ -75,24 +76,53 @@ func Run(cfgPath string) ([]string, error) {
 		return out, errors.New("no manifest endpoint uses wss.path from the config")
 	}
 	out = append(out, fmt.Sprintf("ok endpoint %s:%d%s", ep.Host, ep.Port, ep.Path))
+	line, err := checkTLS(cfg, ep)
+	if err != nil {
+		return out, err
+	}
+	out = append(out, line)
+	if line, err = checkPush(cfg); err != nil {
+		return out, err
+	}
+	return append(out, line), nil
+}
+
+// checkTLS verifies the certificate pair against the endpoint's manifest pins (plain endpoints pass).
+func checkTLS(cfg *config.Config, ep *pb.Endpoint) (string, error) {
 	if cfg.WSS.TLSCert == "" {
-		return append(out, "ok plain endpoint (development)"), nil
+		return "ok plain endpoint (development)", nil
 	}
 	pair, err := tls.LoadX509KeyPair(cfg.WSS.TLSCert, cfg.WSS.TLSKey)
 	if err != nil {
-		return out, fmt.Errorf("tls pair: %w", err)
+		return "", fmt.Errorf("tls pair: %w", err)
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return out, fmt.Errorf("tls_cert: %w", err)
+		return "", fmt.Errorf("tls_cert: %w", err)
 	}
 	pin := pinning.SPKIPin(leaf)
 	for _, p := range ep.TlsSpkiPins {
 		if bytes.Equal(p, pin) {
-			return append(out, "ok tls certificate matches pin "+base64.StdEncoding.EncodeToString(pin)), nil
+			return "ok tls certificate matches pin " + base64.StdEncoding.EncodeToString(pin), nil
 		}
 	}
-	return out, fmt.Errorf("tls certificate pin %s is not in the manifest", base64.StdEncoding.EncodeToString(pin))
+	return "", fmt.Errorf("tls certificate pin %s is not in the manifest", base64.StdEncoding.EncodeToString(pin))
+}
+
+// checkPush parses the FCM key file when it exists (D59); a missing file means push is off. No network access.
+func checkPush(cfg *config.Config) (string, error) {
+	if !cfg.PushEnabled() {
+		return "ok push off (no key file)", nil
+	}
+	raw, err := os.ReadFile(cfg.Push.FCMCredentials)
+	if err != nil {
+		return "", fmt.Errorf("push key: %w", err)
+	}
+	f, err := push.NewFCM(raw)
+	if err != nil {
+		return "", fmt.Errorf("push key: %w", err)
+	}
+	return "ok push key (project " + f.ProjectID() + ")", nil
 }
 
 type noUsers struct{}

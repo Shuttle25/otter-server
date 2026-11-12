@@ -99,3 +99,27 @@ func TestParseSize(t *testing.T) {
 		t.Errorf("rate %d %v", got, err)
 	}
 }
+
+func TestPush(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.PushEnabled() {
+		t.Fatalf("no [push]: enabled=%v err=%v", c != nil && c.PushEnabled(), err)
+	}
+	key := filepath.Join(t.TempDir(), "fcm.json")
+	c, err = Load(write(t, valid+"[push]\nfcm_credentials = \""+key+"\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Push.FCMCredentials != key || c.PushEnabled() {
+		t.Fatalf("missing key file must mean push off: %+v", c.Push)
+	}
+	if err := os.WriteFile(key, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !c.PushEnabled() {
+		t.Fatal("key file present: push should be on")
+	}
+	if _, err := Load(write(t, valid+"[push]\nfcm_key = \"x\"\n")); err == nil || !strings.Contains(err.Error(), "fcm_key") {
+		t.Fatalf("unknown [push] key accepted: %v", err)
+	}
+}

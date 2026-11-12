@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/apk"
 	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
@@ -41,6 +42,7 @@ const usage = `usage: otter-node <command>
   check --config FILE          verify config, keys, manifest and TLS before starting
   backup --config FILE --out F consistent database copy (safe while running)
   stats --config FILE          database counts (safe while running)
+  apk import --config FILE APK... store app update files served by apk.get (keeps the newest 2)
   probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
   version`
 
@@ -86,6 +88,12 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 		return nil, err
 	}
 	svc.Blobs = bd
+	apks, err := apk.New(filepath.Join(cfg.DataDir, "apk"))
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	svc.Apks = apks
 	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes}
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
 }
@@ -102,6 +110,30 @@ func importFile(ctx context.Context, svc *service.Service, path string) (bool, e
 	return svc.ImportRecord(ctx, &rec)
 }
 
+// importApks stores APK files in <data_dir>/apk (D68). It does not open the database: deploy runs it as root
+// while the node is running.
+func importApks(cfgPath string, files []string, out io.Writer) error {
+	if len(files) == 0 {
+		return errors.New("usage: otter-node apk import --config FILE APK...")
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	d, err := apk.New(filepath.Join(cfg.DataDir, "apk"))
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		sum, err := d.Import(f)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f, err)
+		}
+		fmt.Fprintf(out, "%s: stored %x\n", f, sum)
+	}
+	return nil
+}
+
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(usage)
@@ -114,11 +146,21 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if cmd == "probe" {
 		return runProbe(ctx, args[1:], out)
 	}
+	rest := args[1:]
+	if cmd == "apk" {
+		if len(rest) == 0 || rest[0] != "import" {
+			return errors.New("usage: otter-node apk import --config FILE APK...")
+		}
+		rest = rest[1:]
+	}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/otter/node.toml", "config file")
 	outPath := fs.String("out", "", "backup file (backup)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(rest); err != nil {
 		return err
+	}
+	if cmd == "apk" {
+		return importApks(*cfgPath, fs.Args(), out)
 	}
 	if cmd == "check" { // must not touch the database
 		lines, err := nodecheck.Run(*cfgPath)

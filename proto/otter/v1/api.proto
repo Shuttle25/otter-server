@@ -40,7 +40,7 @@ message Response {
   string error = 4;
 }
 
-// Server-initiated. Types: hello, envelopes (RecordBatch), directory (Empty), prekeys_low (PrekeysLow).
+// Server-initiated. Types: hello, envelopes (RecordBatch), directory (Empty), prekeys_low (PrekeysLow), manifest (ManifestResponse), news (Empty).
 message Event {
   string type = 1;
   bytes body = 2;
@@ -134,4 +134,15 @@ message BackupFetchRequest {
 message BackupFetchResponse {
   Record backup_meta = 1;
   Record blob_meta = 2;   // chunk hashes: the client verifies every chunk
+}
+
+// apk.get (D68): one 1 MiB chunk of an APK stored on the node.
+message ApkGetRequest {
+  bytes sha256 = 1;
+  uint32 index = 2;
+}
+
+message ApkChunk {
+  bytes data = 1;
+  uint64 total_size = 2;
 }

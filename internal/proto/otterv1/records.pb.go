@@ -39,6 +39,8 @@ const (
 	RecordType_REVOCATION              RecordType = 12
 	RecordType_INVITE_RIGHTS           RecordType = 13
 	RecordType_BLOB_FETCHED            RecordType = 14
+	RecordType_ANNOUNCEMENT            RecordType = 15
+	RecordType_ANNOUNCEMENT_DELETED    RecordType = 16
 )
 
 // Enum value maps for RecordType.
@@ -59,6 +61,8 @@ var (
 		12: "REVOCATION",
 		13: "INVITE_RIGHTS",
 		14: "BLOB_FETCHED",
+		15: "ANNOUNCEMENT",
+		16: "ANNOUNCEMENT_DELETED",
 	}
 	RecordType_value = map[string]int32{
 		"RECORD_TYPE_UNSPECIFIED": 0,
@@ -76,6 +80,8 @@ var (
 		"REVOCATION":              12,
 		"INVITE_RIGHTS":           13,
 		"BLOB_FETCHED":            14,
+		"ANNOUNCEMENT":            15,
+		"ANNOUNCEMENT_DELETED":    16,
 	}
 )
 
@@ -1011,6 +1017,180 @@ func (x *PushToken) GetToken() string {
 	return ""
 }
 
+// ANNOUNCEMENT payload (D66). Author = ID16(news public key); signed by a news key listed in the manifest (D65).
+type Announcement struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TextRu        string                 `protobuf:"bytes,1,opt,name=text_ru,json=textRu,proto3" json:"text_ru,omitempty"`
+	TextEn        string                 `protobuf:"bytes,2,opt,name=text_en,json=textEn,proto3" json:"text_en,omitempty"`
+	Update        *AppUpdate             `protobuf:"bytes,3,opt,name=update,proto3" json:"update,omitempty"` // optional: an APK served by the nodes (D68)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Announcement) Reset() {
+	*x = Announcement{}
+	mi := &file_otter_v1_records_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Announcement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Announcement) ProtoMessage() {}
+
+func (x *Announcement) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Announcement.ProtoReflect.Descriptor instead.
+func (*Announcement) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *Announcement) GetTextRu() string {
+	if x != nil {
+		return x.TextRu
+	}
+	return ""
+}
+
+func (x *Announcement) GetTextEn() string {
+	if x != nil {
+		return x.TextEn
+	}
+	return ""
+}
+
+func (x *Announcement) GetUpdate() *AppUpdate {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
+type AppUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VersionName   string                 `protobuf:"bytes,1,opt,name=version_name,json=versionName,proto3" json:"version_name,omitempty"`
+	VersionCode   uint32                 `protobuf:"varint,2,opt,name=version_code,json=versionCode,proto3" json:"version_code,omitempty"`
+	Sha256        []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"` // SHA-256 of the APK file
+	Size          uint64                 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`    // bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AppUpdate) Reset() {
+	*x = AppUpdate{}
+	mi := &file_otter_v1_records_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AppUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AppUpdate) ProtoMessage() {}
+
+func (x *AppUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AppUpdate.ProtoReflect.Descriptor instead.
+func (*AppUpdate) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *AppUpdate) GetVersionName() string {
+	if x != nil {
+		return x.VersionName
+	}
+	return ""
+}
+
+func (x *AppUpdate) GetVersionCode() uint32 {
+	if x != nil {
+		return x.VersionCode
+	}
+	return 0
+}
+
+func (x *AppUpdate) GetSha256() []byte {
+	if x != nil {
+		return x.Sha256
+	}
+	return nil
+}
+
+func (x *AppUpdate) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+// ANNOUNCEMENT_DELETED payload: target = record key (author ‖ id) of the deleted announcement.
+type AnnouncementDeleted struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Target        []byte                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnnouncementDeleted) Reset() {
+	*x = AnnouncementDeleted{}
+	mi := &file_otter_v1_records_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnnouncementDeleted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnnouncementDeleted) ProtoMessage() {}
+
+func (x *AnnouncementDeleted) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnnouncementDeleted.ProtoReflect.Descriptor instead.
+func (*AnnouncementDeleted) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *AnnouncementDeleted) GetTarget() []byte {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
 var File_otter_v1_records_proto protoreflect.FileDescriptor
 
 const file_otter_v1_records_proto_rawDesc = "" +
@@ -1092,7 +1272,18 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\x05token\x18\x03 \x01(\tR\x05token\"%\n" +
 	"\x04Kind\x12\x14\n" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\a\n" +
-	"\x03FCM\x10\x01*\x87\x02\n" +
+	"\x03FCM\x10\x01\"m\n" +
+	"\fAnnouncement\x12\x17\n" +
+	"\atext_ru\x18\x01 \x01(\tR\x06textRu\x12\x17\n" +
+	"\atext_en\x18\x02 \x01(\tR\x06textEn\x12+\n" +
+	"\x06update\x18\x03 \x01(\v2\x13.otter.v1.AppUpdateR\x06update\"}\n" +
+	"\tAppUpdate\x12!\n" +
+	"\fversion_name\x18\x01 \x01(\tR\vversionName\x12!\n" +
+	"\fversion_code\x18\x02 \x01(\rR\vversionCode\x12\x16\n" +
+	"\x06sha256\x18\x03 \x01(\fR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x04R\x04size\"-\n" +
+	"\x13AnnouncementDeleted\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\fR\x06target*\xb3\x02\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
@@ -1113,7 +1304,9 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\n" +
 	"REVOCATION\x10\f\x12\x11\n" +
 	"\rINVITE_RIGHTS\x10\r\x12\x10\n" +
-	"\fBLOB_FETCHED\x10\x0eBI\n" +
+	"\fBLOB_FETCHED\x10\x0e\x12\x10\n" +
+	"\fANNOUNCEMENT\x10\x0f\x12\x18\n" +
+	"\x14ANNOUNCEMENT_DELETED\x10\x10BI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -1129,32 +1322,36 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_otter_v1_records_proto_goTypes = []any{
-	(RecordType)(0),        // 0: otter.v1.RecordType
-	(PushToken_Kind)(0),    // 1: otter.v1.PushToken.Kind
-	(*Record)(nil),         // 2: otter.v1.Record
-	(*RecordBody)(nil),     // 3: otter.v1.RecordBody
-	(*DirectoryEntry)(nil), // 4: otter.v1.DirectoryEntry
-	(*Revocation)(nil),     // 5: otter.v1.Revocation
-	(*InviteRights)(nil),   // 6: otter.v1.InviteRights
-	(*Invite)(nil),         // 7: otter.v1.Invite
-	(*InviteUsed)(nil),     // 8: otter.v1.InviteUsed
-	(*PrekeyConsumed)(nil), // 9: otter.v1.PrekeyConsumed
-	(*Ack)(nil),            // 10: otter.v1.Ack
-	(*BlobMeta)(nil),       // 11: otter.v1.BlobMeta
-	(*BlobFetched)(nil),    // 12: otter.v1.BlobFetched
-	(*BackupMeta)(nil),     // 13: otter.v1.BackupMeta
-	(*PushToken)(nil),      // 14: otter.v1.PushToken
+	(RecordType)(0),             // 0: otter.v1.RecordType
+	(PushToken_Kind)(0),         // 1: otter.v1.PushToken.Kind
+	(*Record)(nil),              // 2: otter.v1.Record
+	(*RecordBody)(nil),          // 3: otter.v1.RecordBody
+	(*DirectoryEntry)(nil),      // 4: otter.v1.DirectoryEntry
+	(*Revocation)(nil),          // 5: otter.v1.Revocation
+	(*InviteRights)(nil),        // 6: otter.v1.InviteRights
+	(*Invite)(nil),              // 7: otter.v1.Invite
+	(*InviteUsed)(nil),          // 8: otter.v1.InviteUsed
+	(*PrekeyConsumed)(nil),      // 9: otter.v1.PrekeyConsumed
+	(*Ack)(nil),                 // 10: otter.v1.Ack
+	(*BlobMeta)(nil),            // 11: otter.v1.BlobMeta
+	(*BlobFetched)(nil),         // 12: otter.v1.BlobFetched
+	(*BackupMeta)(nil),          // 13: otter.v1.BackupMeta
+	(*PushToken)(nil),           // 14: otter.v1.PushToken
+	(*Announcement)(nil),        // 15: otter.v1.Announcement
+	(*AppUpdate)(nil),           // 16: otter.v1.AppUpdate
+	(*AnnouncementDeleted)(nil), // 17: otter.v1.AnnouncementDeleted
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
-	0, // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
-	1, // 1: otter.v1.PushToken.kind:type_name -> otter.v1.PushToken.Kind
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	0,  // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
+	1,  // 1: otter.v1.PushToken.kind:type_name -> otter.v1.PushToken.Kind
+	16, // 2: otter.v1.Announcement.update:type_name -> otter.v1.AppUpdate
+	3,  // [3:3] is the sub-list for method output_type
+	3,  // [3:3] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_records_proto_init() }
@@ -1168,7 +1365,7 @@ func file_otter_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

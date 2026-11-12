@@ -51,4 +51,22 @@ chmod +x "$work/stub/ssh"
 if out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1); then fail "status should fail"; fi
 grep -q '^n1 ' <<< "$out" && grep -q '^n2 ' <<< "$out" || fail "status rows: $out"
 
+# --- upgrade-all.sh: refuses when a node has no host, before touching anything
+deploy/hosts.sh rm n2
+touch dist/otter-node_0.0.0-st_linux_amd64 dist/otter-node_0.0.0-st_linux_arm64
+if out=$(deploy/upgrade-all.sh 0.0.0-st 2>&1); then fail "upgrade-all without hosts"; fi
+grep -q 'hosts.sh set n1' <<< "$out" || fail "upgrade-all message: $out"
+# --only limits the set; an unknown CPU type is refused
+deploy/hosts.sh set n1 root@n1.example
+printf '#!/bin/sh\ncase "$*" in *uname*) echo sparc64;; *) exit 0;; esac\n' > "$work/stub/ssh"
+if out=$(PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.0.0-st --only n1 2>&1); then fail "sparc accepted"; fi
+grep -q 'sparc64' <<< "$out" || fail "arch message: $out"
+# a node already on VERSION is skipped
+printf '#!/bin/sh\ncase "$*" in *uname*) echo x86_64;; *"otter-node version"*) echo 0.0.0-st;; *) exit 0;; esac\n' > "$work/stub/ssh"
+out=$(PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.0.0-st --only n1 2>&1) || fail "skip run failed: $out"
+grep -q 'already 0.0.0-st' <<< "$out" || fail "skip summary: $out"
+if out=$(deploy/upgrade-all.sh 0.0.0-st --only nope 2>&1); then fail "unknown --only accepted"; fi
+grep -q 'unknown node nope' <<< "$out" || fail "unknown node message: $out"
+rm -f dist/otter-node_0.0.0-st_linux_*
+
 echo "scripts test: ok"

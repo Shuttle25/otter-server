@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Rolling upgrade of every node (or --only LABEL...) to VERSION; stops at the first failure.
+# Usage: upgrade-all.sh VERSION [--only LABEL]...   Exit: 0 all done, 2 rolled back, 3 manual action needed.
+source "$(dirname "$0")/lib.sh"
+usage="usage: upgrade-all.sh VERSION [--only LABEL]..."
+version=${1:?$usage}; shift
+only=()
+while (( $# )); do case "$1" in --only) only+=("${2:?$usage}"); shift 2 ;; *) die "$usage" ;; esac; done
+all=$(node_labels)
+for o in "${only[@]}"; do grep -qx -- "$o" <<< "$all" || die "unknown node $o"; done
+labels=()
+for l in $all; do
+  if (( ${#only[@]} == 0 )) || printf '%s\n' "${only[@]}" | grep -qx -- "$l"; then labels+=("$l"); fi
+done
+(( ${#labels[@]} )) || die "no matching nodes"
+for l in "${labels[@]}"; do host_lookup "$l" || die "node $l has no SSH target: deploy/hosts.sh set $l root@HOST"; done
+
+if [[ ! -f "$ROOT/dist/otter-node_${version}_linux_amd64" || ! -f "$ROOT/dist/otter-node_${version}_linux_arm64" ]]; then
+  say "building release $version"
+  make -C "$ROOT" -s release VERSION="$version"
+fi
+
+declare -A result
+for l in "${labels[@]}"; do result[$l]="not attempted"; done
+summary() { for l in "${labels[@]}"; do printf '%-12s %s\n' "$l" "${result[$l]}"; done; }
+for l in "${labels[@]}"; do
+  host_lookup "$l"
+  export OTTER_SSH_PORT=$TARGET_PORT SSH_PORT=$TARGET_PORT
+  m=$(remote "$TARGET" uname -m) || { result[$l]="unreachable"; summary; exit 3; }
+  case "$m" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die "node $l: unsupported CPU type $m" ;; esac
+  cur=$(remote "$TARGET" /usr/local/bin/otter-node version 2>/dev/null || echo unknown)
+  if [[ "$cur" == "$version" ]]; then result[$l]="already $version"; continue; fi
+  say "upgrading $l ($TARGET, $arch) from $cur to $version"
+  set +e; "$ROOT/deploy/upgrade.sh" "$TARGET" "$ROOT/dist/otter-node_${version}_linux_$arch"; rc=$?; set -e
+  case $rc in
+    0) result[$l]="upgraded $cur → $version" ;;
+    2) result[$l]="ROLLED BACK (still $cur)"; summary; exit 2 ;;
+    *) result[$l]="FAILED — check the server now"; summary; exit 3 ;;
+  esac
+done
+summary
+say "all selected nodes are on $version"

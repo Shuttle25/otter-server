@@ -11,6 +11,7 @@ message Content {
     ReceiptMessage receipt = 2;
     GroupUpdate group_update = 3;
     SenderKeyDistribution sender_key = 4;
+    SessionReset session_reset = 5;
   }
   int64 sent_ms = 10;
 }
@@ -96,3 +97,6 @@ message ReceiptMessage {
   Type type = 1;
   repeated bytes message_ids = 2;
 }
+
+// Sent 1:1 after a restore or when a message could not be decrypted (D53). No fields.
+message SessionReset {}

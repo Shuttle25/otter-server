@@ -1,6 +1,7 @@
 package records
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -381,5 +382,59 @@ func TestNodeAuthoredRecords(t *testing.T) {
 				t.Fatalf("want %v, got %v", c.want, err)
 			}
 		})
+	}
+}
+
+func backupMetaBody(t *testing.T, author []byte, mut func(*pb.BackupMeta, *pb.RecordBody)) *pb.RecordBody {
+	t.Helper()
+	m := &pb.BackupMeta{Version: 1, Salt: make([]byte, 16), KdfMKib: 65536, KdfT: 3, KdfP: 1,
+		AuthVerifier: make([]byte, 32), BlobKey: append(append([]byte{}, author...), make([]byte, 16)...), Size: 1000}
+	b := &pb.RecordBody{Id: make([]byte, 16), Type: pb.RecordType_BACKUP_META, Author: author, CreatedMs: 1}
+	if mut != nil {
+		mut(m, b)
+	}
+	b.Payload, _ = proto.Marshal(m)
+	return b
+}
+
+func TestCheckBackupMeta(t *testing.T) {
+	a := bytes.Repeat([]byte{7}, 16)
+	if err := checkBackupMeta(backupMetaBody(t, a, nil)); err != nil {
+		t.Fatalf("valid meta rejected: %v", err)
+	}
+	bad := map[string]func(*pb.BackupMeta, *pb.RecordBody){
+		"version 0":    func(m *pb.BackupMeta, _ *pb.RecordBody) { m.Version = 0 },
+		"short salt":   func(m *pb.BackupMeta, _ *pb.RecordBody) { m.Salt = make([]byte, 8) },
+		"weak kdf":     func(m *pb.BackupMeta, _ *pb.RecordBody) { m.KdfMKib = 1024 },
+		"t 0":          func(m *pb.BackupMeta, _ *pb.RecordBody) { m.KdfT = 0 },
+		"p 9":          func(m *pb.BackupMeta, _ *pb.RecordBody) { m.KdfP = 9 },
+		"verifier":     func(m *pb.BackupMeta, _ *pb.RecordBody) { m.AuthVerifier = nil },
+		"foreign blob": func(m *pb.BackupMeta, _ *pb.RecordBody) { m.BlobKey = make([]byte, 32) },
+		"size 0":       func(m *pb.BackupMeta, _ *pb.RecordBody) { m.Size = 0 },
+		"too big":      func(m *pb.BackupMeta, _ *pb.RecordBody) { m.Size = MaxBlobSize + 1 },
+		"expires":      func(_ *pb.BackupMeta, b *pb.RecordBody) { b.ExpiresMs = 5 },
+	}
+	for name, mut := range bad {
+		if err := checkBackupMeta(backupMetaBody(t, a, mut)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestCheckBlobMetaPersistent(t *testing.T) {
+	a := bytes.Repeat([]byte{7}, 16)
+	mk := func(readers [][]byte, expires int64) *pb.RecordBody {
+		m := &pb.BlobMeta{Size: 10, ChunkSize: BlobChunkSize, ChunkSha256: [][]byte{make([]byte, 32)}, Readers: readers, Persistent: true}
+		p, _ := proto.Marshal(m)
+		return &pb.RecordBody{Id: make([]byte, 16), Type: pb.RecordType_BLOB_META, Author: a, CreatedMs: 1, ExpiresMs: expires, Payload: p}
+	}
+	if err := checkBlobMeta(mk(nil, 0)); err != nil {
+		t.Fatalf("persistent blob rejected: %v", err)
+	}
+	if checkBlobMeta(mk([][]byte{bytes.Repeat([]byte{8}, 16)}, 0)) == nil {
+		t.Error("persistent blob with readers accepted")
+	}
+	if checkBlobMeta(mk(nil, 1000)) == nil {
+		t.Error("persistent blob with expiry accepted")
 	}
 }

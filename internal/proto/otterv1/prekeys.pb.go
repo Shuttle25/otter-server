@@ -149,6 +149,7 @@ type PreKeys struct {
 	SignedPrekey   *SignedPreKey          `protobuf:"bytes,3,opt,name=signed_prekey,json=signedPrekey,proto3" json:"signed_prekey,omitempty"`
 	KyberPrekey    *SignedPreKey          `protobuf:"bytes,4,opt,name=kyber_prekey,json=kyberPrekey,proto3" json:"kyber_prekey,omitempty"`
 	OneTime        []*OneTimePreKey       `protobuf:"bytes,5,rep,name=one_time,json=oneTime,proto3" json:"one_time,omitempty"`
+	InstalledMs    int64                  `protobuf:"varint,6,opt,name=installed_ms,json=installedMs,proto3" json:"installed_ms,omitempty"` // time this install was created (D52); 0 = before M6
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -216,6 +217,13 @@ func (x *PreKeys) GetOneTime() []*OneTimePreKey {
 		return x.OneTime
 	}
 	return nil
+}
+
+func (x *PreKeys) GetInstalledMs() int64 {
+	if x != nil {
+		return x.InstalledMs
+	}
+	return 0
 }
 
 type PreKeyBundle struct {
@@ -325,13 +333,14 @@ const file_otter_v1_prekeys_proto_rawDesc = "" +
 	"\n" +
 	"public_key\x18\x02 \x01(\fR\tpublicKey\x12\x1d\n" +
 	"\n" +
-	"owner_node\x18\x03 \x01(\fR\townerNode\"\xfb\x01\n" +
+	"owner_node\x18\x03 \x01(\fR\townerNode\"\x9e\x02\n" +
 	"\aPreKeys\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\rR\bdeviceId\x12'\n" +
 	"\x0fregistration_id\x18\x02 \x01(\rR\x0eregistrationId\x12;\n" +
 	"\rsigned_prekey\x18\x03 \x01(\v2\x16.otter.v1.SignedPreKeyR\fsignedPrekey\x129\n" +
 	"\fkyber_prekey\x18\x04 \x01(\v2\x16.otter.v1.SignedPreKeyR\vkyberPrekey\x122\n" +
-	"\bone_time\x18\x05 \x03(\v2\x17.otter.v1.OneTimePreKeyR\aoneTime\"\xbc\x02\n" +
+	"\bone_time\x18\x05 \x03(\v2\x17.otter.v1.OneTimePreKeyR\aoneTime\x12!\n" +
+	"\finstalled_ms\x18\x06 \x01(\x03R\vinstalledMs\"\xbc\x02\n" +
 	"\fPreKeyBundle\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\x12'\n" +

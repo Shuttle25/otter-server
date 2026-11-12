@@ -113,3 +113,25 @@ message BlobStatus {
   uint32 chunks = 1;
   repeated uint32 missing = 2;
 }
+
+message LoginResponse {
+  uint32 registration_id = 1;  // of the newest install this node knows (D52)
+  int64 installed_ms = 2;
+}
+
+message BackupAuthRequest { string username = 1; }
+message BackupAuthResponse {
+  bytes salt = 1;
+  uint32 kdf_m_kib = 2;
+  uint32 kdf_t = 3;
+  uint32 kdf_p = 4;
+}
+
+message BackupFetchRequest {
+  string username = 1;
+  bytes auth_secret = 2;  // 32 bytes
+}
+message BackupFetchResponse {
+  Record backup_meta = 1;
+  Record blob_meta = 2;   // chunk hashes: the client verifies every chunk
+}

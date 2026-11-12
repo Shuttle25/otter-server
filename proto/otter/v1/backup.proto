@@ -1,0 +1,57 @@
+syntax = "proto3";
+package otter.v1;
+
+option go_package = "ottermsg/server/internal/proto/otterv1;otterv1";
+option java_package = "app.ottermsg.proto.v1";
+option java_multiple_files = true;
+
+// Plaintext of a password backup (D55): gzip(BackupSnapshot) is encrypted with backup_key.
+message BackupSnapshot {
+  uint32 format = 1;            // 1
+  int64 created_ms = 2;
+  bytes seed = 3;               // 32 bytes
+  string username = 4;
+  string display_name = 5;
+  int64 registered_ms = 6;      // account.created_ms (D40)
+  uint32 entry_version = 7;
+  repeated BackupContact contacts = 8;
+  repeated BackupConversation conversations = 9;
+  repeated BackupMessage messages = 10;
+  repeated BackupGroup groups = 11;
+  uint32 photo_auto_download = 12;
+  bool photo_save_to_gallery = 13;
+}
+
+message BackupContact {
+  bytes user_id = 1; string username = 2; string display_name = 3;
+  bytes account_pub = 4; bytes identity_pub = 5;
+  bool verified = 6; bool identity_changed = 7; bool revoked = 8; int64 entry_version = 9;
+}
+
+message BackupConversation {
+  int64 id = 1; bytes peer_user_id = 2; string title = 3; int64 last_activity_ms = 4;
+  int32 unread = 5; string draft = 6; bytes group_id = 7; int32 type = 8;
+}
+
+message BackupMessage {
+  bytes message_id = 1; int64 conversation_id = 2; bytes sender_id = 3; bool outgoing = 4;
+  int64 sent_ms = 5; int64 received_ms = 6; string body = 7; int32 status = 8; int32 kind = 9;
+  bool read_receipt_sent = 10; bytes system_data = 11;
+  BackupAttachment attachment = 12;  // kind = PHOTO
+  repeated BackupRecipient recipients = 13;  // outgoing group messages
+}
+
+message BackupAttachment {
+  bytes blob_key = 1; bytes key = 2; bytes digest = 3; int64 size = 4; string mime = 5;
+  int32 width = 6; int32 height = 7; bytes thumb = 8;
+}
+
+message BackupRecipient { bytes user_id = 1; int64 delivered_ms = 2; int64 read_ms = 3; }
+
+message BackupGroup {
+  bytes group_id = 1; string name = 2; bool family = 3; int64 version = 4;
+  bytes state_signed = 5; bytes prev_state = 6; bool i_am_member = 7; bytes created_by = 8;
+  repeated BackupGroupMember members = 9;
+}
+
+message BackupGroupMember { bytes user_id = 1; bool admin = 2; }

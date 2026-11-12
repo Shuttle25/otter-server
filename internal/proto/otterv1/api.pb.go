@@ -1061,6 +1061,274 @@ func (x *BlobStatus) GetMissing() []uint32 {
 	return nil
 }
 
+type LoginResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RegistrationId uint32                 `protobuf:"varint,1,opt,name=registration_id,json=registrationId,proto3" json:"registration_id,omitempty"` // of the newest install this node knows (D52)
+	InstalledMs    int64                  `protobuf:"varint,2,opt,name=installed_ms,json=installedMs,proto3" json:"installed_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *LoginResponse) Reset() {
+	*x = LoginResponse{}
+	mi := &file_otter_v1_api_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoginResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoginResponse) ProtoMessage() {}
+
+func (x *LoginResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoginResponse.ProtoReflect.Descriptor instead.
+func (*LoginResponse) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *LoginResponse) GetRegistrationId() uint32 {
+	if x != nil {
+		return x.RegistrationId
+	}
+	return 0
+}
+
+func (x *LoginResponse) GetInstalledMs() int64 {
+	if x != nil {
+		return x.InstalledMs
+	}
+	return 0
+}
+
+type BackupAuthRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupAuthRequest) Reset() {
+	*x = BackupAuthRequest{}
+	mi := &file_otter_v1_api_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupAuthRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupAuthRequest) ProtoMessage() {}
+
+func (x *BackupAuthRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupAuthRequest.ProtoReflect.Descriptor instead.
+func (*BackupAuthRequest) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *BackupAuthRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+type BackupAuthResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Salt          []byte                 `protobuf:"bytes,1,opt,name=salt,proto3" json:"salt,omitempty"`
+	KdfMKib       uint32                 `protobuf:"varint,2,opt,name=kdf_m_kib,json=kdfMKib,proto3" json:"kdf_m_kib,omitempty"`
+	KdfT          uint32                 `protobuf:"varint,3,opt,name=kdf_t,json=kdfT,proto3" json:"kdf_t,omitempty"`
+	KdfP          uint32                 `protobuf:"varint,4,opt,name=kdf_p,json=kdfP,proto3" json:"kdf_p,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupAuthResponse) Reset() {
+	*x = BackupAuthResponse{}
+	mi := &file_otter_v1_api_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupAuthResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupAuthResponse) ProtoMessage() {}
+
+func (x *BackupAuthResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupAuthResponse.ProtoReflect.Descriptor instead.
+func (*BackupAuthResponse) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *BackupAuthResponse) GetSalt() []byte {
+	if x != nil {
+		return x.Salt
+	}
+	return nil
+}
+
+func (x *BackupAuthResponse) GetKdfMKib() uint32 {
+	if x != nil {
+		return x.KdfMKib
+	}
+	return 0
+}
+
+func (x *BackupAuthResponse) GetKdfT() uint32 {
+	if x != nil {
+		return x.KdfT
+	}
+	return 0
+}
+
+func (x *BackupAuthResponse) GetKdfP() uint32 {
+	if x != nil {
+		return x.KdfP
+	}
+	return 0
+}
+
+type BackupFetchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	AuthSecret    []byte                 `protobuf:"bytes,2,opt,name=auth_secret,json=authSecret,proto3" json:"auth_secret,omitempty"` // 32 bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupFetchRequest) Reset() {
+	*x = BackupFetchRequest{}
+	mi := &file_otter_v1_api_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupFetchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupFetchRequest) ProtoMessage() {}
+
+func (x *BackupFetchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupFetchRequest.ProtoReflect.Descriptor instead.
+func (*BackupFetchRequest) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *BackupFetchRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *BackupFetchRequest) GetAuthSecret() []byte {
+	if x != nil {
+		return x.AuthSecret
+	}
+	return nil
+}
+
+type BackupFetchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BackupMeta    *Record                `protobuf:"bytes,1,opt,name=backup_meta,json=backupMeta,proto3" json:"backup_meta,omitempty"`
+	BlobMeta      *Record                `protobuf:"bytes,2,opt,name=blob_meta,json=blobMeta,proto3" json:"blob_meta,omitempty"` // chunk hashes: the client verifies every chunk
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupFetchResponse) Reset() {
+	*x = BackupFetchResponse{}
+	mi := &file_otter_v1_api_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupFetchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupFetchResponse) ProtoMessage() {}
+
+func (x *BackupFetchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupFetchResponse.ProtoReflect.Descriptor instead.
+func (*BackupFetchResponse) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *BackupFetchResponse) GetBackupMeta() *Record {
+	if x != nil {
+		return x.BackupMeta
+	}
+	return nil
+}
+
+func (x *BackupFetchResponse) GetBlobMeta() *Record {
+	if x != nil {
+		return x.BlobMeta
+	}
+	return nil
+}
+
 var File_otter_v1_api_proto protoreflect.FileDescriptor
 
 const file_otter_v1_api_proto_rawDesc = "" +
@@ -1127,7 +1395,25 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\n" +
 	"BlobStatus\x12\x16\n" +
 	"\x06chunks\x18\x01 \x01(\rR\x06chunks\x12\x18\n" +
-	"\amissing\x18\x02 \x03(\rR\amissing*\xc2\x01\n" +
+	"\amissing\x18\x02 \x03(\rR\amissing\"[\n" +
+	"\rLoginResponse\x12'\n" +
+	"\x0fregistration_id\x18\x01 \x01(\rR\x0eregistrationId\x12!\n" +
+	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\"/\n" +
+	"\x11BackupAuthRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"n\n" +
+	"\x12BackupAuthResponse\x12\x12\n" +
+	"\x04salt\x18\x01 \x01(\fR\x04salt\x12\x1a\n" +
+	"\tkdf_m_kib\x18\x02 \x01(\rR\akdfMKib\x12\x13\n" +
+	"\x05kdf_t\x18\x03 \x01(\rR\x04kdfT\x12\x13\n" +
+	"\x05kdf_p\x18\x04 \x01(\rR\x04kdfP\"Q\n" +
+	"\x12BackupFetchRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
+	"\vauth_secret\x18\x02 \x01(\fR\n" +
+	"authSecret\"w\n" +
+	"\x13BackupFetchResponse\x121\n" +
+	"\vbackup_meta\x18\x01 \x01(\v2\x10.otter.v1.RecordR\n" +
+	"backupMeta\x12-\n" +
+	"\tblob_meta\x18\x02 \x01(\v2\x10.otter.v1.RecordR\bblobMeta*\xc2\x01\n" +
 	"\x06Status\x12\r\n" +
 	"\tSTATUS_OK\x10\x00\x12\x16\n" +
 	"\x12STATUS_RETRY_LATER\x10\x01\x12\x17\n" +
@@ -1153,44 +1439,51 @@ func file_otter_v1_api_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_api_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_otter_v1_api_proto_goTypes = []any{
-	(Status)(0),                // 0: otter.v1.Status
-	(*Frame)(nil),              // 1: otter.v1.Frame
-	(*Request)(nil),            // 2: otter.v1.Request
-	(*Response)(nil),           // 3: otter.v1.Response
-	(*Event)(nil),              // 4: otter.v1.Event
-	(*Hello)(nil),              // 5: otter.v1.Hello
-	(*LoginRequest)(nil),       // 6: otter.v1.LoginRequest
-	(*RegisterRequest)(nil),    // 7: otter.v1.RegisterRequest
-	(*RecordRequest)(nil),      // 8: otter.v1.RecordRequest
-	(*RecordBatch)(nil),        // 9: otter.v1.RecordBatch
-	(*PreKeyFetchRequest)(nil), // 10: otter.v1.PreKeyFetchRequest
-	(*ManifestResponse)(nil),   // 11: otter.v1.ManifestResponse
-	(*PrekeysLow)(nil),         // 12: otter.v1.PrekeysLow
-	(*Empty)(nil),              // 13: otter.v1.Empty
-	(*BlobPutRequest)(nil),     // 14: otter.v1.BlobPutRequest
-	(*BlobGetRequest)(nil),     // 15: otter.v1.BlobGetRequest
-	(*BlobChunk)(nil),          // 16: otter.v1.BlobChunk
-	(*BlobStatus)(nil),         // 17: otter.v1.BlobStatus
-	(*Record)(nil),             // 18: otter.v1.Record
+	(Status)(0),                 // 0: otter.v1.Status
+	(*Frame)(nil),               // 1: otter.v1.Frame
+	(*Request)(nil),             // 2: otter.v1.Request
+	(*Response)(nil),            // 3: otter.v1.Response
+	(*Event)(nil),               // 4: otter.v1.Event
+	(*Hello)(nil),               // 5: otter.v1.Hello
+	(*LoginRequest)(nil),        // 6: otter.v1.LoginRequest
+	(*RegisterRequest)(nil),     // 7: otter.v1.RegisterRequest
+	(*RecordRequest)(nil),       // 8: otter.v1.RecordRequest
+	(*RecordBatch)(nil),         // 9: otter.v1.RecordBatch
+	(*PreKeyFetchRequest)(nil),  // 10: otter.v1.PreKeyFetchRequest
+	(*ManifestResponse)(nil),    // 11: otter.v1.ManifestResponse
+	(*PrekeysLow)(nil),          // 12: otter.v1.PrekeysLow
+	(*Empty)(nil),               // 13: otter.v1.Empty
+	(*BlobPutRequest)(nil),      // 14: otter.v1.BlobPutRequest
+	(*BlobGetRequest)(nil),      // 15: otter.v1.BlobGetRequest
+	(*BlobChunk)(nil),           // 16: otter.v1.BlobChunk
+	(*BlobStatus)(nil),          // 17: otter.v1.BlobStatus
+	(*LoginResponse)(nil),       // 18: otter.v1.LoginResponse
+	(*BackupAuthRequest)(nil),   // 19: otter.v1.BackupAuthRequest
+	(*BackupAuthResponse)(nil),  // 20: otter.v1.BackupAuthResponse
+	(*BackupFetchRequest)(nil),  // 21: otter.v1.BackupFetchRequest
+	(*BackupFetchResponse)(nil), // 22: otter.v1.BackupFetchResponse
+	(*Record)(nil),              // 23: otter.v1.Record
 }
 var file_otter_v1_api_proto_depIdxs = []int32{
 	2,  // 0: otter.v1.Frame.request:type_name -> otter.v1.Request
 	3,  // 1: otter.v1.Frame.response:type_name -> otter.v1.Response
 	4,  // 2: otter.v1.Frame.event:type_name -> otter.v1.Event
 	0,  // 3: otter.v1.Response.status:type_name -> otter.v1.Status
-	18, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
-	18, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
-	18, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
-	18, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
-	18, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
-	18, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	23, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
+	23, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
+	23, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
+	23, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
+	23, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
+	23, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
+	23, // 10: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
+	23, // 11: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_api_proto_init() }
@@ -1210,7 +1503,7 @@ func file_otter_v1_api_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_api_proto_rawDesc), len(file_otter_v1_api_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   17,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

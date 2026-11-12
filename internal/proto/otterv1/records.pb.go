@@ -688,6 +688,7 @@ type BlobMeta struct {
 	ChunkSize     uint32                 `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`      // 262144 in V1
 	ChunkSha256   [][]byte               `protobuf:"bytes,3,rep,name=chunk_sha256,json=chunkSha256,proto3" json:"chunk_sha256,omitempty"` // SHA-256 of every chunk, in order
 	Readers       [][]byte               `protobuf:"bytes,4,rep,name=readers,proto3" json:"readers,omitempty"`                            // user ids allowed to fetch; not the author
+	Persistent    bool                   `protobuf:"varint,5,opt,name=persistent,proto3" json:"persistent,omitempty"`                     // backup blob: no readers, no expiry (D50)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -750,6 +751,13 @@ func (x *BlobMeta) GetReaders() [][]byte {
 	return nil
 }
 
+func (x *BlobMeta) GetPersistent() bool {
+	if x != nil {
+		return x.Persistent
+	}
+	return false
+}
+
 // BLOB_FETCHED: authored by a reader after a verified download (D45).
 type BlobFetched struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -793,6 +801,107 @@ func (x *BlobFetched) GetBlobKey() []byte {
 		return x.BlobKey
 	}
 	return nil
+}
+
+// BACKUP_META: the author's current password backup (D50). Latest version wins.
+type BackupMeta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Salt          []byte                 `protobuf:"bytes,2,opt,name=salt,proto3" json:"salt,omitempty"`                                     // 16 bytes, Argon2id salt
+	KdfMKib       uint32                 `protobuf:"varint,3,opt,name=kdf_m_kib,json=kdfMKib,proto3" json:"kdf_m_kib,omitempty"`             // 65536 in V1
+	KdfT          uint32                 `protobuf:"varint,4,opt,name=kdf_t,json=kdfT,proto3" json:"kdf_t,omitempty"`                        // 3
+	KdfP          uint32                 `protobuf:"varint,5,opt,name=kdf_p,json=kdfP,proto3" json:"kdf_p,omitempty"`                        // 1
+	AuthVerifier  []byte                 `protobuf:"bytes,6,opt,name=auth_verifier,json=authVerifier,proto3" json:"auth_verifier,omitempty"` // SHA-256(auth_secret), 32 bytes
+	BlobKey       []byte                 `protobuf:"bytes,7,opt,name=blob_key,json=blobKey,proto3" json:"blob_key,omitempty"`                // record key of the persistent BLOB_META (author ‖ id)
+	Size          uint64                 `protobuf:"varint,8,opt,name=size,proto3" json:"size,omitempty"`                                    // ciphertext bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupMeta) Reset() {
+	*x = BackupMeta{}
+	mi := &file_otter_v1_records_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupMeta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupMeta) ProtoMessage() {}
+
+func (x *BackupMeta) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupMeta.ProtoReflect.Descriptor instead.
+func (*BackupMeta) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *BackupMeta) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *BackupMeta) GetSalt() []byte {
+	if x != nil {
+		return x.Salt
+	}
+	return nil
+}
+
+func (x *BackupMeta) GetKdfMKib() uint32 {
+	if x != nil {
+		return x.KdfMKib
+	}
+	return 0
+}
+
+func (x *BackupMeta) GetKdfT() uint32 {
+	if x != nil {
+		return x.KdfT
+	}
+	return 0
+}
+
+func (x *BackupMeta) GetKdfP() uint32 {
+	if x != nil {
+		return x.KdfP
+	}
+	return 0
+}
+
+func (x *BackupMeta) GetAuthVerifier() []byte {
+	if x != nil {
+		return x.AuthVerifier
+	}
+	return nil
+}
+
+func (x *BackupMeta) GetBlobKey() []byte {
+	if x != nil {
+		return x.BlobKey
+	}
+	return nil
+}
+
+func (x *BackupMeta) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
 }
 
 var File_otter_v1_records_proto protoreflect.FileDescriptor
@@ -848,15 +957,28 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\akey_ids\x18\x03 \x03(\rR\x06keyIds\"E\n" +
 	"\x03Ack\x12!\n" +
 	"\fenvelope_ids\x18\x01 \x03(\fR\venvelopeIds\x12\x1b\n" +
-	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\"z\n" +
+	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\"\x9a\x01\n" +
 	"\bBlobMeta\x12\x12\n" +
 	"\x04size\x18\x01 \x01(\x04R\x04size\x12\x1d\n" +
 	"\n" +
 	"chunk_size\x18\x02 \x01(\rR\tchunkSize\x12!\n" +
 	"\fchunk_sha256\x18\x03 \x03(\fR\vchunkSha256\x12\x18\n" +
-	"\areaders\x18\x04 \x03(\fR\areaders\"(\n" +
+	"\areaders\x18\x04 \x03(\fR\areaders\x12\x1e\n" +
+	"\n" +
+	"persistent\x18\x05 \x01(\bR\n" +
+	"persistent\"(\n" +
 	"\vBlobFetched\x12\x19\n" +
-	"\bblob_key\x18\x01 \x01(\fR\ablobKey*\x87\x02\n" +
+	"\bblob_key\x18\x01 \x01(\fR\ablobKey\"\xd4\x01\n" +
+	"\n" +
+	"BackupMeta\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x12\n" +
+	"\x04salt\x18\x02 \x01(\fR\x04salt\x12\x1a\n" +
+	"\tkdf_m_kib\x18\x03 \x01(\rR\akdfMKib\x12\x13\n" +
+	"\x05kdf_t\x18\x04 \x01(\rR\x04kdfT\x12\x13\n" +
+	"\x05kdf_p\x18\x05 \x01(\rR\x04kdfP\x12#\n" +
+	"\rauth_verifier\x18\x06 \x01(\fR\fauthVerifier\x12\x19\n" +
+	"\bblob_key\x18\a \x01(\fR\ablobKey\x12\x12\n" +
+	"\x04size\x18\b \x01(\x04R\x04size*\x87\x02\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
@@ -893,7 +1015,7 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_otter_v1_records_proto_goTypes = []any{
 	(RecordType)(0),        // 0: otter.v1.RecordType
 	(*Record)(nil),         // 1: otter.v1.Record
@@ -907,6 +1029,7 @@ var file_otter_v1_records_proto_goTypes = []any{
 	(*Ack)(nil),            // 9: otter.v1.Ack
 	(*BlobMeta)(nil),       // 10: otter.v1.BlobMeta
 	(*BlobFetched)(nil),    // 11: otter.v1.BlobFetched
+	(*BackupMeta)(nil),     // 12: otter.v1.BackupMeta
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
 	0, // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
@@ -928,7 +1051,7 @@ func file_otter_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

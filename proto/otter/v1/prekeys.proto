@@ -25,6 +25,7 @@ message PreKeys {
   SignedPreKey signed_prekey = 3;
   SignedPreKey kyber_prekey = 4;
   repeated OneTimePreKey one_time = 5;
+  int64 installed_ms = 6;  // time this install was created (D52); 0 = before M6
 }
 
 message PreKeyBundle {

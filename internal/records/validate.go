@@ -148,6 +148,8 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 	switch b.Type {
 	case pb.RecordType_BLOB_META:
 		return checkBlobMeta(b)
+	case pb.RecordType_BACKUP_META:
+		return checkBackupMeta(b)
 	case pb.RecordType_BLOB_FETCHED:
 		var f pb.BlobFetched
 		if err := proto.Unmarshal(b.Payload, &f); err != nil || len(f.BlobKey) != 32 {
@@ -269,6 +271,12 @@ func checkBlobMeta(b *pb.RecordBody) error {
 			return ErrBadPayload
 		}
 	}
+	if m.Persistent {
+		if len(m.Readers) != 0 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
+		return nil
+	}
 	if len(m.Readers) == 0 || len(m.Readers) > MaxBlobReaders {
 		return ErrBadPayload
 	}
@@ -280,6 +288,21 @@ func checkBlobMeta(b *pb.RecordBody) error {
 		seen[string(r)] = true
 	}
 	if b.ExpiresMs == 0 || b.ExpiresMs > b.CreatedMs+MaxBlobTTL.Milliseconds() {
+		return ErrBadPayload
+	}
+	return nil
+}
+
+// checkBackupMeta: a user's password backup pointer (D50).
+func checkBackupMeta(b *pb.RecordBody) error {
+	var m pb.BackupMeta
+	if err := proto.Unmarshal(b.Payload, &m); err != nil {
+		return ErrBadPayload
+	}
+	switch {
+	case b.ExpiresMs != 0, m.Version == 0, len(m.Salt) != 16, len(m.AuthVerifier) != 32,
+		m.KdfMKib < 19456 || m.KdfMKib > 262144, m.KdfT < 1 || m.KdfT > 10, m.KdfP < 1 || m.KdfP > 4,
+		len(m.BlobKey) != 32 || !bytes.Equal(m.BlobKey[:16], b.Author), m.Size == 0 || m.Size > MaxBlobSize:
 		return ErrBadPayload
 	}
 	return nil

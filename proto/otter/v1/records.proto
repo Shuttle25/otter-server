@@ -90,9 +90,22 @@ message BlobMeta {
   uint32 chunk_size = 2;            // 262144 in V1
   repeated bytes chunk_sha256 = 3;  // SHA-256 of every chunk, in order
   repeated bytes readers = 4;       // user ids allowed to fetch; not the author
+  bool persistent = 5;              // backup blob: no readers, no expiry (D50)
 }
 
 // BLOB_FETCHED: authored by a reader after a verified download (D45).
 message BlobFetched {
   bytes blob_key = 1;
+}
+
+// BACKUP_META: the author's current password backup (D50). Latest version wins.
+message BackupMeta {
+  uint64 version = 1;
+  bytes salt = 2;            // 16 bytes, Argon2id salt
+  uint32 kdf_m_kib = 3;      // 65536 in V1
+  uint32 kdf_t = 4;          // 3
+  uint32 kdf_p = 5;          // 1
+  bytes auth_verifier = 6;   // SHA-256(auth_secret), 32 bytes
+  bytes blob_key = 7;        // record key of the persistent BLOB_META (author ‖ id)
+  uint64 size = 8;           // ciphertext bytes
 }

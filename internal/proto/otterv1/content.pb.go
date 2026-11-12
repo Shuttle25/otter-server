@@ -145,6 +145,7 @@ type Content struct {
 	//	*Content_Receipt
 	//	*Content_GroupUpdate
 	//	*Content_SenderKey
+	//	*Content_SessionReset
 	Body          isContent_Body `protobuf_oneof:"body"`
 	SentMs        int64          `protobuf:"varint,10,opt,name=sent_ms,json=sentMs,proto3" json:"sent_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -224,6 +225,15 @@ func (x *Content) GetSenderKey() *SenderKeyDistribution {
 	return nil
 }
 
+func (x *Content) GetSessionReset() *SessionReset {
+	if x != nil {
+		if x, ok := x.Body.(*Content_SessionReset); ok {
+			return x.SessionReset
+		}
+	}
+	return nil
+}
+
 func (x *Content) GetSentMs() int64 {
 	if x != nil {
 		return x.SentMs
@@ -251,6 +261,10 @@ type Content_SenderKey struct {
 	SenderKey *SenderKeyDistribution `protobuf:"bytes,4,opt,name=sender_key,json=senderKey,proto3,oneof"`
 }
 
+type Content_SessionReset struct {
+	SessionReset *SessionReset `protobuf:"bytes,5,opt,name=session_reset,json=sessionReset,proto3,oneof"`
+}
+
 func (*Content_Data) isContent_Body() {}
 
 func (*Content_Receipt) isContent_Body() {}
@@ -258,6 +272,8 @@ func (*Content_Receipt) isContent_Body() {}
 func (*Content_GroupUpdate) isContent_Body() {}
 
 func (*Content_SenderKey) isContent_Body() {}
+
+func (*Content_SessionReset) isContent_Body() {}
 
 type DataMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -860,17 +876,55 @@ func (x *ReceiptMessage) GetMessageIds() [][]byte {
 	return nil
 }
 
+// Sent 1:1 after a restore or when a message could not be decrypted (D53). No fields.
+type SessionReset struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionReset) Reset() {
+	*x = SessionReset{}
+	mi := &file_otter_v1_content_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionReset) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionReset) ProtoMessage() {}
+
+func (x *SessionReset) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionReset.ProtoReflect.Descriptor instead.
+func (*SessionReset) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{10}
+}
+
 var File_otter_v1_content_proto protoreflect.FileDescriptor
 
 const file_otter_v1_content_proto_rawDesc = "" +
 	"\n" +
-	"\x16otter/v1/content.proto\x12\botter.v1\"\x8b\x02\n" +
+	"\x16otter/v1/content.proto\x12\botter.v1\"\xca\x02\n" +
 	"\aContent\x12+\n" +
 	"\x04data\x18\x01 \x01(\v2\x15.otter.v1.DataMessageH\x00R\x04data\x124\n" +
 	"\areceipt\x18\x02 \x01(\v2\x18.otter.v1.ReceiptMessageH\x00R\areceipt\x12:\n" +
 	"\fgroup_update\x18\x03 \x01(\v2\x15.otter.v1.GroupUpdateH\x00R\vgroupUpdate\x12@\n" +
 	"\n" +
-	"sender_key\x18\x04 \x01(\v2\x1f.otter.v1.SenderKeyDistributionH\x00R\tsenderKey\x12\x17\n" +
+	"sender_key\x18\x04 \x01(\v2\x1f.otter.v1.SenderKeyDistributionH\x00R\tsenderKey\x12=\n" +
+	"\rsession_reset\x18\x05 \x01(\v2\x16.otter.v1.SessionResetH\x00R\fsessionReset\x12\x17\n" +
 	"\asent_ms\x18\n" +
 	" \x01(\x03R\x06sentMsB\x06\n" +
 	"\x04body\"\xa6\x01\n" +
@@ -937,7 +991,8 @@ const file_otter_v1_content_proto_rawDesc = "" +
 	"messageIds\"\x1f\n" +
 	"\x04Type\x12\r\n" +
 	"\tDELIVERED\x10\x00\x12\b\n" +
-	"\x04READ\x10\x01BI\n" +
+	"\x04READ\x10\x01\"\x0e\n" +
+	"\fSessionResetBI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -953,7 +1008,7 @@ func file_otter_v1_content_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_otter_v1_content_proto_goTypes = []any{
 	(GroupEvent_Type)(0),          // 0: otter.v1.GroupEvent.Type
 	(ReceiptMessage_Type)(0),      // 1: otter.v1.ReceiptMessage.Type
@@ -967,22 +1022,24 @@ var file_otter_v1_content_proto_goTypes = []any{
 	(*SenderKeyDistribution)(nil), // 9: otter.v1.SenderKeyDistribution
 	(*GroupEvent)(nil),            // 10: otter.v1.GroupEvent
 	(*ReceiptMessage)(nil),        // 11: otter.v1.ReceiptMessage
+	(*SessionReset)(nil),          // 12: otter.v1.SessionReset
 }
 var file_otter_v1_content_proto_depIdxs = []int32{
 	3,  // 0: otter.v1.Content.data:type_name -> otter.v1.DataMessage
 	11, // 1: otter.v1.Content.receipt:type_name -> otter.v1.ReceiptMessage
 	8,  // 2: otter.v1.Content.group_update:type_name -> otter.v1.GroupUpdate
 	9,  // 3: otter.v1.Content.sender_key:type_name -> otter.v1.SenderKeyDistribution
-	5,  // 4: otter.v1.DataMessage.group:type_name -> otter.v1.GroupContext
-	4,  // 5: otter.v1.DataMessage.attachments:type_name -> otter.v1.Attachment
-	7,  // 6: otter.v1.GroupUpdate.state:type_name -> otter.v1.SignedGroupState
-	0,  // 7: otter.v1.GroupEvent.type:type_name -> otter.v1.GroupEvent.Type
-	1,  // 8: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	12, // 4: otter.v1.Content.session_reset:type_name -> otter.v1.SessionReset
+	5,  // 5: otter.v1.DataMessage.group:type_name -> otter.v1.GroupContext
+	4,  // 6: otter.v1.DataMessage.attachments:type_name -> otter.v1.Attachment
+	7,  // 7: otter.v1.GroupUpdate.state:type_name -> otter.v1.SignedGroupState
+	0,  // 8: otter.v1.GroupEvent.type:type_name -> otter.v1.GroupEvent.Type
+	1,  // 9: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_content_proto_init() }
@@ -995,6 +1052,7 @@ func file_otter_v1_content_proto_init() {
 		(*Content_Receipt)(nil),
 		(*Content_GroupUpdate)(nil),
 		(*Content_SenderKey)(nil),
+		(*Content_SessionReset)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1002,7 +1060,7 @@ func file_otter_v1_content_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_content_proto_rawDesc), len(file_otter_v1_content_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

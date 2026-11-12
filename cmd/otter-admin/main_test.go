@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/gateway"
@@ -20,6 +21,12 @@ import (
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 )
+
+// TestMain replaces the desktop keyring with an in-memory one: no test may touch the owner's real keyring.
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	os.Exit(m.Run())
+}
 
 func TestCLIFlow(t *testing.T) {
 	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
@@ -169,4 +176,154 @@ func TestNodeOpsCLI(t *testing.T) {
 	if err := run([]string{"--dir", dir, "node", "set-push", "--label", "nope"}, &out, strings.NewReader("")); err == nil {
 		t.Fatal("set-push accepted an unknown label")
 	}
+}
+
+// devNode starts an in-process node for label "dev" of the admin dir, holding the current manifest.bin.
+func devNode(t *testing.T, dir string, ln net.Listener) *service.Service {
+	t.Helper()
+	st, _ := admin.LoadState(dir)
+	nodeKey, err := keys.ReadPlainKey(filepath.Join(dir, "nodes", "dev", "node.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "n.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	svc := service.New(db, nodeKey, st.NetworkPub)
+	raw, _ := os.ReadFile(filepath.Join(dir, "manifest.bin"))
+	var m pb.Record
+	proto.Unmarshal(raw, &m)
+	if _, err := svc.ImportRecord(context.Background(), &m); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/devpath", gateway.New(svc, slog.New(slog.DiscardHandler)))
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return svc
+}
+
+func TestNewsCLI(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	var out bytes.Buffer
+	runOK := func(args ...string) string {
+		t.Helper()
+		out.Reset()
+		if err := run(append([]string{"--dir", dir}, args...), &out, strings.NewReader("")); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out.String())
+		}
+		return out.String()
+	}
+	runOK("network", "init")
+	runOK("node", "add", "--label", "dev", "--plain", "--wss-host", "127.0.0.1", "--wss-port", strconv.Itoa(port), "--wss-path", "/devpath")
+	if err := run([]string{"--dir", dir, "announce", "--ru", "x"}, &out, nil); err == nil {
+		t.Fatal("announce without a news key")
+	}
+	o := runOK("news", "init")
+	if !strings.Contains(o, "news key ") || !strings.Contains(o, "Run 'manifest sign' and 'manifest publish'") {
+		t.Fatalf("news init: %s", o)
+	}
+	pubHex := strings.Fields(o)[2]
+	if err := run([]string{"--dir", dir, "news", "init"}, &out, nil); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second news init: %v", err)
+	}
+	if o := runOK("news", "show"); !strings.Contains(o, pubHex+" (this keyring)") {
+		t.Fatalf("news show: %s", o)
+	}
+	runOK("manifest", "sign")
+	if o := runOK("manifest", "show"); !strings.Contains(o, `"newsKeys"`) {
+		t.Fatalf("manifest show: %s", o)
+	}
+	svc := devNode(t, dir, ln)
+
+	ru := filepath.Join(t.TempDir(), "ru.txt")
+	os.WriteFile(ru, []byte("  Вышла версия 0.6.0\n"), 0o644)
+	apk := filepath.Join(t.TempDir(), "app.apk")
+	os.WriteFile(apk, []byte("not really an apk"), 0o644)
+	if err := run([]string{"--dir", dir, "announce", "--ru", ru}, &out, nil); err == nil {
+		t.Fatal("plain endpoint used without --allow-plain")
+	}
+	if err := run([]string{"--dir", dir, "announce", "--ru", ru, "--apk", apk}, &out, nil); err == nil {
+		t.Fatal("--apk without a version accepted")
+	}
+	if err := run([]string{"--dir", dir, "announce"}, &out, nil); err == nil {
+		t.Fatal("announce without text accepted")
+	}
+	o = runOK("announce", "--ru", ru, "--apk", apk, "--version-name", "0.6.0", "--version-code", "6", "--allow-plain")
+	if !strings.Contains(o, "announcement ") || !strings.Contains(o, "dev          ok") {
+		t.Fatalf("announce: %s", o)
+	}
+	list, err := svc.News(context.Background())
+	if err != nil || len(list) != 1 {
+		t.Fatalf("node has %d news records: %v", len(list), err)
+	}
+	o = runOK("announce", "--list")
+	if !strings.Contains(o, "Вышла версия 0.6.0 [APK 0.6.0]") {
+		t.Fatalf("list: %s", o)
+	}
+	id := strings.Fields(o)[2]
+	o = runOK("announce", "--delete", id[:8], "--allow-plain")
+	if !strings.Contains(o, "dev          ok") {
+		t.Fatalf("delete: %s", o)
+	}
+	if list, _ := svc.News(context.Background()); len(list) != 1 || bodyType(list[0]) != pb.RecordType_ANNOUNCEMENT_DELETED {
+		t.Fatalf("node after delete: %d records", len(list))
+	}
+	if o := runOK("announce", "--list"); !strings.Contains(o, "[deleted]") {
+		t.Fatalf("list after delete: %s", o)
+	}
+	if err := run([]string{"--dir", dir, "announce", "--ru", ru, "--allow-plain", "--via", "nope"}, &out, nil); err == nil ||
+		!strings.Contains(err.Error(), "not published to any node") {
+		t.Fatalf("unknown label: %v", err)
+	}
+	runOK("news", "revoke", "--pub", pubHex)
+	if o := runOK("news", "show"); strings.Contains(o, pubHex) {
+		t.Fatalf("still listed: %s", o)
+	}
+	if err := run([]string{"--dir", dir, "announce", "--ru", ru, "--allow-plain"}, &out, nil); err == nil {
+		t.Fatal("announced with a revoked key")
+	}
+}
+
+func TestAnnounceUnreachable(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	var out bytes.Buffer
+	for _, s := range [][]string{
+		{"network", "init"},
+		{"node", "add", "--label", "dev", "--plain", "--wss-host", "127.0.0.1", "--wss-port", strconv.Itoa(port), "--wss-path", "/devpath"},
+		{"news", "init"},
+		{"manifest", "sign"},
+	} {
+		if err := run(append([]string{"--dir", dir}, s...), &out, strings.NewReader("")); err != nil {
+			t.Fatalf("%v: %v", s, err)
+		}
+	}
+	ru := filepath.Join(t.TempDir(), "ru.txt")
+	os.WriteFile(ru, []byte("Привет"), 0o644)
+	out.Reset()
+	err := run([]string{"--dir", dir, "announce", "--ru", ru, "--allow-plain"}, &out, nil)
+	if err == nil || !strings.Contains(err.Error(), "not published to any node") || !strings.Contains(out.String(), "dev          error") {
+		t.Fatalf("unreachable: %v\n%s", err, out.String())
+	}
+}
+
+func bodyType(r *pb.Record) pb.RecordType {
+	var b pb.RecordBody
+	proto.Unmarshal(r.Body, &b)
+	return b.Type
 }

@@ -196,10 +196,16 @@ func anyApplied(results []applyRes) bool {
 	return false
 }
 
-// expiring types leave the oplog after RetentionMs; a peer re-sending one must not resurrect it.
-func expiring(t pb.RecordType) bool {
-	return t == pb.RecordType_ENVELOPE || t == pb.RecordType_ACK || t == pb.RecordType_PREKEY_CONSUMED ||
-		t == pb.RecordType_BLOB_META || t == pb.RecordType_BLOB_FETCHED
+// expiring records leave the oplog after RetentionMs; a peer re-sending one must not resurrect it.
+// Persistent blob metas (backups, D50) never expire by age.
+func expiring(b *pb.RecordBody) bool {
+	switch b.Type {
+	case pb.RecordType_ENVELOPE, pb.RecordType_ACK, pb.RecordType_PREKEY_CONSUMED, pb.RecordType_BLOB_FETCHED:
+		return true
+	case pb.RecordType_BLOB_META:
+		return b.ExpiresMs != 0
+	}
+	return false
 }
 
 // runReq executes one request inside SAVEPOINT req; any error rolls back only this request.
@@ -242,7 +248,7 @@ func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
-	if it.fromPeer && expiring(it.body.Type) && it.body.CreatedMs < now-RetentionMs {
+	if it.fromPeer && expiring(it.body) && it.body.CreatedMs < now-RetentionMs {
 		return 0, false, nil
 	}
 	if _, err := tx.ExecContext(ctx,

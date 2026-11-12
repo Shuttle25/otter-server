@@ -3,11 +3,15 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	pb "ottermsg/server/internal/proto/otterv1"
 )
 
 const RetentionMs = int64(30 * 24 * 60 * 60 * 1000)
+
+// OrphanBackupMs: a persistent blob no BACKUP_META references is deleted this long after its creation (D50).
+const OrphanBackupMs = int64(7 * 24 * 60 * 60 * 1000)
 
 type ExpireStats struct{ Envelopes, Acks, Tombstones, Oplog, Blobs int64 }
 
@@ -39,7 +43,7 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 			return err
 		}
 		// expired blobs go like fetched ones: rows, record and a tombstone (files: SweepBlobFiles)
-		rows, err := tx.QueryContext(ctx, `SELECT blob_key FROM blobs WHERE expires_ms < ?`, now)
+		rows, err := tx.QueryContext(ctx, `SELECT blob_key FROM blobs WHERE persistent=0 AND expires_ms < ?`, now)
 		if err != nil {
 			return err
 		}
@@ -53,11 +57,29 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 			expired = append(expired, k)
 		}
 		rows.Close()
+		// persistent (backup) blobs no BACKUP_META points at a week after creation: failed uploads, resurrected old ones (D50)
+		rows, err = tx.QueryContext(ctx, `SELECT blob_key FROM blobs WHERE persistent=1 AND created_ms < ?
+			AND blob_key NOT IN (SELECT blob_key FROM backups)`, now-OrphanBackupMs)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var k []byte
+			if err := rows.Scan(&k); err != nil {
+				rows.Close()
+				return err
+			}
+			expired = append(expired, k)
+		}
+		rows.Close()
 		for _, k := range expired {
-			if err := gcBlob(ctx, tx, k, true); err != nil {
+			if err := gcBlob(ctx, tx, k, true, now); err != nil {
 				return err
 			}
 			st.Blobs++
+		}
+		if err := exec(&ignore, `DELETE FROM auth_failures WHERE at_ms < ?`, now-24*time.Hour.Milliseconds()); err != nil {
+			return err
 		}
 		if err := exec(&ignore, `DELETE FROM records WHERE type=? AND record_key IN
 			(SELECT record_key FROM oplog WHERE type=? AND received_ms < ?)`,

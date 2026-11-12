@@ -69,10 +69,26 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := proto.Unmarshal(b.Payload, &p); err != nil {
 			return err
 		}
+		var curInstalled int64
+		var curRid uint32
+		err := tx.QueryRowContext(ctx, `SELECT registration_id, installed_ms FROM devices WHERE user_id=? AND device_id=?`,
+			b.Author, p.DeviceId).Scan(&curRid, &curInstalled)
+		exists := err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		switch {
+		case exists && p.InstalledMs < curInstalled:
+			return nil // an older install (a phone that was replaced): its keys must not be handed out (D52)
+		case exists && p.InstalledMs > curInstalled:
+			if _, err := tx.ExecContext(ctx, `DELETE FROM prekeys WHERE user_id=? AND device_id=?`, b.Author, p.DeviceId); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO devices(user_id,device_id,registration_id) VALUES(?,?,?)
-			 ON CONFLICT(user_id,device_id) DO UPDATE SET registration_id=excluded.registration_id`,
-			b.Author, p.DeviceId, p.RegistrationId); err != nil {
+			`INSERT INTO devices(user_id,device_id,registration_id,installed_ms) VALUES(?,?,?,?)
+			 ON CONFLICT(user_id,device_id) DO UPDATE SET registration_id=excluded.registration_id, installed_ms=excluded.installed_ms`,
+			b.Author, p.DeviceId, p.RegistrationId, p.InstalledMs); err != nil {
 			return err
 		}
 		put := func(kind int, k *pb.SignedPreKey) error {
@@ -180,8 +196,8 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO blobs(blob_key,owner,size,chunks,expires_ms,created_ms) VALUES(?,?,?,?,?,?)`,
-			it.key, b.Author, m.Size, len(m.ChunkSha256), b.ExpiresMs, b.CreatedMs); err != nil {
+			`INSERT OR IGNORE INTO blobs(blob_key,owner,size,chunks,expires_ms,created_ms,persistent) VALUES(?,?,?,?,?,?,?)`,
+			it.key, b.Author, m.Size, len(m.ChunkSha256), b.ExpiresMs, b.CreatedMs, m.Persistent); err != nil {
 			return err
 		}
 		for _, r := range m.Readers {
@@ -189,7 +205,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 				return err
 			}
 		}
-		return gcBlob(ctx, tx, it.key, false) // fetches that arrived before the meta count
+		return gcBlob(ctx, tx, it.key, false, now) // fetches that arrived before the meta count
 
 	case pb.RecordType_BLOB_FETCHED:
 		var f pb.BlobFetched
@@ -200,7 +216,39 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 			f.BlobKey, b.Author, now); err != nil {
 			return err
 		}
-		return gcBlob(ctx, tx, f.BlobKey, false)
+		return gcBlob(ctx, tx, f.BlobKey, false, now)
+
+	case pb.RecordType_BACKUP_META:
+		var m pb.BackupMeta
+		if err := proto.Unmarshal(b.Payload, &m); err != nil {
+			return err
+		}
+		var curKey, curBlob []byte
+		var curVer, curCreated int64
+		err := tx.QueryRowContext(ctx, `SELECT record_key, version, created_ms, blob_key FROM backups WHERE user_id=?`,
+			b.Author).Scan(&curKey, &curVer, &curCreated, &curBlob)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		newer := errors.Is(err, sql.ErrNoRows) || int64(m.Version) > curVer ||
+			(int64(m.Version) == curVer && (b.CreatedMs > curCreated || (b.CreatedMs == curCreated && bytes.Compare(it.key, curKey) > 0)))
+		if !newer { // an older or equal-but-losing version (e.g. from a lagging peer): drop it again
+			_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO backups(user_id,record_key,version,created_ms,blob_key) VALUES(?,?,?,?,?)`,
+			b.Author, it.key, m.Version, b.CreatedMs, m.BlobKey); err != nil {
+			return err
+		}
+		if curKey != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, curKey); err != nil {
+				return err
+			}
+			if !bytes.Equal(curBlob, m.BlobKey) {
+				return gcBlob(ctx, tx, curBlob, true, now)
+			}
+		}
+		return nil
 
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
@@ -214,10 +262,12 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 }
 
 // gcBlob deletes a blob whose readers all fetched it (or, with force, unconditionally) and tombstones its key until
-// expiry + 1 day (D45). Chunk files are removed later by service.SweepBlobFiles.
-func gcBlob(ctx context.Context, tx *sql.Tx, key []byte, force bool) error {
+// expiry + 1 day (D45); a persistent (backup) blob is only deleted with force and is tombstoned for 30 days (D50).
+// Chunk files are removed later by service.SweepBlobFiles.
+func gcBlob(ctx context.Context, tx *sql.Tx, key []byte, force bool, now int64) error {
 	var expires int64
-	err := tx.QueryRowContext(ctx, `SELECT expires_ms FROM blobs WHERE blob_key=?`, key).Scan(&expires)
+	var persistent bool
+	err := tx.QueryRowContext(ctx, `SELECT expires_ms, persistent FROM blobs WHERE blob_key=?`, key).Scan(&expires, &persistent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -225,6 +275,9 @@ func gcBlob(ctx context.Context, tx *sql.Tx, key []byte, force bool) error {
 		return err
 	}
 	if !force {
+		if persistent {
+			return nil // backups are deleted only when superseded or unreferenced (D50)
+		}
 		var waiting int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blob_readers r WHERE r.blob_key=? AND NOT EXISTS
 			(SELECT 1 FROM blob_fetched f WHERE f.blob_key=r.blob_key AND f.user_id=r.user_id)`, key).Scan(&waiting); err != nil {
@@ -240,8 +293,11 @@ func gcBlob(ctx context.Context, tx *sql.Tx, key []byte, force bool) error {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT OR REPLACE INTO blob_tombstones(blob_key,until_ms) VALUES(?,?)`,
-		key, expires+24*time.Hour.Milliseconds())
+	until := expires + 24*time.Hour.Milliseconds()
+	if persistent {
+		until = now + tombstoneTTL.Milliseconds()
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR REPLACE INTO blob_tombstones(blob_key,until_ms) VALUES(?,?)`, key, until)
 	return err
 }
 

@@ -91,7 +91,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, err
 		}
 		s.mu.Lock()
-		s.user, s.device = r.UserId, r.DeviceId
+		s.user, s.device, s.installedMs = r.UserId, r.DeviceId, login.InstalledMs
 		s.mu.Unlock()
 		go s.deliverLoop()
 		s.kick()
@@ -203,7 +203,21 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		}
 		allowed := map[string]pb.RecordType{"prekeys.upload": pb.RecordType_PREKEYS, "msg.send": pb.RecordType_ENVELOPE,
 			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE, "blob.ack": pb.RecordType_BLOB_FETCHED}[req.Method]
-		_, err := svc.Submit(ctx, s.user, r.Record, allowed)
+		if req.Method == "msg.ack" && s.replaced() {
+			// its acks would drop the new install's mail; the delivery loop closes the connection after this answer
+			s.kick()
+			return nil, fmt.Errorf("%w: this install was replaced", service.ErrUnauthorized)
+		}
+		body, err := svc.Submit(ctx, s.userID(), r.Record, allowed)
+		if err == nil && body.Type == pb.RecordType_PREKEYS {
+			// a restored phone uploads its newer install over its own session: that session is the new install
+			var p pb.PreKeys
+			if proto.Unmarshal(body.Payload, &p) == nil {
+				s.mu.Lock()
+				s.installedMs = max(s.installedMs, p.InstalledMs)
+				s.mu.Unlock()
+			}
+		}
 		return &pb.Empty{}, err
 	default:
 		return nil, fmt.Errorf("%w: unknown method %q", service.ErrInvalid, req.Method)

@@ -24,6 +24,8 @@ type session struct {
 	mu     sync.Mutex
 	user   []byte
 	device uint32
+	// install time this session logged in with (or uploaded itself); a newer install elsewhere ends the session (D52)
+	installedMs int64
 	// granted by backup.fetch on a connection that is not logged in: blob.get of this one blob as its owner (D51)
 	backupBlob, backupOwner []byte
 }
@@ -49,6 +51,29 @@ func (s *session) is(user []byte, device uint32) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.user != nil && s.device == device && bytes.Equal(s.user, user)
+}
+
+// replaced reports whether another install of this session's device was registered after the session logged in
+// (a restore on another phone, D52). Such a session must not receive or ack envelopes any more.
+func (s *session) replaced() bool {
+	s.mu.Lock()
+	user, device, mine := s.user, s.device, s.installedMs
+	s.mu.Unlock()
+	if user == nil {
+		return false
+	}
+	_, inst, err := s.g.svc.Store.DeviceInstall(s.ctx, user, device)
+	return err == nil && inst > mine
+}
+
+// dropReplaced closes the connection of a replaced install; its next login shows it was superseded (D52).
+func (s *session) dropReplaced() bool {
+	if !s.replaced() {
+		return false
+	}
+	s.cancel() // ends the read loop at once; the close handshake must not keep it serving requests
+	go s.conn.Close(websocket.StatusPolicyViolation, "install replaced")
+	return true
 }
 
 func (s *session) kick() {
@@ -98,6 +123,9 @@ func (s *session) deliverLoop() {
 		select {
 		case <-s.wake:
 		case <-s.ctx.Done():
+			return
+		}
+		if s.dropReplaced() {
 			return
 		}
 		for {

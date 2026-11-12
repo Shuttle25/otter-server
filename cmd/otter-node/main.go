@@ -39,6 +39,7 @@ const usage = `usage: otter-node <command>
   import --config FILE FILE... apply signed record files (manifest, bootstrap invite)
   check --config FILE          verify config, keys, manifest and TLS before starting
   backup --config FILE --out F consistent database copy (safe while running)
+  stats --config FILE          database counts (safe while running)
   probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
   version`
 
@@ -125,7 +126,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return err
 	}
-	if cmd != "run" && cmd != "import" && cmd != "backup" {
+	if cmd != "run" && cmd != "import" && cmd != "backup" && cmd != "stats" {
 		return errors.New(usage)
 	}
 	if cmd == "backup" && *outPath == "" {
@@ -159,6 +160,14 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "backup written to %s\n", *outPath)
+		return nil
+	case "stats":
+		st, err := a.st.Stats(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "users=%d records=%d oplog_seq=%d blobs=%d blob_bytes=%d peers=%d\n",
+			st.Users, st.Records, st.OplogSeq, st.Blobs, st.BlobBytes, st.Peers)
 		return nil
 	case "run":
 		return serve(ctx, a)

@@ -38,13 +38,16 @@ func freePort(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-func TestImportAndRun(t *testing.T) {
+// testNode creates a throwaway network with node n1 and returns its config path and manifest path.
+func testNode(t *testing.T) (cfg, manifest string, n *pb.NodeInfo, addr, path string) {
+	t.Helper()
 	dir := t.TempDir()
 	adm := filepath.Join(dir, "admin")
 	if err := admin.InitNetwork(adm, pass); err != nil {
 		t.Fatal(err)
 	}
-	n, err := admin.AddNode(adm, admin.NodeSpec{Label: "n1", WSSHost: "127.0.0.1"})
+	var err error
+	n, err = admin.AddNode(adm, admin.NodeSpec{Label: "n1", WSSHost: "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,9 +55,9 @@ func TestImportAndRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ := admin.LoadState(adm)
-	addr := freePort(t)
-	path := n.Endpoints[0].Path
-	cfg := filepath.Join(dir, "node.toml")
+	addr = freePort(t)
+	path = n.Endpoints[0].Path
+	cfg = filepath.Join(dir, "node.toml")
 	os.WriteFile(cfg, []byte(fmt.Sprintf(`data_dir = %q
 node_key = %q
 network_pub = %q
@@ -62,9 +65,29 @@ network_pub = %q
 listen = %q
 path = %q
 `, filepath.Join(dir, "data"), filepath.Join(adm, "nodes", "n1", "node.key"), hex.EncodeToString(st.NetworkPub), addr, path)), 0o600)
+	return cfg, filepath.Join(adm, "manifest.bin"), n, addr, path
+}
 
+func TestStats(t *testing.T) {
+	cfg, manifest, _, _, _ := testNode(t)
 	var out bytes.Buffer
-	manifest := filepath.Join(adm, "manifest.bin")
+	if err := run(context.Background(), []string{"import", "--config", cfg, manifest}, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run(context.Background(), []string{"stats", "--config", cfg}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); !strings.HasPrefix(got, "users=0 records=1 oplog_seq=1 blobs=0 blob_bytes=0 peers=") {
+		t.Fatalf("stats: %q", got)
+	}
+}
+
+func TestImportAndRun(t *testing.T) {
+	cfg, manifest, n, addr, path := testNode(t)
+	dir := filepath.Dir(cfg)
+	var err error
+	var out bytes.Buffer
 	if err := run(context.Background(), []string{"import", "--config", cfg, manifest}, &out); err != nil {
 		t.Fatal(err)
 	}

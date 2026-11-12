@@ -11,7 +11,7 @@ import (
 )
 
 var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true,
-	"auth.login": true, "backup.auth": true, "backup.fetch": true}
+	"auth.login": true, "backup.auth": true, "backup.fetch": true, "news.publish": true}
 
 func status(err error) pb.Status {
 	switch {
@@ -111,6 +111,31 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.PublishManifest(ctx, r.Record)
+	case "news.publish":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return &pb.Empty{}, svc.PublishNews(ctx, r.Record)
+	case "news.list":
+		recs, err := svc.News(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.RecordBatch{Records: recs}, nil
+	case "apk.get":
+		var r pb.ApkGetRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		data, total, err := svc.ApkChunk(r.Sha256, r.Index)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.ApkChunk{Data: data, TotalSize: total}, nil
 	case "directory.sync":
 		recs, err := svc.Directory(ctx)
 		if err != nil {

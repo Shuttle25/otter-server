@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync/atomic"
 
 	pb "ottermsg/server/internal/proto/otterv1"
 )
@@ -31,7 +32,7 @@ func (s *Store) News(ctx context.Context) ([][]byte, error) {
 // how many it deleted (revoked news keys, D65). An empty keep deletes all of them. The oplog rows stay: Since joins
 // records, so dropped records are no longer replicated, and a peer re-sending one is ignored as already seen.
 func (s *Store) DropNewsExcept(ctx context.Context, keep [][]byte) (int, error) {
-	n := 0
+	var n atomic.Int64 // the writer may still run fn after submit gave up on a cancelled ctx
 	err := s.write(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		q := `DELETE FROM records WHERE type IN (?,?)`
 		args := []any{int32(pb.RecordType_ANNOUNCEMENT), int32(pb.RecordType_ANNOUNCEMENT_DELETED)}
@@ -46,10 +47,10 @@ func (s *Store) DropNewsExcept(ctx context.Context, keep [][]byte) (int, error) 
 			return err
 		}
 		c, _ := res.RowsAffected()
-		n = int(c)
+		n.Store(c)
 		return nil
 	})
-	return n, err
+	return int(n.Load()), err
 }
 
 // Target is a device that registered a push token.

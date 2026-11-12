@@ -32,6 +32,8 @@ type Notifier interface {
 	Manifest(version uint64)
 	// Online reports a logged-in, non-replaced session of (user, device) on this node.
 	Online(user []byte, device uint32) bool
+	// News: an announcement was accepted or dropped; sessions re-fetch news.list (D67).
+	News()
 }
 
 // Waker sends a push wake-up (internal/push.Pusher). nil = this node never pushes.
@@ -46,6 +48,12 @@ func (nopNotifier) Directory()                             {}
 func (nopNotifier) PrekeysLow([]byte, uint32, []byte, int) {}
 func (nopNotifier) Manifest(uint64)                        {}
 func (nopNotifier) Online([]byte, uint32) bool             { return false }
+func (nopNotifier) News()                                  {}
+
+// ApkSource serves APK chunks (internal/apk.Dir). A missing file or chunk is an error wrapping os.ErrNotExist.
+type ApkSource interface {
+	Chunk(sum []byte, index uint32) ([]byte, uint64, error)
+}
 
 type Service struct {
 	Store       *store.Store
@@ -58,6 +66,7 @@ type Service struct {
 	Blobs       *blobs.Dir   // chunk files; nil = blob methods unavailable
 	Fetcher     ChunkFetcher // asks peers for missing chunks; nil = no peers
 	Waker       Waker        // push wake-ups (D58); nil = this node never pushes
+	Apks        ApkSource    // APK files (D68); nil = apk.get unavailable
 	Limits      Limits
 
 	sweep      chan struct{}
@@ -111,6 +120,8 @@ func (s *Service) LoadManifest(ctx context.Context) (bool, error) {
 		for _, f := range cbs {
 			f(m)
 		}
+		// here, not in afterApply, so a node that stopped before dropping finishes at the next start (D65)
+		s.dropRevokedNews(context.WithoutCancel(ctx))
 	}
 	return changed, nil
 }
@@ -146,7 +157,7 @@ func (s *Service) validator(res records.UserResolver) *records.Validator {
 	if res == nil {
 		res = s.Store
 	}
-	return &records.Validator{NetworkPub: s.NetworkPub, Users: res, Nodes: s, Now: s.Now}
+	return &records.Validator{NetworkPub: s.NetworkPub, Users: res, Nodes: s, News: s, Now: s.Now}
 }
 
 func (s *Service) networkID() []byte { return keys.ID16(s.NetworkPub) }

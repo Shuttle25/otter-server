@@ -84,6 +84,15 @@ func (g *Gateway) PrekeysLow(user []byte, device uint32, owner []byte, remaining
 	}
 }
 
+// News implements service.Notifier: logged-in sessions re-fetch news.list (D67).
+func (g *Gateway) News() {
+	for _, s := range g.snapshot() {
+		if s.loggedIn() {
+			s.event("news", &pb.Empty{})
+		}
+	}
+}
+
 // Manifest broadcasts the new manifest to every connected session (logged in or not).
 func (g *Gateway) Manifest(version uint64) {
 	rec, v, err := g.svc.Manifest(context.Background())

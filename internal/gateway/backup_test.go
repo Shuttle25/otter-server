@@ -121,7 +121,8 @@ func TestReplacedInstallIsDisconnected(t *testing.T) {
 		t.Fatalf("upload: %v %s", s, msg)
 	}
 	ack := sign(t, pb.RecordType_ACK, anna.id, &pb.Ack{EnvelopeIds: [][]byte{make([]byte, 32)}, DeviceId: 1}, anna.priv)
-	if s, _ := oldPhone.call("msg.ack", &pb.RecordRequest{Record: ack}, nil); s != pb.Status_STATUS_UNAUTHORIZED {
+	// refused, or the connection is already closed (its delivery loop may notice the newer install first)
+	if s, ok := tryCall(oldPhone, "msg.ack", &pb.RecordRequest{Record: ack}); ok && s != pb.Status_STATUS_UNAUTHORIZED {
 		t.Fatalf("ack from the replaced install: %v", s)
 	}
 	env := sign(t, pb.RecordType_ENVELOPE, boris.id, &pb.Envelope{SenderUser: boris.id, SenderDevice: 1, Kind: pb.Envelope_PREKEY_SIGNAL,
@@ -150,5 +151,21 @@ func TestReplacedInstallIsDisconnected(t *testing.T) {
 		Signature: ed25519.Sign(anna.priv, keys.AuthMessage(c.hello.NodeId, c.hello.Nonce, ts))}, &resp)
 	if resp.RegistrationId != 77 || resp.InstalledMs == 0 {
 		t.Fatalf("login response: %+v", &resp)
+	}
+}
+
+// tryCall is client.call for a connection that may be closed: ok = false when there was no answer.
+func tryCall(c *client, method string, req proto.Message) (pb.Status, bool) {
+	b, _ := proto.Marshal(req)
+	id := c.next.Add(1)
+	f, _ := proto.Marshal(&pb.Frame{Kind: &pb.Frame_Request{Request: &pb.Request{Id: id, Method: method, Body: b}}})
+	if err := c.c.Write(context.Background(), websocket.MessageBinary, f); err != nil {
+		return 0, false
+	}
+	select {
+	case r := <-c.resps:
+		return r.Status, true
+	case <-time.After(2 * time.Second):
+		return 0, false
 	}
 }

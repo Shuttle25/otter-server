@@ -7,3 +7,15 @@ bin/
 .dev-mesh/
 dist/
 /.vm/
+
+# private files (D57): never commit
+google-services.json
+**/google-services.json
+fcm*.json
+*.jks
+*.keystore
+keystore.properties
+.env
+.env.*
+*.pem
+!testdata/**/*.pem

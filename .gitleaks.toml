@@ -1,0 +1,10 @@
+# gitleaks v8 config (D57). Allowlisted paths contain only throwaway test keys generated for unit tests.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "test vectors (never used by a real node or phone)"
+paths = [
+  # cross-language crypto test vectors: fixed keys published on purpose so Go and Kotlin can be checked against each other
+  '''testdata/vectors/.*\.json''',
+]

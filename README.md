@@ -51,3 +51,14 @@ a username and password restores through the public methods `backup.auth` (salt 
 for unknown names) and `backup.fetch` (checks `SHA-256(auth_secret)`, grants `blob.get` on that one blob). Wrong guesses
 are limited to 5 per username per hour and 20 per day per node. A newer install of a device (`PreKeys.installed_ms`)
 cuts the old one off. Nothing to configure.
+
+## Private files (never commit)
+
+| File | Where it lives | Why it is private |
+|------|----------------|-------------------|
+| `~/.otter-admin/` | admin PC only (outside the repo) | network admin key, node keys, TLS keys |
+| `otter-server/.dev-mesh/`, `.vm/`, `dist/` | ignored | throwaway dev keys, build output with bundles |
+| `/etc/otter/fcm.json` | push-capable servers only (`deploy/push-key.sh`) | Firebase service-account key |
+| `local.properties`, `*.jks`, `keystore.properties` | owner's PC only | SDK path, release signing key |
+
+`scripts/secrets-check.sh` (gitleaks v8.24.0 + personal-data grep) must pass before publishing.

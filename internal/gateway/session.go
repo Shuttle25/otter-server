@@ -24,9 +24,26 @@ type session struct {
 	mu     sync.Mutex
 	user   []byte
 	device uint32
+	// granted by backup.fetch on a connection that is not logged in: blob.get of this one blob as its owner (D51)
+	backupBlob, backupOwner []byte
 }
 
 func (s *session) loggedIn() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.user != nil }
+func (s *session) userID() []byte { s.mu.Lock(); defer s.mu.Unlock(); return s.user }
+func (s *session) hasGrant() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.backupBlob != nil }
+
+// reader is the user a blob.get reads as: the logged-in user, or the backup owner for the granted blob; nil = denied.
+func (s *session) reader(key []byte) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.user != nil {
+		return s.user
+	}
+	if s.backupBlob != nil && bytes.Equal(s.backupBlob, key) {
+		return s.backupOwner
+	}
+	return nil
+}
 
 func (s *session) is(user []byte, device uint32) bool {
 	s.mu.Lock()

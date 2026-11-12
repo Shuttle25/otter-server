@@ -10,7 +10,8 @@ import (
 	"ottermsg/server/internal/service"
 )
 
-var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true, "auth.login": true}
+var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true,
+	"auth.login": true, "backup.auth": true, "backup.fetch": true}
 
 func status(err error) pb.Status {
 	switch {
@@ -57,7 +58,7 @@ func decode(b []byte, m proto.Message) error {
 }
 
 func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message, error) {
-	if !public[req.Method] && !s.loggedIn() {
+	if !public[req.Method] && !s.loggedIn() && !(req.Method == "blob.get" && s.hasGrant()) {
 		return nil, fmt.Errorf("%w: login required", service.ErrUnauthorized)
 	}
 	svc := s.g.svc
@@ -85,7 +86,8 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
 		}
-		if err := svc.VerifyLogin(ctx, s.nonce, &r); err != nil {
+		login, err := svc.VerifyLogin(ctx, s.nonce, &r)
+		if err != nil {
 			return nil, err
 		}
 		s.mu.Lock()
@@ -99,7 +101,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 				s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(l.Remaining), OwnerNode: l.Node})
 			}
 		}
-		return &pb.Empty{}, nil
+		return login, nil
 	case "manifest.publish":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {
@@ -150,11 +152,47 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
 		}
-		data, err := svc.GetChunk(ctx, s.user, r.BlobKey, r.Index)
+		user := s.reader(r.BlobKey)
+		if user == nil {
+			return nil, fmt.Errorf("%w: login required", service.ErrUnauthorized)
+		}
+		data, err := svc.GetChunk(ctx, user, r.BlobKey, r.Index)
 		if err != nil {
 			return nil, err
 		}
 		return &pb.BlobChunk{Data: data}, nil
+	case "backup.auth":
+		var r pb.BackupAuthRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		return svc.BackupAuth(ctx, r.Username)
+	case "backup.fetch":
+		var r pb.BackupFetchRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		res, key, err := svc.BackupFetch(ctx, r.Username, r.AuthSecret)
+		if err != nil {
+			return nil, err
+		}
+		var body pb.RecordBody
+		if err := proto.Unmarshal(res.BackupMeta.Body, &body); err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		s.backupBlob, s.backupOwner = key, body.Author
+		s.mu.Unlock()
+		return res, nil
+	case "backup.publish":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return &pb.Empty{}, svc.PublishBackup(ctx, s.userID(), r.Record)
 	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {

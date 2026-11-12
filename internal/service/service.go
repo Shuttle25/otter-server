@@ -161,28 +161,33 @@ func (s *Service) inviterAllowed(ctx context.Context, inviter []byte) error {
 	return nil
 }
 
-func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRequest) error {
+// VerifyLogin checks a login signature and returns the newest install this node knows for the device (D52).
+func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRequest) (*pb.LoginResponse, error) {
 	if req.DeviceId != 1 {
-		return fmt.Errorf("%w: device %d", ErrInvalid, req.DeviceId)
+		return nil, fmt.Errorf("%w: device %d", ErrInvalid, req.DeviceId)
 	}
 	skew := s.Now().Sub(time.UnixMilli(req.TsMs))
 	if skew > MaxClockSkew || skew < -MaxClockSkew {
-		return fmt.Errorf("%w: clock skew %v", ErrUnauthorized, skew)
+		return nil, fmt.Errorf("%w: clock skew %v", ErrUnauthorized, skew)
 	}
 	u, err := s.Store.UserByID(ctx, req.UserId)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if u == nil {
-		return fmt.Errorf("%w: unknown user", ErrRetryLater) // may not be replicated here yet
+		return nil, fmt.Errorf("%w: unknown user", ErrRetryLater) // may not be replicated here yet
 	}
 	if u.Revoked {
-		return ErrRevoked
+		return nil, ErrRevoked
 	}
 	if !ed25519.Verify(u.AccountPub, keys.AuthMessage(s.NodeID, nonce, req.TsMs), req.Signature) {
-		return fmt.Errorf("%w: bad signature", ErrUnauthorized)
+		return nil, fmt.Errorf("%w: bad signature", ErrUnauthorized)
 	}
-	return nil
+	rid, inst, err := s.Store.DeviceInstall(ctx, req.UserId, req.DeviceId)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	return &pb.LoginResponse{RegistrationId: rid, InstalledMs: inst}, nil
 }
 
 func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {

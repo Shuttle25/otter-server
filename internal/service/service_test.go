@@ -187,19 +187,23 @@ func TestLogin(t *testing.T) {
 	rand.Read(nonce)
 	ts := time.Now().UnixMilli()
 	good := &pb.LoginRequest{UserId: u.id, DeviceId: 1, TsMs: ts, Signature: ed25519.Sign(u.priv, keys.AuthMessage(f.svc.NodeID, nonce, ts))}
-	if err := f.svc.VerifyLogin(ctx, nonce, good); err != nil {
+	resp, err := f.svc.VerifyLogin(ctx, nonce, good)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if resp.RegistrationId != 5 || resp.InstalledMs != 0 {
+		t.Fatalf("login response: %+v", resp)
+	}
 	other := make([]byte, 32)
-	if err := f.svc.VerifyLogin(ctx, other, good); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.svc.VerifyLogin(ctx, other, good); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("wrong nonce: %v", err)
 	}
 	old := time.Now().Add(-10 * time.Minute).UnixMilli()
 	stale := &pb.LoginRequest{UserId: u.id, DeviceId: 1, TsMs: old, Signature: ed25519.Sign(u.priv, keys.AuthMessage(f.svc.NodeID, nonce, old))}
-	if err := f.svc.VerifyLogin(ctx, nonce, stale); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.svc.VerifyLogin(ctx, nonce, stale); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("stale: %v", err)
 	}
-	if err := f.svc.VerifyLogin(ctx, nonce, &pb.LoginRequest{UserId: r16(), DeviceId: 1, TsMs: ts}); !errors.Is(err, ErrRetryLater) {
+	if _, err := f.svc.VerifyLogin(ctx, nonce, &pb.LoginRequest{UserId: r16(), DeviceId: 1, TsMs: ts}); !errors.Is(err, ErrRetryLater) {
 		t.Fatal("unknown user")
 	}
 }
@@ -327,12 +331,12 @@ func TestMiscErrors(t *testing.T) {
 	nonce := make([]byte, 32)
 	ts := time.Now().UnixMilli()
 	dev2 := &pb.LoginRequest{UserId: u.id, DeviceId: 2, TsMs: ts, Signature: ed25519.Sign(u.priv, keys.AuthMessage(f.svc.NodeID, nonce, ts))}
-	if err := f.svc.VerifyLogin(ctx, nonce, dev2); !errors.Is(err, ErrInvalid) {
+	if _, err := f.svc.VerifyLogin(ctx, nonce, dev2); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("device 2: %v", err)
 	}
 	future := time.Now().Add(10 * time.Minute).UnixMilli()
 	ahead := &pb.LoginRequest{UserId: u.id, DeviceId: 1, TsMs: future, Signature: ed25519.Sign(u.priv, keys.AuthMessage(f.svc.NodeID, nonce, future))}
-	if err := f.svc.VerifyLogin(ctx, nonce, ahead); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.svc.VerifyLogin(ctx, nonce, ahead); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("future ts: %v", err)
 	}
 	if _, err := f.svc.FetchPrekeys(ctx, &pb.PreKeyFetchRequest{UserId: r16(), DeviceId: 1}); !errors.Is(err, ErrRetryLater) {

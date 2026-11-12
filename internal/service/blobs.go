@@ -75,6 +75,15 @@ func (s *Service) CreateBlob(ctx context.Context, user []byte, rec *pb.Record) (
 	if err := proto.Unmarshal(body.Payload, &m); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
+	if m.Persistent {
+		n, err := s.Store.PersistentBlobs(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		if n >= MaxPersistentBlobs {
+			return nil, fmt.Errorf("%w: too many backup blobs in flight", ErrQuota)
+		}
+	}
 	if int64(m.Size) > s.Limits.MaxBlob {
 		return nil, fmt.Errorf("%w: blob of %d bytes exceeds %d", ErrQuota, m.Size, s.Limits.MaxBlob)
 	}

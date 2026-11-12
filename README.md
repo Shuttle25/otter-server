@@ -52,6 +52,21 @@ for unknown names) and `backup.fetch` (checks `SHA-256(auth_secret)`, grants `bl
 are limited to 5 per username per hour and 20 per day per node. A newer install of a device (`PreKeys.installed_ms`)
 cuts the old one off. Nothing to configure.
 
+## Push
+
+Optional FCM wake-ups (M5). A node pushes only when `/etc/otter/fcm.json` (a Firebase service-account key) exists;
+`node.toml` always names it under `[push] fcm_credentials`, and a missing file means push is off (`push off` in the
+log). When an urgent envelope is stored for a recipient with no session on the node, the responsible node (the one that
+accepted it from the phone if it can push, else the first `push_capable` node in manifest order; D58) sends one constant, content-free push
+(`"data": {"w": "1"}`, collapse key `otter`), at most one per device per 10 s. Phones register their token with a
+signed `PUSH_TOKEN` (`push.register`); the newest per device wins. Code: `internal/push`, `internal/service/push.go`.
+
+Enable it per node with `deploy/push-key.sh LABEL KEY` (streams the key over SSH, restarts, expects `push on`), then
+`otter-admin node set-push --label LABEL`, `manifest sign`, `manifest publish`; `deploy/status.sh` shows a PUSH
+column. The node must already run a release with M5. Step by step: [`deploy/FIRST-DEPLOY.md`](deploy/FIRST-DEPLOY.md)
+("Push notifications"); quick reference: [`deploy/README.md`](deploy/README.md); creating the Firebase project:
+`otter-android/README.md` ("Push / Firebase"). The key never goes into git, bundles or the admin dir.
+
 ## Private files (never commit)
 
 | File | Where it lives | Why it is private |

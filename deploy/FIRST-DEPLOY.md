@@ -124,8 +124,9 @@ on their next connection. If it stops, fix the cause and re-run the same command
 
 Without push, phones check for messages every 15 minutes («Экономия батареи»). With a Firebase service-account key
 on at least one node, a message wakes a sleeping phone within seconds. Creating the Firebase project and downloading
-the key (`fcm.json`) is described in `otter-android/docs/m5-manual-test.md`. The key never goes into git, bundles or
-the admin dir.
+the key (`fcm.json`) is described in `otter-android/README.md` ("Push / Firebase"). The key never goes into git,
+bundles or the admin dir. The node must already run a release with M5 (`deploy/upgrade-all.sh`): an older
+`otter-node` rejects the `[push]` section that `push-key.sh` adds.
 
 ```bash
 deploy/push-key.sh LABEL ~/fcm.json           # installs /etc/otter/fcm.json (0640 root:otter), restarts, expects "push on"

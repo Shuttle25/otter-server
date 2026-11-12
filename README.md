@@ -42,3 +42,12 @@ QEMU/KVM: install, upgrade, rollback, backup, uninstall).
 Members' photos travel as encrypted blobs: `blob.create` (signed `BLOB_META`), `blob.put`/`blob.get` in 256 KiB chunks,
 `blob.ack` (`BLOB_FETCHED`). Chunk files live in `<data_dir>/blobs/` until every reader has fetched the blob (or it
 expires) and are not backed up. Tuning in `node.toml`: `[limits] user_quota`, `max_blob`; `[replication] blob_bandwidth`.
+
+## Password backups
+
+A member's backup is a persistent blob (`BlobMeta.persistent`, at most 3 live per member, counted in `user_quota`) plus a
+signed `BACKUP_META` (`backup.publish`); both replicate to every node and the newest version wins. A phone with only
+a username and password restores through the public methods `backup.auth` (salt and KDF parameters; a stable fake salt
+for unknown names) and `backup.fetch` (checks `SHA-256(auth_secret)`, grants `blob.get` on that one blob). Wrong guesses
+are limited to 5 per username per hour and 20 per day per node. A newer install of a device (`PreKeys.installed_ms`)
+cuts the old one off. Nothing to configure.

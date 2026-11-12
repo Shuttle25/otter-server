@@ -58,6 +58,16 @@ func (g *Gateway) Envelope(user []byte, device uint32) {
 	}
 }
 
+// Online implements service.Notifier: a logged-in session of this (user, device) that was not replaced (D52/D56).
+func (g *Gateway) Online(user []byte, device uint32) bool {
+	for _, s := range g.snapshot() {
+		if s.is(user, device) && !s.replaced() {
+			return true
+		}
+	}
+	return false
+}
+
 func (g *Gateway) Directory() {
 	for _, s := range g.snapshot() {
 		if s.loggedIn() {

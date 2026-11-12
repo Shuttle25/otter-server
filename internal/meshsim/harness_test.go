@@ -22,6 +22,7 @@ import (
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/replication"
 	"ottermsg/server/internal/service"
@@ -45,6 +46,8 @@ type simNode struct {
 	dbPath string
 	addr   string
 	noPull bool // test knob: no background chunk puller (proxy scenario)
+	sender *recSender // non-nil: the node has an FCM key (push_test.go)
+	clock  *fakeClock // drives the pusher's coalescing window
 
 	mu     sync.Mutex
 	st     *store.Store
@@ -52,6 +55,7 @@ type simNode struct {
 	repl   *replication.Replicator
 	srv    *httptest.Server
 	cancel context.CancelFunc
+	pusher *push.Pusher
 }
 
 type sim struct {
@@ -136,6 +140,14 @@ func (s *sim) start(n *simNode) {
 		s.t.Fatal(err)
 	}
 	svc.Blobs = bd
+	if n.sender != nil {
+		p := push.New(n.sender, st, quiet)
+		if n.clock != nil {
+			p.Now = n.clock.now
+		}
+		svc.Waker = p
+		n.pusher = p
+	}
 	if _, err := svc.LoadManifest(context.Background()); err != nil {
 		s.t.Fatal(err)
 	}

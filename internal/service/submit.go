@@ -51,7 +51,7 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 		return nil, err
 	}
 	if applied {
-		s.afterApply(ctx, body)
+		s.afterApply(ctx, body, nil)
 	}
 	return body, nil
 }

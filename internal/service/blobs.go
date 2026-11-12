@@ -99,7 +99,7 @@ func (s *Service) CreateBlob(ctx context.Context, user []byte, rec *pb.Record) (
 		return nil, err
 	}
 	if applied {
-		s.afterApply(ctx, body)
+		s.afterApply(ctx, body, nil)
 	}
 	b, err := s.Store.Blob(ctx, key)
 	if err != nil {

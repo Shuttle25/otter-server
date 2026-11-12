@@ -30,6 +30,13 @@ type Notifier interface {
 	Directory()
 	PrekeysLow(user []byte, device uint32, owner []byte, remaining int)
 	Manifest(version uint64)
+	// Online reports a logged-in, non-replaced session of (user, device) on this node.
+	Online(user []byte, device uint32) bool
+}
+
+// Waker sends a push wake-up (internal/push.Pusher). nil = this node never pushes.
+type Waker interface {
+	Wake(ctx context.Context, user []byte, device uint32)
 }
 
 type nopNotifier struct{}
@@ -38,6 +45,7 @@ func (nopNotifier) Envelope([]byte, uint32)                {}
 func (nopNotifier) Directory()                             {}
 func (nopNotifier) PrekeysLow([]byte, uint32, []byte, int) {}
 func (nopNotifier) Manifest(uint64)                        {}
+func (nopNotifier) Online([]byte, uint32) bool             { return false }
 
 type Service struct {
 	Store       *store.Store
@@ -49,6 +57,7 @@ type Service struct {
 	Log         *slog.Logger
 	Blobs       *blobs.Dir   // chunk files; nil = blob methods unavailable
 	Fetcher     ChunkFetcher // asks peers for missing chunks; nil = no peers
+	Waker       Waker        // push wake-ups (D58); nil = this node never pushes
 	Limits      Limits
 
 	sweep      chan struct{}
@@ -277,7 +286,7 @@ func (s *Service) ImportRecord(ctx context.Context, rec *pb.Record) (bool, error
 	}
 	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
 	if err == nil && applied {
-		s.afterApply(ctx, body)
+		s.afterApply(ctx, body, nil)
 	}
 	return applied, err
 }

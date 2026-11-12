@@ -32,7 +32,7 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 	if err != nil || !applied {
 		return applied, err
 	}
-	s.afterApply(ctx, body)
+	s.afterApply(ctx, body, from)
 	return true, nil
 }
 
@@ -41,7 +41,9 @@ func isPrekeyConsumed(rec *pb.Record) bool {
 	return proto.Unmarshal(rec.GetBody(), &b) == nil && b.Type == pb.RecordType_PREKEY_CONSUMED
 }
 
-func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody) {
+// afterApply runs the side effects of a newly applied record. from is the peer a replicated record came from,
+// nil for one accepted locally (client submit, local import).
+func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []byte) {
 	switch body.Type {
 	case pb.RecordType_ENVELOPE:
 		var e pb.Envelope
@@ -49,6 +51,7 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody) {
 			for _, r := range e.Recipients {
 				s.Notify.Envelope(r.User, r.Device)
 			}
+			s.maybePush(ctx, body, &e, from)
 		}
 	case pb.RecordType_DIRECTORY_ENTRY:
 		s.Notify.Directory()
@@ -78,6 +81,6 @@ func (s *Service) PublishManifest(ctx context.Context, rec *pb.Record) error {
 	if _, _, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID); err != nil {
 		return err
 	}
-	s.afterApply(ctx, body)
+	s.afterApply(ctx, body, nil)
 	return nil
 }

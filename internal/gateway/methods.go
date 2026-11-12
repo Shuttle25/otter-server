@@ -193,7 +193,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.PublishBackup(ctx, s.userID(), r.Record)
-	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack":
+	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack", "push.register":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
@@ -202,7 +202,8 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		allowed := map[string]pb.RecordType{"prekeys.upload": pb.RecordType_PREKEYS, "msg.send": pb.RecordType_ENVELOPE,
-			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE, "blob.ack": pb.RecordType_BLOB_FETCHED}[req.Method]
+			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE, "blob.ack": pb.RecordType_BLOB_FETCHED,
+			"push.register": pb.RecordType_PUSH_TOKEN}[req.Method]
 		if req.Method == "msg.ack" && s.replaced() {
 			// its acks would drop the new install's mail; the delivery loop closes the connection after this answer
 			s.kick()

@@ -1,6 +1,7 @@
 package push
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -54,6 +55,7 @@ func (p *Pusher) Wake(ctx context.Context, user []byte, device uint32) {
 		}
 	}
 	p.mu.Unlock()
+	user = bytes.Clone(user) // the send runs after the caller returns
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()

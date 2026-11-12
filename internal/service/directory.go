@@ -48,7 +48,7 @@ func (s *Service) UpdateDirectoryEntry(ctx context.Context, user []byte, rec *pb
 		return err
 	}
 	if applied {
-		s.afterApply(ctx, body)
+		s.afterApply(ctx, body, nil)
 	}
 	return nil
 }

@@ -26,6 +26,7 @@ import (
 	"ottermsg/server/internal/nodecheck"
 	"ottermsg/server/internal/probe"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/replication"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
@@ -204,6 +205,23 @@ func serve(ctx context.Context, a *app) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)
+	if a.cfg.PushEnabled() {
+		raw, err := os.ReadFile(a.cfg.Push.FCMCredentials)
+		if err != nil {
+			return fmt.Errorf("push key: %w", err)
+		}
+		fcm, err := push.NewFCM(raw)
+		if err != nil {
+			return err
+		}
+		a.svc.Waker = push.New(fcm, a.st, a.log)
+		a.log.Info("push on", "project", fcm.ProjectID())
+	} else {
+		a.log.Info("push off (no fcm_credentials file)")
+		if service.Capable(a.svc.CurrentManifest(), a.svc.NodeID) {
+			a.log.Warn("manifest says push_capable but no FCM key is installed")
+		}
+	}
 	repl := replication.New(a.svc, replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, a.log)
 	go repl.Run(ctx) // before serving, so accepted peer sessions use the run context
 	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)

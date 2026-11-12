@@ -30,7 +30,8 @@ func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
 	r.low = append(r.low, n)
 	r.lowOwner = append(r.lowOwner, owner)
 }
-func (r *rec) Manifest(v uint64) { r.manifests = append(r.manifests, v) }
+func (r *rec) Manifest(v uint64)          { r.manifests = append(r.manifests, v) }
+func (r *rec) Online([]byte, uint32) bool { return false }
 
 type fx struct {
 	t       *testing.T

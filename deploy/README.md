@@ -13,15 +13,18 @@ make release VERSION=1.2.0      # dist/otter-node_1.2.0_linux_{amd64,arm64}, dis
 
 ## New node
 
+First node of a **new** network: follow [FIRST-DEPLOY.md](FIRST-DEPLOY.md). Every further node is one command:
+
 ```bash
-bin/otter-admin network init                                   # once per network
-bin/otter-admin node add --label fi-1 --wss-host chat.example.org --ip 203.0.113.10
-bin/otter-admin manifest sign
-bin/otter-admin dns records                                    # create these at the DNS provider
-bin/otter-admin dns check --label fi-1                         # wait until ok (TTL 300)
-bin/otter-admin invite bootstrap                               # first node of a new network only
-deploy/push.sh fi-1 root@203.0.113.10                          # bundle → install → checks
+deploy/add-node.sh fi-2 root@198.51.100.20 --ip 198.51.100.20 [--domain chat2.example.org]
 ```
+
+Options: `--ip` (repeat for IPv6), `--domain`, `--wss-port P`, `--ssh-port N`, `--version V` (bundle that release).
+It registers the node, signs the manifest if it doesn't list the node yet (asks for the admin passphrase), records
+the SSH target in `~/.otter-admin/hosts`, waits for DNS when `--domain` is given, builds the bundle, runs `push.sh`
+(install + checks) and publishes the manifest to the other running nodes, which connect to the new one without a
+restart. Phones learn the node on their next connection. If it stops, fix the cause and re-run the same command:
+finished steps are skipped.
 
 `push.sh` builds `dist/bundle-<label>.tar.gz` (private keys, mode 0600) if missing and deletes it after a
 successful install; pending bootstrap invites go into the bundle and move to `~/.otter-admin/invites/delivered/`.
@@ -32,6 +35,9 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 |------|---------|
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
 | Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual) |
+| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts, disk; exit 1 on any problem) |
+| Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual) |
+| SSH target of a node | `deploy/hosts.sh set fi-1 root@203.0.113.10 [port]` / `get` / `list` / `rm` |
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` |
@@ -52,5 +58,8 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 
 ```bash
 deploy/test/bundle_test.sh      # offline: bundle contents and `otter-node check`
+deploy/test/scripts_test.sh     # offline: hosts, add-node, status, upgrade-all with a stubbed ssh
 deploy/test/e2e.sh [--keep]     # disposable Debian 12 VM (QEMU/KVM): install, upgrade, rollback, backup, uninstall
+deploy/test/e2e-mesh.sh [--keep] # two VMs: add-node, replication, status, upgrade-all (needs internet in the VMs)
+make deploy-test                # all four: scripts, bundle, e2e, e2e-mesh
 ```

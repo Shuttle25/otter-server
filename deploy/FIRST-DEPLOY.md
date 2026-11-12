@@ -93,6 +93,9 @@ remote copy, runs the health checks and prints a table — every row must be `PA
 Manual alternative (same result): `deploy/make-bundle.sh LABEL`, copy `dist/bundle-LABEL.tar.gz` to the server, and
 there `tar xzf bundle-LABEL.tar.gz && ./bundle-LABEL/install.sh`; afterwards `deploy/check.sh LABEL root@IP` here.
 
+Register the server for the day-2 scripts: `deploy/hosts.sh set LABEL root@IP` (add the port as a third argument
+if SSH is not on 22). An already deployed node is registered the same way, e.g. `deploy/hosts.sh set eeee root@eeee`.
+
 Single node? Enable daily DB backups (7 kept): `ssh root@IP /usr/local/lib/otter/backup.sh --install`.
 
 ## 6. Phones
@@ -106,12 +109,22 @@ fresh (the dev-network chats are lost on that phone).
 3. Phone 1: Settings → "Пригласить в семью" → phone 2 scans that QR.
 4. Write in both directions; rename on one phone (Settings → profile → Имя) and check the other.
 
+## Second node
+
+A network with a single node has no failover, so add a second one soon:
+
+```bash
+deploy/add-node.sh LABEL2 root@IP2 --ip IP2 [--domain DOMAIN2]
+```
+
+It registers, signs, installs and publishes the manifest to the first node (no restart). Phones learn the new node
+on their next connection. If it stops, fix the cause and re-run the same command.
+
 ## 7. Upgrade and rollback test
 
 ```bash
-make release VERSION=<next, e.g. 0.1.1>
-deploy/upgrade.sh root@IP dist/otter-node_<next>_linux_amd64      # use _arm64 for an arm server
-# expected: "upgraded to <next>", exit 0
+deploy/upgrade-all.sh <next, e.g. 0.1.1>      # builds the release, upgrades every registered node
+# expected: summary row "LABEL  upgraded <old> → <next>", exit 0
 
 printf '#!/bin/sh\nexit 1\n' > /tmp/broken-otter-node
 deploy/upgrade.sh root@IP /tmp/broken-otter-node; echo "exit $?"
@@ -129,6 +142,7 @@ place where this runbook or `docs/11-deployment.md` didn't match reality.
 | Task | Command |
 |------|---------|
 | Logs | `ssh root@IP journalctl -u otter-node -f` |
+| All nodes at a glance | `deploy/status.sh` |
 | Health | `deploy/check.sh LABEL root@IP` |
 | Server IP changed | `bin/otter-admin node set-ip --label LABEL --ip NEW` → update DNS → `deploy/push.sh LABEL root@NEW` (pin unchanged) |
 | Remove the node | `ssh root@IP /usr/local/lib/otter/uninstall.sh --purge` |

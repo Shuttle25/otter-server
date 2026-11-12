@@ -28,4 +28,27 @@ if deploy/hosts.sh set n2 root@x port 2>/dev/null; then fail "bad port accepted"
 deploy/hosts.sh rm n1
 if deploy/hosts.sh get n1 >/dev/null 2>&1; then fail "rm"; fi
 
+# --- add-node.sh argument checks (no network access needed: they fail before any ssh)
+if out=$(deploy/add-node.sh n3 root@n3 2>&1); then fail "add-node without --ip"; fi
+grep -q -- '--ip' <<< "$out" || fail "add-node usage: $out"
+deploy/hosts.sh set n2 root@n2.example
+if out=$(deploy/add-node.sh n2 root@elsewhere --ip 192.0.2.2 2>&1); then fail "add-node to another target"; fi
+grep -q 'already registered' <<< "$out" || fail "add-node conflict message: $out"
+# resume: a node added but never signed gets signed on the re-run; it stops at the missing release (before ssh)
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node add --label n3 --wss-host 192.0.2.3 --ip 192.0.2.3 >/dev/null
+if out=$(deploy/add-node.sh n3 root@n3.example --ip 192.0.2.3 --version 0.0.0-missing 2>&1); then fail "add-node without release"; fi
+grep -q 'skipping node add' <<< "$out" || fail "add-node resume: $out"
+grep -q 're-run the same command' <<< "$out" || fail "add-node resume hint: $out"
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" manifest show | grep -q '"n3"' || fail "n3 not signed into the manifest"
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node remove --label n3 >/dev/null
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" manifest sign >/dev/null
+deploy/hosts.sh rm n3
+
+# --- status.sh with stubbed ssh: unreachable nodes are reported, exit 1
+mkdir -p "$work/stub"
+printf '#!/bin/sh\necho "ssh: connect to host: Connection refused" >&2\nexit 255\n' > "$work/stub/ssh"
+chmod +x "$work/stub/ssh"
+if out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1); then fail "status should fail"; fi
+grep -q '^n1 ' <<< "$out" && grep -q '^n2 ' <<< "$out" || fail "status rows: $out"
+
 echo "scripts test: ok"

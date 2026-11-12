@@ -109,3 +109,14 @@ message BackupMeta {
   bytes blob_key = 7;        // record key of the persistent BLOB_META (author ‖ id)
   uint64 size = 8;           // ciphertext bytes
 }
+
+// PUSH_TOKEN payload (D60): the newest record per (author, device) is that device's push token.
+message PushToken {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    FCM = 1;
+  }
+  uint32 device_id = 1;
+  Kind kind = 2;
+  string token = 3;
+}

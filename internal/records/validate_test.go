@@ -438,3 +438,32 @@ func TestCheckBlobMetaPersistent(t *testing.T) {
 		t.Error("persistent blob with expiry accepted")
 	}
 }
+
+func pushTokenBody(author []byte, mut func(*pb.PushToken)) *pb.RecordBody {
+	p := &pb.PushToken{DeviceId: 1, Kind: pb.PushToken_FCM, Token: "fcm-token-abc"}
+	if mut != nil {
+		mut(p)
+	}
+	b := &pb.RecordBody{Id: make([]byte, 16), Type: pb.RecordType_PUSH_TOKEN, Author: author, CreatedMs: 1}
+	b.Payload, _ = proto.Marshal(p)
+	return b
+}
+
+func TestCheckPushToken(t *testing.T) {
+	a := bytes.Repeat([]byte{3}, 16)
+	if err := checkPushToken(pushTokenBody(a, nil)); err != nil {
+		t.Fatalf("valid token rejected: %v", err)
+	}
+	bad := map[string]func(*pb.PushToken){
+		"device 2":  func(p *pb.PushToken) { p.DeviceId = 2 },
+		"no kind":   func(p *pb.PushToken) { p.Kind = pb.PushToken_KIND_UNSPECIFIED },
+		"empty":     func(p *pb.PushToken) { p.Token = "" },
+		"too long":  func(p *pb.PushToken) { p.Token = strings.Repeat("x", MaxPushToken+1) },
+		"bad utf-8": func(p *pb.PushToken) { p.Token = string([]byte{0xff, 0xfe}) },
+	}
+	for name, mut := range bad {
+		if err := checkPushToken(pushTokenBody(a, mut)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

@@ -118,6 +118,28 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		return nil
 
+	case pb.RecordType_PUSH_TOKEN: // D60: newest created_ms per (user, device) wins, ties by record key
+		var p pb.PushToken
+		if err := proto.Unmarshal(b.Payload, &p); err != nil {
+			return err
+		}
+		var curCreated int64
+		var curKey []byte
+		err := tx.QueryRowContext(ctx, `SELECT created_ms, record_key FROM push_tokens WHERE user_id=? AND device_id=?`,
+			b.Author, p.DeviceId).Scan(&curCreated, &curKey)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && (curCreated > b.CreatedMs || (curCreated == b.CreatedMs && bytes.Compare(curKey, it.key) >= 0)) {
+			return nil // an older (or the same) token: record kept, row unchanged
+		}
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO push_tokens(user_id,device_id,kind,token,created_ms,record_key) VALUES(?,?,?,?,?,?)
+			 ON CONFLICT(user_id,device_id) DO UPDATE SET kind=excluded.kind, token=excluded.token,
+			   created_ms=excluded.created_ms, record_key=excluded.record_key`,
+			b.Author, p.DeviceId, int32(p.Kind), p.Token, b.CreatedMs, it.key)
+		return err
+
 	case pb.RecordType_ENVELOPE:
 		var e pb.Envelope
 		if err := proto.Unmarshal(b.Payload, &e); err != nil {

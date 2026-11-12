@@ -106,6 +106,52 @@ func (RecordType) EnumDescriptor() ([]byte, []int) {
 	return file_otter_v1_records_proto_rawDescGZIP(), []int{0}
 }
 
+type PushToken_Kind int32
+
+const (
+	PushToken_KIND_UNSPECIFIED PushToken_Kind = 0
+	PushToken_FCM              PushToken_Kind = 1
+)
+
+// Enum value maps for PushToken_Kind.
+var (
+	PushToken_Kind_name = map[int32]string{
+		0: "KIND_UNSPECIFIED",
+		1: "FCM",
+	}
+	PushToken_Kind_value = map[string]int32{
+		"KIND_UNSPECIFIED": 0,
+		"FCM":              1,
+	}
+)
+
+func (x PushToken_Kind) Enum() *PushToken_Kind {
+	p := new(PushToken_Kind)
+	*p = x
+	return p
+}
+
+func (x PushToken_Kind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PushToken_Kind) Descriptor() protoreflect.EnumDescriptor {
+	return file_otter_v1_records_proto_enumTypes[1].Descriptor()
+}
+
+func (PushToken_Kind) Type() protoreflect.EnumType {
+	return &file_otter_v1_records_proto_enumTypes[1]
+}
+
+func (x PushToken_Kind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PushToken_Kind.Descriptor instead.
+func (PushToken_Kind) EnumDescriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{12, 0}
+}
+
 // Signature is Ed25519 over the exact `body` bytes.
 type Record struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -904,6 +950,67 @@ func (x *BackupMeta) GetSize() uint64 {
 	return 0
 }
 
+// PUSH_TOKEN payload (D60): the newest record per (author, device) is that device's push token.
+type PushToken struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeviceId      uint32                 `protobuf:"varint,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Kind          PushToken_Kind         `protobuf:"varint,2,opt,name=kind,proto3,enum=otter.v1.PushToken_Kind" json:"kind,omitempty"`
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PushToken) Reset() {
+	*x = PushToken{}
+	mi := &file_otter_v1_records_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PushToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PushToken) ProtoMessage() {}
+
+func (x *PushToken) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PushToken.ProtoReflect.Descriptor instead.
+func (*PushToken) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PushToken) GetDeviceId() uint32 {
+	if x != nil {
+		return x.DeviceId
+	}
+	return 0
+}
+
+func (x *PushToken) GetKind() PushToken_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return PushToken_KIND_UNSPECIFIED
+}
+
+func (x *PushToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
 var File_otter_v1_records_proto protoreflect.FileDescriptor
 
 const file_otter_v1_records_proto_rawDesc = "" +
@@ -978,7 +1085,14 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\x05kdf_p\x18\x05 \x01(\rR\x04kdfP\x12#\n" +
 	"\rauth_verifier\x18\x06 \x01(\fR\fauthVerifier\x12\x19\n" +
 	"\bblob_key\x18\a \x01(\fR\ablobKey\x12\x12\n" +
-	"\x04size\x18\b \x01(\x04R\x04size*\x87\x02\n" +
+	"\x04size\x18\b \x01(\x04R\x04size\"\x93\x01\n" +
+	"\tPushToken\x12\x1b\n" +
+	"\tdevice_id\x18\x01 \x01(\rR\bdeviceId\x12,\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x18.otter.v1.PushToken.KindR\x04kind\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"%\n" +
+	"\x04Kind\x12\x14\n" +
+	"\x10KIND_UNSPECIFIED\x10\x00\x12\a\n" +
+	"\x03FCM\x10\x01*\x87\x02\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
@@ -1014,30 +1128,33 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 	return file_otter_v1_records_proto_rawDescData
 }
 
-var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_otter_v1_records_proto_goTypes = []any{
 	(RecordType)(0),        // 0: otter.v1.RecordType
-	(*Record)(nil),         // 1: otter.v1.Record
-	(*RecordBody)(nil),     // 2: otter.v1.RecordBody
-	(*DirectoryEntry)(nil), // 3: otter.v1.DirectoryEntry
-	(*Revocation)(nil),     // 4: otter.v1.Revocation
-	(*InviteRights)(nil),   // 5: otter.v1.InviteRights
-	(*Invite)(nil),         // 6: otter.v1.Invite
-	(*InviteUsed)(nil),     // 7: otter.v1.InviteUsed
-	(*PrekeyConsumed)(nil), // 8: otter.v1.PrekeyConsumed
-	(*Ack)(nil),            // 9: otter.v1.Ack
-	(*BlobMeta)(nil),       // 10: otter.v1.BlobMeta
-	(*BlobFetched)(nil),    // 11: otter.v1.BlobFetched
-	(*BackupMeta)(nil),     // 12: otter.v1.BackupMeta
+	(PushToken_Kind)(0),    // 1: otter.v1.PushToken.Kind
+	(*Record)(nil),         // 2: otter.v1.Record
+	(*RecordBody)(nil),     // 3: otter.v1.RecordBody
+	(*DirectoryEntry)(nil), // 4: otter.v1.DirectoryEntry
+	(*Revocation)(nil),     // 5: otter.v1.Revocation
+	(*InviteRights)(nil),   // 6: otter.v1.InviteRights
+	(*Invite)(nil),         // 7: otter.v1.Invite
+	(*InviteUsed)(nil),     // 8: otter.v1.InviteUsed
+	(*PrekeyConsumed)(nil), // 9: otter.v1.PrekeyConsumed
+	(*Ack)(nil),            // 10: otter.v1.Ack
+	(*BlobMeta)(nil),       // 11: otter.v1.BlobMeta
+	(*BlobFetched)(nil),    // 12: otter.v1.BlobFetched
+	(*BackupMeta)(nil),     // 13: otter.v1.BackupMeta
+	(*PushToken)(nil),      // 14: otter.v1.PushToken
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
 	0, // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: otter.v1.PushToken.kind:type_name -> otter.v1.PushToken.Kind
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_records_proto_init() }
@@ -1050,8 +1167,8 @@ func file_otter_v1_records_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   12,
+			NumEnums:      2,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

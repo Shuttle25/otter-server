@@ -24,6 +24,7 @@ const (
 	BlobChunkSize      = 256 << 10
 	MaxBlobReaders     = 100
 	MaxBlobTTL         = 31 * 24 * time.Hour
+	MaxPushToken       = 4096 // bytes of an FCM token (D60)
 )
 
 var (
@@ -150,6 +151,8 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		return checkBlobMeta(b)
 	case pb.RecordType_BACKUP_META:
 		return checkBackupMeta(b)
+	case pb.RecordType_PUSH_TOKEN:
+		return checkPushToken(b)
 	case pb.RecordType_BLOB_FETCHED:
 		var f pb.BlobFetched
 		if err := proto.Unmarshal(b.Payload, &f); err != nil || len(f.BlobKey) != 32 {
@@ -227,6 +230,16 @@ func checkEnvelope(b *pb.RecordBody) error {
 		total += len(r.Content)
 	}
 	if total > MaxEnvelopeContent {
+		return ErrBadPayload
+	}
+	return nil
+}
+
+// checkPushToken: device 1, kind FCM, 1..MaxPushToken bytes of UTF-8 (D60).
+func checkPushToken(b *pb.RecordBody) error {
+	var p pb.PushToken
+	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM ||
+		len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
 		return ErrBadPayload
 	}
 	return nil

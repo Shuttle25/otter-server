@@ -15,8 +15,16 @@ remote "$TARGET" bash -s <<'REMOTE'
 set -euo pipefail
 install -o root -g otter -m 0640 /etc/otter/fcm.json.new /etc/otter/fcm.json
 rm -f /etc/otter/fcm.json.new
-grep -q '^\[push\]' /etc/otter/node.toml || printf '\n[push]\nfcm_credentials = "/etc/otter/fcm.json"\n' >> /etc/otter/node.toml
-runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.toml
+# check the new config on a copy first: a pre-M5 otter-node rejects [push], and the live file must stay startable
+cp -p /etc/otter/node.toml /etc/otter/node.toml.new
+grep -q '^\[push\]' /etc/otter/node.toml.new || printf '\n[push]\nfcm_credentials = "/etc/otter/fcm.json"\n' >> /etc/otter/node.toml.new
+if ! runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.toml.new; then
+  rm -f /etc/otter/node.toml.new
+  echo "otter-node $(/usr/local/bin/otter-node version) does not accept the push config; node.toml left unchanged." >&2
+  echo "Upgrade the node to an M5 release first (deploy/upgrade-all.sh VERSION), then re-run push-key.sh." >&2
+  exit 1
+fi
+mv /etc/otter/node.toml.new /etc/otter/node.toml
 since=$(date '+%Y-%m-%d %H:%M:%S')
 systemctl restart otter-node
 /usr/local/lib/otter/health.sh

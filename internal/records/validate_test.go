@@ -467,3 +467,80 @@ func TestCheckPushToken(t *testing.T) {
 		}
 	}
 }
+
+type newsKeys map[string]ed25519.PublicKey
+
+func (n newsKeys) NewsKey(id []byte) (ed25519.PublicKey, bool) { k, ok := n[string(id)]; return k, ok }
+
+func newsRec(t *testing.T, typ pb.RecordType, priv ed25519.PrivateKey, payload proto.Message, expires int64) *pb.Record {
+	t.Helper()
+	p, _ := proto.Marshal(payload)
+	return mustSign(t, &pb.RecordBody{Id: rid(), Type: typ, Author: keys.ID16(priv.Public().(ed25519.PublicKey)),
+		CreatedMs: time.Now().UnixMilli(), ExpiresMs: expires, Payload: p}, priv)
+}
+
+func TestAnnouncementValidation(t *testing.T) {
+	netPub, _, _ := ed25519.GenerateKey(nil)
+	newsPub, newsPriv, _ := ed25519.GenerateKey(nil)
+	_, otherPriv, _ := ed25519.GenerateKey(nil)
+	v := &Validator{NetworkPub: netPub, Users: fakeUsers{}, News: newsKeys{string(keys.ID16(newsPub)): newsPub}, Now: time.Now}
+	sha := make([]byte, 32)
+	good := []*pb.Announcement{
+		{TextRu: "Привет"}, {TextEn: "Hello"}, {TextRu: "Привет", TextEn: "Hello"},
+		{TextRu: strings.Repeat("я", MaxNewsText)},
+		{TextRu: "Обновление", Update: &pb.AppUpdate{VersionName: "0.6.0", VersionCode: 6, Sha256: sha, Size: 50 << 20}},
+	}
+	for i, a := range good {
+		if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT, newsPriv, a, 0)); err != nil {
+			t.Errorf("good %d: %v", i, err)
+		}
+	}
+	bad := []*pb.Announcement{
+		{}, {TextRu: "  \n"}, {TextRu: strings.Repeat("я", MaxNewsText+1)}, {TextEn: string([]byte{0xff})},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionCode: 6, Sha256: sha, Size: 1}},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionName: "0.6.0", Sha256: sha, Size: 1}},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionName: "0.6.0", VersionCode: 6, Sha256: sha[:31], Size: 1}},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionName: "0.6.0", VersionCode: 6, Sha256: sha, Size: 0}},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionName: "0.6.0", VersionCode: 6, Sha256: sha, Size: MaxBlobSize + 1}},
+		{TextRu: "x", Update: &pb.AppUpdate{VersionName: strings.Repeat("1", 33), VersionCode: 6, Sha256: sha, Size: 1}},
+	}
+	for i, a := range bad {
+		if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT, newsPriv, a, 0)); !errors.Is(err, ErrBadPayload) {
+			t.Errorf("bad %d: got %v", i, err)
+		}
+	}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT, newsPriv, good[0], time.Now().Add(time.Hour).UnixMilli())); !errors.Is(err, ErrBadPayload) {
+		t.Errorf("expiring announcement: %v", err)
+	}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT, otherPriv, good[0], 0)); !errors.Is(err, ErrUnknownNewsKey) {
+		t.Errorf("unknown key: %v", err)
+	}
+	r := newsRec(t, pb.RecordType_ANNOUNCEMENT, newsPriv, good[0], 0)
+	r.Signature[0] ^= 1
+	if _, err := v.Validate(r); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("bad signature: %v", err)
+	}
+	v.News = nil
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT, newsPriv, good[0], 0)); !errors.Is(err, ErrUnknownNewsKey) {
+		t.Errorf("no resolver: %v", err)
+	}
+}
+
+func TestNewsDeletedValidation(t *testing.T) {
+	netPub, _, _ := ed25519.GenerateKey(nil)
+	newsPub, newsPriv, _ := ed25519.GenerateKey(nil)
+	_, otherPriv, _ := ed25519.GenerateKey(nil)
+	v := &Validator{NetworkPub: netPub, Users: fakeUsers{}, News: newsKeys{string(keys.ID16(newsPub)): newsPub}, Now: time.Now}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT_DELETED, newsPriv, &pb.AnnouncementDeleted{Target: make([]byte, 32)}, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT_DELETED, newsPriv, &pb.AnnouncementDeleted{Target: make([]byte, 31)}, 0)); !errors.Is(err, ErrBadPayload) {
+		t.Fatalf("short target: %v", err)
+	}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT_DELETED, newsPriv, &pb.AnnouncementDeleted{Target: make([]byte, 32)}, time.Now().Add(time.Hour).UnixMilli())); !errors.Is(err, ErrBadPayload) {
+		t.Fatalf("expiring deletion: %v", err)
+	}
+	if _, err := v.Validate(newsRec(t, pb.RecordType_ANNOUNCEMENT_DELETED, otherPriv, &pb.AnnouncementDeleted{Target: make([]byte, 32)}, 0)); !errors.Is(err, ErrUnknownNewsKey) {
+		t.Fatalf("unknown key: %v", err)
+	}
+}

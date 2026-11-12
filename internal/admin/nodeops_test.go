@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,5 +145,31 @@ func TestNodeEnv(t *testing.T) {
 	}
 	if _, err := NodeEnv(dir, "nope"); err == nil {
 		t.Fatal("unknown label accepted")
+	}
+}
+
+func TestSetPush(t *testing.T) {
+	dir := newNet(t)
+	pushOf := func() bool {
+		st, err := LoadState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Nodes[0].PushCapable
+	}
+	if pushOf() {
+		t.Fatal("push_capable before set-push")
+	}
+	if err := SetPush(dir, "fi-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if !pushOf() {
+		t.Fatal("push_capable not set")
+	}
+	if err := SetPush(dir, "fi-1", false); err != nil || pushOf() {
+		t.Fatalf("set-push --off: %v %v", err, pushOf())
+	}
+	if err := SetPush(dir, "nope", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown label: %v", err)
 	}
 }

@@ -227,3 +227,17 @@ func NodeEnv(dir, label string) (map[string]string, error) {
 
 // ShellQuote quotes s for a POSIX shell.
 func ShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// SetPush marks a node push-capable (it has /etc/otter/fcm.json) or not (D58).
+func SetPush(dir, label string, on bool) error {
+	st, err := LoadState(dir)
+	if err != nil {
+		return err
+	}
+	n, err := findNode(st, label)
+	if err != nil {
+		return err
+	}
+	n.PushCapable = on
+	return saveNodes(dir, st.Nodes)
+}

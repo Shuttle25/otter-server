@@ -38,6 +38,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node set-ip --label L --ip A [--ip B]...
   node rotate-tls --label L
   node drop-old-pins --label L
+  node set-push --label L [--off]
   node env --label L
   dns records
   dns check [--label L]
@@ -200,6 +201,17 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			}
 			fmt.Fprintf(out, "node %s: only the new pin remains. Run 'manifest sign' and 'manifest publish'.\n", *label)
 		}
+	case "node set-push":
+		fs := flag.NewFlagSet("node set-push", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		off := fs.Bool("off", false, "the node can no longer push")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if err := admin.SetPush(*dir, *label, !*off); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: push_capable=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
 	case "node env":
 		fs := flag.NewFlagSet("node env", flag.ContinueOnError)
 		label := fs.String("label", "", "node label")

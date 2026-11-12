@@ -69,4 +69,25 @@ if out=$(deploy/upgrade-all.sh 0.0.0-st --only nope 2>&1); then fail "unknown --
 grep -q 'unknown node nope' <<< "$out" || fail "unknown node message: $out"
 rm -f dist/otter-node_0.0.0-st_linux_*
 
+# --- push-key.sh: refuses missing/foreign files and unknown hosts before any ssh
+if out=$(deploy/push-key.sh n1 /nonexistent.json 2>&1); then fail "push-key with a missing file"; fi
+grep -q 'no such file' <<< "$out" || fail "push-key message: $out"
+echo '{"type":"authorized_user"}' > "$work/notsa.json"
+if out=$(deploy/push-key.sh n1 "$work/notsa.json" 2>&1); then fail "push-key accepted a non-service-account file"; fi
+grep -q 'service-account' <<< "$out" || fail "push-key message: $out"
+printf '{\n  "type": "service_account",\n  "project_id": "otter-test"\n}\n' > "$work/sa.json"
+if out=$(deploy/push-key.sh n2 "$work/sa.json" 2>&1); then fail "push-key without a host"; fi
+grep -q 'hosts.sh set n2' <<< "$out" || fail "push-key host message: $out"
+if out=$(deploy/push-key.sh n1 2>&1); then fail "push-key without a key argument"; fi
+[[ -f "$work/sa.json" ]] || fail "push-key deleted the local key"
+
+# --- status.sh PUSH column (stubbed ssh answers for every remote line)
+cat > "$work/stub/ssh" <<'STUB'
+#!/bin/sh
+printf '0.5.0\nactive\nusers=1\n1M\non\n'
+STUB
+out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
+grep -q '^LABEL .* PUSH$' <<< "$out" || fail "status header: $out"
+grep -qE '^n1 .* 1M +on$' <<< "$out" || fail "status push column: $out"
+
 echo "scripts test: ok"

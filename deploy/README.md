@@ -35,11 +35,12 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 |------|---------|
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
 | Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual) |
-| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts, disk; exit 1 on any problem) |
+| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts, disk, push; exit 1 on any problem) |
 | Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual) |
 | SSH target of a node | `deploy/hosts.sh set fi-1 root@203.0.113.10 [port]` / `get` / `list` / `rm` |
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
+| Push wake-ups | `deploy/push-key.sh fi-1 ~/fcm.json` → `otter-admin node set-push --label fi-1` → `manifest sign` + `manifest publish` |
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 

@@ -120,6 +120,23 @@ deploy/add-node.sh LABEL2 root@IP2 --ip IP2 [--domain DOMAIN2]
 It registers, signs, installs and publishes the manifest to the first node (no restart). Phones learn the new node
 on their next connection. If it stops, fix the cause and re-run the same command.
 
+## Push notifications (optional)
+
+Without push, phones check for messages every 15 minutes («Экономия батареи»). With a Firebase service-account key
+on at least one node, a message wakes a sleeping phone within seconds. Creating the Firebase project and downloading
+the key (`fcm.json`) is described in `otter-android/docs/m5-manual-test.md`. The key never goes into git, bundles or
+the admin dir.
+
+```bash
+deploy/push-key.sh LABEL ~/fcm.json           # installs /etc/otter/fcm.json (0640 root:otter), restarts, expects "push on"
+bin/otter-admin node set-push --label LABEL   # marks the node push_capable in the manifest
+bin/otter-admin manifest sign && bin/otter-admin manifest publish
+deploy/status.sh                              # PUSH column: on
+```
+
+To turn it off again: `bin/otter-admin node set-push --label LABEL --off`, sign and publish, then remove
+`/etc/otter/fcm.json` on the server and restart `otter-node`.
+
 ## 7. Upgrade and rollback test
 
 ```bash
@@ -143,6 +160,7 @@ place where this runbook or `docs/11-deployment.md` didn't match reality.
 |------|---------|
 | Logs | `ssh root@IP journalctl -u otter-node -f` |
 | All nodes at a glance | `deploy/status.sh` |
+| Push wake-ups | `deploy/push-key.sh LABEL ~/fcm.json` → `bin/otter-admin node set-push --label LABEL` → `manifest sign` + `manifest publish` |
 | Health | `deploy/check.sh LABEL root@IP` |
 | Server IP changed | `bin/otter-admin node set-ip --label LABEL --ip NEW` → update DNS → `deploy/push.sh LABEL root@NEW` (pin unchanged) |
 | Remove the node | `ssh root@IP /usr/local/lib/otter/uninstall.sh --purge` |

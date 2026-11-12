@@ -146,17 +146,27 @@ func TestNodeOpsCLI(t *testing.T) {
 		{"--dir", dir, "dns", "records"},
 		{"--dir", dir, "node", "rotate-tls", "--label", "fi-1"},
 		{"--dir", dir, "node", "drop-old-pins", "--label", "fi-1"},
+		{"--dir", dir, "node", "set-push", "--label", "fi-1"},
 	} {
 		if err := run(s, &out, strings.NewReader("")); err != nil {
 			t.Fatalf("%v: %v", s, err)
 		}
 	}
-	for _, want := range []string{"OTTER_PORT='27443'", "IN  A     203.0.113.10", "pin unchanged", "only the new pin remains"} {
+	for _, want := range []string{"OTTER_PORT='27443'", "IN  A     203.0.113.10", "pin unchanged", "only the new pin remains",
+		"node fi-1: push_capable=true. Run 'manifest sign' and 'manifest publish'."} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in\n%s", want, out.String())
 		}
 	}
 	if err := run([]string{"--dir", dir, "node", "set-ip", "--label", "fi-1"}, &out, strings.NewReader("")); err == nil {
 		t.Fatal("set-ip without --ip accepted")
+	}
+	out.Reset()
+	if err := run([]string{"--dir", dir, "node", "set-push", "--label", "fi-1", "--off"}, &out, strings.NewReader("")); err != nil ||
+		!strings.Contains(out.String(), "push_capable=false") {
+		t.Fatalf("set-push --off: %v %s", err, out.String())
+	}
+	if err := run([]string{"--dir", dir, "node", "set-push", "--label", "nope"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("set-push accepted an unknown label")
 	}
 }

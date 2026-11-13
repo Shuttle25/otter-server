@@ -17,5 +17,15 @@ if git grep -nI '/home/' -- ':!scripts/secrets-check.sh'; then echo "home path i
 if git grep -nIE '[A-Za-z0-9._%+-]+@(gmail|yandex|mail|outlook|hotmail|icloud)\.[a-z]+' -- ':!scripts/secrets-check.sh'; then
   echo "personal e-mail address in a tracked file"; fail=1
 fi
+echo "==> full history: real server IPs from ${OTTER_REAL_IPS:-$HOME/.otter-real-ips}"
+IPS=${OTTER_REAL_IPS:-$HOME/.otter-real-ips}
+if [[ -f "$IPS" ]]; then
+  pats=$(grep -vE '^\s*(#|$)' "$IPS" | sed 's/\./\\./g' | paste -sd'|')
+  if [[ -n "$pats" ]] && grep -qE "\b($pats)\b" <(git log --all -p --no-color); then
+    echo "a real server IP is in the git history (rewrite it out before pushing)"; fail=1
+  fi
+else
+  echo "warning: $IPS missing, real-IP check skipped (one IP per line)"
+fi
 (( fail == 0 )) || { echo "secrets check: FAILED" >&2; exit 1; }
 echo "secrets check: ok"

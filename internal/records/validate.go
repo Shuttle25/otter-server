@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -25,17 +26,19 @@ const (
 	MaxBlobReaders     = 100
 	MaxBlobTTL         = 31 * 24 * time.Hour
 	MaxPushToken       = 4096 // bytes of an FCM token (D60)
+	MaxNewsText        = 4000 // runes per language of an announcement (D66)
 )
 
 var (
-	ErrMalformed     = errors.New("malformed record")
-	ErrBadAuthor     = errors.New("author binding invalid")
-	ErrBadSignature  = errors.New("signature invalid")
-	ErrUnknownAuthor = errors.New("unknown author")
-	ErrRevoked       = errors.New("author revoked")
-	ErrExpired       = errors.New("record expired")
-	ErrBadPayload    = errors.New("payload invalid")
-	ErrKeyMismatch   = errors.New("user already registered with another key")
+	ErrMalformed      = errors.New("malformed record")
+	ErrBadAuthor      = errors.New("author binding invalid")
+	ErrBadSignature   = errors.New("signature invalid")
+	ErrUnknownAuthor  = errors.New("unknown author")
+	ErrRevoked        = errors.New("author revoked")
+	ErrExpired        = errors.New("record expired")
+	ErrBadPayload     = errors.New("payload invalid")
+	ErrKeyMismatch    = errors.New("user already registered with another key")
+	ErrUnknownNewsKey = errors.New("announcement key not in the manifest")
 )
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9_]{3,32}$`)
@@ -55,10 +58,16 @@ type NodeResolver interface {
 	NodeKey(nodeID []byte) (ed25519.PublicKey, bool)
 }
 
+// NewsResolver looks up news keys of the current manifest by ID16(pub) (D65).
+type NewsResolver interface {
+	NewsKey(id []byte) (ed25519.PublicKey, bool)
+}
+
 type Validator struct {
 	NetworkPub ed25519.PublicKey
 	Users      UserResolver
 	Nodes      NodeResolver // nil: node-authored records are rejected
+	News       NewsResolver // nil: announcements are rejected
 	Now        func() time.Time
 }
 
@@ -133,6 +142,15 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 			return nil, ErrUnknownAuthor
 		}
 		return k, nil
+	case b.Type == pb.RecordType_ANNOUNCEMENT || b.Type == pb.RecordType_ANNOUNCEMENT_DELETED:
+		if v.News == nil {
+			return nil, ErrUnknownNewsKey
+		}
+		k, ok := v.News.NewsKey(b.Author)
+		if !ok {
+			return nil, ErrUnknownNewsKey
+		}
+		return k, nil
 	default:
 		k, ok := v.Users.UserKey(b.Author)
 		if !ok {
@@ -153,6 +171,13 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		return checkBackupMeta(b)
 	case pb.RecordType_PUSH_TOKEN:
 		return checkPushToken(b)
+	case pb.RecordType_ANNOUNCEMENT:
+		return checkAnnouncement(b)
+	case pb.RecordType_ANNOUNCEMENT_DELETED:
+		var d pb.AnnouncementDeleted
+		if err := proto.Unmarshal(b.Payload, &d); err != nil || len(d.Target) != 32 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
 	case pb.RecordType_BLOB_FETCHED:
 		var f pb.BlobFetched
 		if err := proto.Unmarshal(b.Payload, &f); err != nil || len(f.BlobKey) != 32 {
@@ -241,6 +266,27 @@ func checkPushToken(b *pb.RecordBody) error {
 	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM ||
 		len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
 		return ErrBadPayload
+	}
+	return nil
+}
+
+// checkAnnouncement: texts and the optional app update (D66).
+func checkAnnouncement(b *pb.RecordBody) error {
+	var a pb.Announcement
+	if err := proto.Unmarshal(b.Payload, &a); err != nil || b.ExpiresMs != 0 {
+		return ErrBadPayload
+	}
+	text := func(s string) bool {
+		return utf8.ValidString(s) && utf8.RuneCountInString(s) <= MaxNewsText
+	}
+	if !text(a.TextRu) || !text(a.TextEn) || strings.TrimSpace(a.TextRu)+strings.TrimSpace(a.TextEn) == "" {
+		return ErrBadPayload
+	}
+	if u := a.Update; u != nil {
+		if n := utf8.RuneCountInString(u.VersionName); n < 1 || n > 32 || u.VersionCode == 0 || len(u.Sha256) != 32 ||
+			u.Size == 0 || u.Size > MaxBlobSize {
+			return ErrBadPayload
+		}
 	}
 	return nil
 }

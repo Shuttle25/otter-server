@@ -77,6 +77,7 @@ type Manifest struct {
 	NetworkPub    []byte                 `protobuf:"bytes,3,opt,name=network_pub,json=networkPub,proto3" json:"network_pub,omitempty"`
 	Nodes         []*NodeInfo            `protobuf:"bytes,4,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	MinAppVersion uint32                 `protobuf:"varint,5,opt,name=min_app_version,json=minAppVersion,proto3" json:"min_app_version,omitempty"`
+	NewsKeys      [][]byte               `protobuf:"bytes,6,rep,name=news_keys,json=newsKeys,proto3" json:"news_keys,omitempty"` // Ed25519 public keys allowed to sign announcements (D65)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -144,6 +145,13 @@ func (x *Manifest) GetMinAppVersion() uint32 {
 		return x.MinAppVersion
 	}
 	return 0
+}
+
+func (x *Manifest) GetNewsKeys() [][]byte {
+	if x != nil {
+		return x.NewsKeys
+	}
+	return nil
 }
 
 type NodeInfo struct {
@@ -358,14 +366,15 @@ var File_otter_v1_manifest_proto protoreflect.FileDescriptor
 
 const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\n" +
-	"\x17otter/v1/manifest.proto\x12\botter.v1\"\xb4\x01\n" +
+	"\x17otter/v1/manifest.proto\x12\botter.v1\"\xd1\x01\n" +
 	"\bManifest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x1b\n" +
 	"\tissued_ms\x18\x02 \x01(\x03R\bissuedMs\x12\x1f\n" +
 	"\vnetwork_pub\x18\x03 \x01(\fR\n" +
 	"networkPub\x12(\n" +
 	"\x05nodes\x18\x04 \x03(\v2\x12.otter.v1.NodeInfoR\x05nodes\x12&\n" +
-	"\x0fmin_app_version\x18\x05 \x01(\rR\rminAppVersion\"\xa9\x01\n" +
+	"\x0fmin_app_version\x18\x05 \x01(\rR\rminAppVersion\x12\x1b\n" +
+	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\"\xa9\x01\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\fR\x06nodeId\x12\x19\n" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +

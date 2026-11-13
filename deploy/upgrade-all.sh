@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Rolling upgrade of every node (or --only LABEL...) to VERSION; stops at the first failure.
-# Usage: upgrade-all.sh VERSION [--only LABEL]...   Exit: 0 all done, 2 rolled back, 3 manual action needed.
+# Then offers the news dialog (news-dialog.sh) when run from a terminal, unless --no-news.
+# Usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news]   Exit: 0 all done, 2 rolled back, 3 manual action needed.
 source "$(dirname "$0")/lib.sh"
-usage="usage: upgrade-all.sh VERSION [--only LABEL]..."
+usage="usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news]"
 version=${1:?$usage}; shift
-only=()
-while (( $# )); do case "$1" in --only) only+=("${2:?$usage}"); shift 2 ;; *) die "$usage" ;; esac; done
+only=() news=1
+while (( $# )); do case "$1" in
+  --only) only+=("${2:?$usage}"); shift 2 ;;
+  --no-news) news=0; shift ;;
+  *) die "$usage" ;;
+esac; done
 all=$(node_labels)
 for o in "${only[@]}"; do grep -qx -- "$o" <<< "$all" || die "unknown node $o"; done
 labels=()
@@ -40,3 +45,6 @@ for l in "${labels[@]}"; do
 done
 summary
 say "all selected nodes are on $version"
+if (( news )) && [[ -t 0 ]]; then
+  "$ROOT/deploy/news-dialog.sh" "$version" || say "news not sent; retry: deploy/news-dialog.sh $version"
+fi

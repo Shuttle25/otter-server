@@ -21,6 +21,10 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 		// peer session; the next manifest brings the node and its owner never re-issues those keys.
 		s.Log.Debug("skipping PREKEY_CONSUMED from unknown node", "err", err)
 		return false, nil
+	case errors.Is(err, records.ErrUnknownNewsKey):
+		// D66: the key may be revoked; retrying would stall the peer session. The admin publishes to every node.
+		s.Log.Debug("skipping news from a key not in our manifest")
+		return false, nil
 	case errors.Is(err, records.ErrUnknownAuthor):
 		return false, fmt.Errorf("%w: %v", ErrRetryLater, err)
 	case errors.Is(err, records.ErrExpired):
@@ -61,6 +65,14 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []by
 		if changed, err := s.LoadManifest(ctx); err == nil && changed {
 			s.Notify.Manifest(s.CurrentManifest().Version)
 		}
+	case pb.RecordType_ANNOUNCEMENT:
+		// a deletion that arrived first removes it on apply (D66): nothing to show or push then
+		if s.newsStored(ctx, body) {
+			s.Notify.News()
+			s.pushNews(ctx, body, from)
+		}
+	case pb.RecordType_ANNOUNCEMENT_DELETED:
+		s.Notify.News()
 	}
 }
 

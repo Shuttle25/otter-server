@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -162,5 +164,43 @@ func TestBackupNeedsOut(t *testing.T) {
 	err := run(context.Background(), []string{"backup", "--config", "/nonexistent.toml"}, &out)
 	if err == nil || !strings.Contains(err.Error(), "--out") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestApkImport(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	apkFile := filepath.Join(t.TempDir(), "otter-0.6.0.apk")
+	data := bytes.Repeat([]byte("apk!"), 1000)
+	if err := os.WriteFile(apkFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"apk", "import", "--config", cfg, apkFile}, &out); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if want := fmt.Sprintf("%s: stored %x\n", apkFile, sum); out.String() != want {
+		t.Fatalf("output %q, want %q", out.String(), want)
+	}
+	stored := filepath.Join(filepath.Dir(cfg), "data", "apk", hex.EncodeToString(sum[:])+".apk")
+	if got, err := os.ReadFile(stored); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("stored file: %v", err)
+	}
+	if err := run(context.Background(), []string{"apk", "--config", cfg, apkFile}, &out); err == nil {
+		t.Fatal("apk without import accepted")
+	}
+	if err := run(context.Background(), []string{"apk", "import", "--config", cfg}, &out); err == nil {
+		t.Fatal("apk import without files accepted")
+	}
+
+	// the running node serves it (apk.get)
+	a, err := open(cfg, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.close()
+	chunk, total, err := a.svc.ApkChunk(sum[:], 0)
+	if err != nil || total != uint64(len(data)) || !bytes.Equal(chunk, data) {
+		t.Fatalf("ApkChunk: %d %v", total, err)
 	}
 }

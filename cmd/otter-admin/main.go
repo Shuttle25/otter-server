@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -42,6 +43,12 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node env --label L
   dns records
   dns check [--label L]
+  news init
+  news show
+  news revoke --pub HEX
+  announce [--ru FILE] [--en FILE] [--apk FILE --version-name V --version-code N] [--via LABEL]... [--allow-plain]
+  announce --delete ID [--via LABEL]... [--allow-plain]
+  announce --list
   version`
 
 var version = "dev"
@@ -103,6 +110,9 @@ func run(args []string, out io.Writer, in io.Reader) error {
 	if len(a) == 1 && a[0] == "version" {
 		fmt.Fprintln(out, version)
 		return nil
+	}
+	if len(a) >= 1 && a[0] == "announce" {
+		return announce(out, *dir, a[1:])
 	}
 	if len(a) < 2 {
 		return errors.New(usage)
@@ -264,6 +274,41 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		if bad {
 			return errors.New("DNS does not match (records may still be propagating; TTL 300)")
 		}
+	case "news init":
+		pub, err := admin.NewsInit(*dir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "news key %x\nRun 'manifest sign' and 'manifest publish' so nodes and phones accept it.\n", pub)
+	case "news show":
+		ks, err := admin.LoadNewsKeys(*dir)
+		if err != nil {
+			return err
+		}
+		local := admin.LocalNewsKey(*dir)
+		if len(ks) == 0 {
+			fmt.Fprintln(out, "no news keys (run 'news init')")
+		}
+		for _, k := range ks {
+			mark := ""
+			if local != nil && string(k) == string(local) {
+				mark = " (this keyring)"
+			}
+			fmt.Fprintf(out, "%x%s\n", k, mark)
+		}
+	case "news revoke":
+		fs := flag.NewFlagSet("news revoke", flag.ContinueOnError)
+		pub := fs.String("pub", "", "public key (hex) from 'news show'")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if *pub == "" {
+			return errors.New("news revoke: --pub HEX")
+		}
+		if err := admin.NewsRevoke(*dir, *pub); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "news key %s removed. Run 'manifest sign' and 'manifest publish': nodes and phones then drop everything it signed.\n", strings.ToLower(*pub))
 	case "manifest sign":
 		p, err := passphrase(in, false)
 		if err != nil {
@@ -386,7 +431,7 @@ func publishManifest(out io.Writer, dir string, via []string, allowPlain bool) e
 			continue
 		}
 		delete(selected, n.Label)
-		res := publishTo(n, &rec, allowPlain)
+		res := publishTo(n, "manifest.publish", &rec, allowPlain)
 		if res == "ok" || res == "already current" {
 			good++
 		}
@@ -401,7 +446,7 @@ func publishManifest(out io.Writer, dir string, via []string, allowPlain bool) e
 	return nil
 }
 
-func publishTo(n *pb.NodeInfo, rec *pb.Record, allowPlain bool) string {
+func publishTo(n *pb.NodeInfo, method string, rec *pb.Record, allowPlain bool) string {
 	lastErr := "error: no usable endpoint"
 	for _, ep := range n.Endpoints {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -411,7 +456,7 @@ func publishTo(n *pb.NodeInfo, rec *pb.Record, allowPlain bool) string {
 			lastErr = "error: " + err.Error()
 			continue
 		}
-		err = c.Call(ctx, "manifest.publish", &pb.RecordRequest{Record: rec}, nil)
+		err = c.Call(ctx, method, &pb.RecordRequest{Record: rec}, nil)
 		c.Close()
 		cancel()
 		var se *client.StatusError
@@ -425,4 +470,141 @@ func publishTo(n *pb.NodeInfo, rec *pb.Record, allowPlain bool) string {
 		}
 	}
 	return lastErr
+}
+
+// publishNews sends rec to every selected node of the current manifest.bin with news.publish (idempotent);
+// succeeds if at least one node accepted it.
+func publishNews(out io.Writer, dir string, rec *pb.Record, via []string, allowPlain bool) error {
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.bin"))
+	if err != nil {
+		return fmt.Errorf("no signed manifest (run 'manifest sign' first): %w", err)
+	}
+	var mrec pb.Record
+	var body pb.RecordBody
+	var m pb.Manifest
+	if proto.Unmarshal(raw, &mrec) != nil || proto.Unmarshal(mrec.Body, &body) != nil || proto.Unmarshal(body.Payload, &m) != nil {
+		return errors.New("manifest.bin is corrupt")
+	}
+	selected := map[string]bool{}
+	for _, l := range via {
+		selected[l] = true
+	}
+	good := 0
+	for _, n := range m.Nodes {
+		if len(selected) > 0 && !selected[n.Label] {
+			continue
+		}
+		delete(selected, n.Label)
+		res := publishTo(n, "news.publish", rec, allowPlain)
+		if res == "ok" {
+			good++
+		}
+		fmt.Fprintf(out, "%-12s %s\n", n.Label, res)
+	}
+	for l := range selected {
+		fmt.Fprintf(out, "%-12s error: not in the manifest\n", l)
+	}
+	if good == 0 {
+		return errors.New("not published to any node")
+	}
+	return nil
+}
+
+func announce(out io.Writer, dir string, args []string) error {
+	fs := flag.NewFlagSet("announce", flag.ContinueOnError)
+	ru := fs.String("ru", "", "file with the Russian text")
+	en := fs.String("en", "", "file with the English text")
+	apkFile := fs.String("apk", "", "APK already copied to the nodes (release-apk.sh)")
+	vName := fs.String("version-name", "", "versionName of the APK")
+	vCode := fs.Uint("version-code", 0, "versionCode of the APK")
+	del := fs.String("delete", "", "delete the announcement with this id prefix")
+	list := fs.Bool("list", false, "list sent announcements")
+	allowPlain := fs.Bool("allow-plain", false, "allow plain ws:// endpoints (development only)")
+	var via multi
+	fs.Var(&via, "via", "node label (repeatable; default: every node)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("announce: unexpected %q\n%s", fs.Arg(0), usage)
+	}
+	switch {
+	case *list:
+		sent, err := admin.ListAnnouncements(dir)
+		if err != nil {
+			return err
+		}
+		for _, s := range sent {
+			text := s.A.TextRu
+			if text == "" {
+				text = s.A.TextEn
+			}
+			text = strings.Join(strings.Fields(text), " ")
+			if r := []rune(text); len(r) > 60 {
+				text = string(r[:60]) + "…"
+			}
+			extra := ""
+			if s.A.Update != nil {
+				extra += " [APK " + s.A.Update.VersionName + "]"
+			}
+			if s.Deleted {
+				extra += " [deleted]"
+			}
+			fmt.Fprintf(out, "%s  %s  %s%s\n", time.UnixMilli(s.CreatedMs).Format("2006-01-02 15:04"), s.ID[:12], text, extra)
+		}
+		return nil
+	case *del != "":
+		rec, err := admin.SignAnnouncementDeleted(dir, *del, time.Now())
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "deletion of %s\n", *del)
+		return publishSent(out, dir, rec, via, *allowPlain)
+	}
+	a := &pb.Announcement{}
+	for _, x := range []struct {
+		path string
+		dst  *string
+	}{{*ru, &a.TextRu}, {*en, &a.TextEn}} {
+		if x.path == "" {
+			continue
+		}
+		b, err := os.ReadFile(x.path)
+		if err != nil {
+			return err
+		}
+		*x.dst = strings.TrimSpace(string(b))
+	}
+	if *apkFile != "" {
+		if *vName == "" || *vCode == 0 || *vCode > 1<<31-1 {
+			return errors.New("--apk needs --version-name and --version-code")
+		}
+		b, err := os.ReadFile(*apkFile)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		a.Update = &pb.AppUpdate{VersionName: *vName, VersionCode: uint32(*vCode), Sha256: sum[:], Size: uint64(len(b))}
+	}
+	if a.TextRu == "" && a.TextEn == "" {
+		return errors.New("announce: --ru and/or --en with text")
+	}
+	rec, err := admin.SignAnnouncement(dir, a, time.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "announcement %s\n", admin.NewsID(rec)[:12])
+	return publishSent(out, dir, rec, via, *allowPlain)
+}
+
+// publishSent publishes a just-signed news record; if no node took it, the saved copy is removed so
+// 'announce --list' shows only what was sent.
+func publishSent(out io.Writer, dir string, rec *pb.Record, via []string, allowPlain bool) error {
+	err := publishNews(out, dir, rec, via, allowPlain)
+	if err != nil {
+		if ferr := admin.ForgetSent(dir, rec); ferr != nil {
+			fmt.Fprintln(out, "warning:", ferr)
+		}
+	}
+	return err
 }

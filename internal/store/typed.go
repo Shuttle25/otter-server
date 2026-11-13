@@ -272,6 +272,29 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		return nil
 
+	case pb.RecordType_ANNOUNCEMENT: // D66: a deletion that arrived first wins
+		var x int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM news_deleted WHERE target=?`, it.key).Scan(&x)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+			return err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return nil
+
+	case pb.RecordType_ANNOUNCEMENT_DELETED: // D66: kept forever in news_deleted, no edit
+		var d pb.AnnouncementDeleted
+		if err := proto.Unmarshal(b.Payload, &d); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO news_deleted(target) VALUES(?)`, d.Target); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=? AND type=?`, d.Target, int32(pb.RecordType_ANNOUNCEMENT))
+		return err
+
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil {

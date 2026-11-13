@@ -1,6 +1,6 @@
 # otter-server
 
-The OtterMSG node and admin tooling (Go module `ottermsg/server`). It owns the shared protobuf schemas in `proto/` and the cross-language test vectors in `testdata/vectors/`. Run `make gen` to regenerate protobuf code (via buf), `make check` to vet and test, and `make build` to build the binaries into `bin/`. Design and protocol specs are in [`../docs`](../docs).
+The OtterMSG node and admin tooling (Go module `ottermsg/server`). It owns the shared protobuf schemas in `proto/` and the cross-language test vectors in `testdata/vectors/`. Run `make gen` to regenerate protobuf code (via buf), `make check` to vet and test, and `make build` to build the binaries into `bin/`. Design and protocol specs are in [otter-docs](https://github.com/Shuttle25/otter-docs) (checked out next to this repo as `../docs`).
 
 ## Local development
 
@@ -66,6 +66,18 @@ Enable it per node with `deploy/push-key.sh LABEL KEY` (streams the key over SSH
 column. The node must already run a release with M5. Step by step: [`deploy/FIRST-DEPLOY.md`](deploy/FIRST-DEPLOY.md)
 ("Push notifications"); quick reference: [`deploy/README.md`](deploy/README.md); creating the Firebase project:
 `otter-android/README.md` ("Push / Firebase"). The key never goes into git, bundles or the admin dir.
+
+## News (M6.5)
+
+Otter news are announcements from the owner to every member, shown as messages from «Выдра» in the chat «Новости
+Выдры». They are `ANNOUNCEMENT` records signed by a **news key** listed in the manifest (`news_keys`); the key lives in
+the owner's desktop keyring, not in the admin dir. They are signed, **not** end-to-end encrypted: release notes only.
+`otter-admin news init`, `manifest sign`, `manifest publish`, then `otter-admin announce --ru ru.txt --en en.txt`
+(`--list`, `--delete ID`, `news revoke --pub HEX`). An announcement can carry an update: `deploy/release-apk.sh
+VERSION APK` copies a release-signed APK to every node (`otter-node apk import`) and opens the news dialog; phones
+download it with `apk.get` and check its SHA-256. Code: `internal/records` (validation), `internal/store` (news,
+`news_deleted`), `internal/service/news.go`, `internal/apk`, `cmd/otter-admin`. Reference:
+[`deploy/README.md`](deploy/README.md) ("News"); decisions D64–D69.
 
 ## Private files (never commit)
 

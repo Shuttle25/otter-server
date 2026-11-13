@@ -19,6 +19,7 @@ import (
 
 type rec struct {
 	env, dir  int
+	news      int
 	low       []int
 	lowOwner  [][]byte
 	manifests []uint64
@@ -32,6 +33,7 @@ func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
 }
 func (r *rec) Manifest(v uint64)          { r.manifests = append(r.manifests, v) }
 func (r *rec) Online([]byte, uint32) bool { return false }
+func (r *rec) News()                      { r.news++ }
 
 type fx struct {
 	t       *testing.T

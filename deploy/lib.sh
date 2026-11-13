@@ -12,6 +12,8 @@ admin() { "$ADMIN_BIN" --dir "$ADMIN_DIR" "$@"; }
 remote() { local target=$1; shift; ssh -p "$SSH_PORT" "${SSH_EXTRA[@]}" "$target" "$@"; }
 upload() { local target=$1 src=$2 dst=$3; scp -q -P "$SSH_PORT" "${SSH_EXTRA[@]}" "$src" "$target:$dst"; }
 node_env() { local env; env=$(admin node env --label "$1") || die "unknown node $1"; eval "$env"; }
+# admin_node_ip LABEL → the node's first recorded public IP (otter-admin node set-ip), empty if none.
+admin_node_ip() { ( node_env "$1"; printf '%s\n' "${OTTER_IP:-}" ); }
 HOSTS_FILE="$ADMIN_DIR/hosts"
 # host_lookup LABEL → sets TARGET and TARGET_PORT from $HOSTS_FILE; returns 1 if the label has no host.
 host_lookup() {

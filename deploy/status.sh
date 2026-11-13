@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# One row per node: reachability, version, health, database counts, disk, push. Usage: status.sh
+# One row per node: reachability, version, health, database counts, disk, push; then each node's last 5
+# connectivity log lines (otter-node netlog, 0.7.0+; older nodes print none). Usage: status.sh
 source "$(dirname "$0")/lib.sh"
 bad=0
+netlogs=""
 printf '%-12s %-22s %-10s %-6s %-8s %-48s %-6s %s\n' LABEL TARGET VERSION HELLO SERVICE STATS DISK PUSH
 for label in $(node_labels); do
   node_env "$label"
@@ -16,9 +18,12 @@ for label in $(node_labels); do
          runuser -u otter -- /usr/local/bin/otter-node stats --config /etc/otter/node.toml 2>/dev/null || echo -;
          du -sh /var/lib/otter 2>/dev/null | cut -f1;
          journalctl -u otter-node -b --no-pager -o cat 2>/dev/null | grep -oE "\"msg\":\"push o(n|ff)" | tail -n1 |
-           grep -q "on\$" && echo on || echo off' 2>/dev/null); then
+           grep -q "on\$" && echo on || echo off;
+         echo --netlog--; runuser -u otter -- /usr/local/bin/otter-node netlog --config /etc/otter/node.toml --limit 5 2>/dev/null || true' 2>/dev/null); then
       version="" service="" stats="" disk="" push=""
       { read -r version || true; read -r service || true; read -r stats || true; read -r disk || true; read -r push || true; } <<< "$out"
+      nl=$(sed -n '/^--netlog--$/,$p' <<< "$out" | sed "1d; /^\$/d; s/^/  $label  /")
+      [[ -z "$nl" ]] || netlogs+="$nl"$'\n'
       : "${version:=-}" "${service:=-}" "${stats:=-}" "${disk:=-}" "${push:=-}"
       [[ "$service" == active ]] || bad=1
     else
@@ -27,4 +32,7 @@ for label in $(node_labels); do
   fi
   printf '%-12s %-22s %-10s %-6s %-8s %-48s %-6s %s\n' "$label" "$target" "$version" "$hello" "$service" "$stats" "$disk" "$push"
 done
+if [[ -n "$netlogs" ]]; then
+  printf '\nconnectivity log (newest first):\n%s' "$netlogs"
+fi
 exit $bad

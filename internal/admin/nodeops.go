@@ -203,6 +203,10 @@ func NodeEnv(dir, label string) (map[string]string, error) {
 		"OTTER_LABEL": label, "OTTER_HOST": ep.Host, "OTTER_PORT": strconv.Itoa(int(ep.Port)), "OTTER_PATH": ep.Path,
 		"OTTER_NETWORK_PUB": hex.EncodeToString(st.NetworkPub), "OTTER_NODE_ID": hex.EncodeToString(n.NodeId),
 		"OTTER_NODE_DIR": nd, "OTTER_KIND": "wss", "OTTER_TLS_CERT": "", "OTTER_TLS_KEY": "", "OTTER_PIN": "",
+		"OTTER_IP": "", // first recorded public IP (meta.json), e.g. for the REALITY endpoint
+	}
+	if ips, err := NodeIPs(dir, label); err == nil && len(ips) > 0 {
+		env["OTTER_IP"] = ips[0]
 	}
 	if ep.Kind != pb.Endpoint_WSS {
 		env["OTTER_KIND"] = "plain"

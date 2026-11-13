@@ -141,6 +141,9 @@ func TestNodeEnv(t *testing.T) {
 	if env["OTTER_PIN"] != base64.StdEncoding.EncodeToString(pinOf(t, dir, "fi-1", "tls.crt")) {
 		t.Fatal("pin")
 	}
+	if env["OTTER_IP"] != "203.0.113.10" { // the first recorded public IP (reality-setup.sh)
+		t.Fatalf("OTTER_IP %q", env["OTTER_IP"])
+	}
 	if got := ShellQuote("it's"); got != `'it'\''s'` {
 		t.Fatal(got)
 	}

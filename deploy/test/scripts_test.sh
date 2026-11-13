@@ -44,6 +44,44 @@ bin/otter-admin --dir "$OTTER_ADMIN_DIR" node remove --label n3 >/dev/null
 bin/otter-admin --dir "$OTTER_ADMIN_DIR" manifest sign >/dev/null
 deploy/hosts.sh rm n3
 
+# --- add-node.sh dial_out_only question (no terminal here: flags or the default No; stops at the missing release)
+mkdir -p "$work/stub"
+cat > "$work/stub/admin-log" <<STUB
+#!/bin/sh
+echo "admin \$*" >> "$work/admin.log"
+exec "$PWD/bin/otter-admin" "\$@"
+STUB
+chmod +x "$work/stub/admin-log"
+addnode() { # LABEL FLAG...: runs add-node.sh with logged admin calls; it must stop at the missing release
+  local l=$1; shift; rm -f "$work/admin.log"
+  if out=$(OTTER_ADMIN_BIN="$work/stub/admin-log" deploy/add-node.sh "$l" "root@$l.example" --ip 192.0.2.9 \
+      --version 0.0.0-missing "$@" < /dev/null 2>&1); then fail "add-node $l without release"; fi
+  touch "$work/admin.log"
+}
+addnode n4 --dial-out-only
+grep -q 'admin .*node set-dial-out-only --label n4$' "$work/admin.log" || fail "--dial-out-only not set: $(cat "$work/admin.log")"
+set_line=$(grep -n 'node set-dial-out-only' "$work/admin.log" | cut -d: -f1)
+sign_line=$(grep -n 'manifest sign' "$work/admin.log" | cut -d: -f1)
+[[ -n "$sign_line" ]] && (( set_line < sign_line )) || fail "dial_out_only must be set before manifest sign: $(cat "$work/admin.log")"
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node list | grep -q '^n4 .*dial_out_only=true' || fail "n4 not dial_out_only"
+addnode n5 --no-dial-out-only
+if grep -q 'set-dial-out-only' "$work/admin.log"; then fail "--no-dial-out-only set the flag"; fi
+addnode n6
+if grep -q 'set-dial-out-only' "$work/admin.log"; then fail "no flag, no terminal: the flag was set"; fi
+grep -q 'manifest sign' "$work/admin.log" || fail "n6 not signed: $(cat "$work/admin.log")"
+addnode n5 --dial-out-only # a re-run of an existing node never changes the flag
+if grep -q 'set-dial-out-only' "$work/admin.log"; then fail "re-run changed dial_out_only"; fi
+if out=$(deploy/add-node.sh n7 root@n7 --ip 192.0.2.7 --bogus 2>&1); then fail "unknown flag accepted"; fi
+grep -q -- '--dial-out-only' <<< "$out" || fail "add-node usage lacks --dial-out-only: $out"
+for l in n4 n5 n6; do bin/otter-admin --dir "$OTTER_ADMIN_DIR" node remove --label "$l" >/dev/null; deploy/hosts.sh rm "$l"; done
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" manifest sign >/dev/null
+rm -f "$work/admin.log"
+
+# --- upgrade.sh keeps node.toml.prev and restores it on rollback
+grep -q '^cp -p /etc/otter/node.toml /etc/otter/node.toml.prev$' deploy/upgrade.sh || fail "upgrade.sh: no node.toml backup"
+rollback=$(sed -n '/rolling back/,/^REMOTE$/p' deploy/upgrade.sh)
+grep -q '^cp -p /etc/otter/node.toml.prev /etc/otter/node.toml$' <<< "$rollback" || fail "upgrade.sh: rollback does not restore node.toml"
+
 # --- status.sh with stubbed ssh: unreachable nodes are reported, exit 1
 mkdir -p "$work/stub"
 printf '#!/bin/sh\necho "ssh: connect to host: Connection refused" >&2\nexit 255\n' > "$work/stub/ssh"
@@ -89,6 +127,11 @@ STUB
 out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
 grep -q '^LABEL .* PUSH$' <<< "$out" || fail "status header: $out"
 grep -qE '^n1 .* 1M +on$' <<< "$out" || fail "status push column: $out"
+# netlog lines (after the --netlog-- marker) are printed under the table, indented with the label
+printf '#!/bin/sh\nprintf "0.7.0\\nactive\\nusers=1\\n1M\\non\\n--netlog--\\n2026-11-20 10:02  fi  reality:192.0.2.5:443  out  ok\\n"\n' > "$work/stub/ssh"
+out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
+grep -qE '^n1 .* 1M +on$' <<< "$out" || fail "status row with netlog: $out"
+grep -q '^  n1  2026-11-20 10:02  fi  reality:192.0.2.5:443  out  ok$' <<< "$out" || fail "status netlog: $out"
 
 # --- release-apk.sh / news-dialog.sh with stubbed ssh, scp, apksigner, aapt2 and 'otter-admin announce'
 deploy/hosts.sh set n1 root@n1.example
@@ -166,5 +209,41 @@ printf '#!/bin/sh\ncase "$*" in *uname*) echo x86_64;; *"otter-node version"*) e
 out=$(PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.0.0-st --only n1 --no-news 2>&1) || fail "upgrade-all --no-news: $out"
 [[ ! -e "$work/announce.log" ]] || fail "upgrade-all announced"
 unset OTTER_ADMIN_BIN
+
+# --- reality-setup.sh (stubbed ssh: the remote script's stdin is saved, its stdout is the public key)
+if out=$(deploy/reality-setup.sh n1 2>&1); then fail "reality-setup without --dest"; fi
+grep -q -- '--dest' <<< "$out" || fail "reality-setup usage: $out"
+if out=$(deploy/reality-setup.sh n1 --dest 'bad host;rm' 2>&1); then fail "reality-setup accepted a bad --dest"; fi
+deploy/hosts.sh rm n2
+if out=$(deploy/reality-setup.sh n2 --dest www.example.com 2>&1); then fail "reality-setup without a host"; fi
+grep -q 'hosts.sh set n2' <<< "$out" || fail "reality-setup host message: $out"
+pub=$(head -c32 /dev/zero | base64 | tr '+/' '-_' | tr -d '=')
+cat > "$work/stub/ssh" <<STUB
+#!/bin/sh
+echo "ssh \$*" >> "$work/ssh.log"
+case "\$*" in
+  *reality-check*) [ -z "\$CHECK_FAIL" ] || exit 1 ;;
+  *"bash -s"*) cat > "$work/remote.sh"; [ -z "\$REMOTE_FAIL" ] || exit 1; echo "$pub" ;;
+esac
+STUB
+rm -f "$work/ssh.log"
+if out=$(CHECK_FAIL=1 PATH="$work/stub:$PATH" deploy/reality-setup.sh n1 --dest www.example.com 2>&1); then fail "failed camouflage check accepted"; fi
+grep -q 'failed the check' <<< "$out" || fail "reality-check message: $out"
+if grep -q 'bash -s' "$work/ssh.log"; then fail "configured REALITY after a failed check"; fi
+if out=$(REMOTE_FAIL=1 PATH="$work/stub:$PATH" deploy/reality-setup.sh n1 --dest www.example.com 2>&1); then fail "remote failure ignored"; fi
+grep -q 'previous config' <<< "$out" || fail "remote failure message: $out"
+if bin/otter-admin --dir "$OTTER_ADMIN_DIR" node list | grep -q REALITY; then fail "endpoint added after a failed setup"; fi
+out=$(PATH="$work/stub:$PATH" deploy/reality-setup.sh n1 --dest www.example.com 2>&1) || fail "reality-setup: $out"
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node list | grep -q '^n1 .*REALITY 192.0.2.1:443.* sni=www.example.com' ||
+  fail "REALITY endpoint: $(bin/otter-admin --dir "$OTTER_ADMIN_DIR" node list)"
+grep -q 'manifest sign' <<< "$out" || fail "reality-setup next steps: $out"
+grep -q '^ssh -p 22 .*root@n1.example /usr/local/bin/otter-node reality-check www.example.com$' "$work/ssh.log" || fail "check call: $(cat "$work/ssh.log")"
+for want in 'otter-node check --config /etc/otter/node.toml.new' 'reality keygen --config /etc/otter/node.toml.new' \
+    'CAP_NET_BIND_SERVICE' '"reality on"' 'node.toml.pre-reality /etc/otter/node.toml' '--force'; do
+  grep -qF -- "$want" "$work/remote.sh" || fail "remote script lacks $want"
+done
+bash -n "$work/remote.sh" || fail "remote script syntax"
+grep -q '^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$' deploy/templates/otter-node.service &&
+  grep -q '^AmbientCapabilities=CAP_NET_BIND_SERVICE$' deploy/templates/otter-node.service || fail "unit lacks CAP_NET_BIND_SERVICE"
 
 echo "scripts test: ok"

@@ -7,19 +7,48 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/replication"
 )
 
 // partition decides which node pairs may dial each other and cuts live sessions on Block.
 type partition struct {
-	mu      sync.Mutex
-	blocked map[string]bool
-	repls   map[string]*replication.Replicator
+	mu       sync.Mutex
+	blocked  map[string]bool
+	censored map[string]bool // one direction, one endpoint kind (censorKey)
+	repls    map[string]*replication.Replicator
+	reality  map[string]replication.RealityDialer // per dialing node; none = REALITY unsupported
 }
 
 func newPartition() *partition {
-	return &partition{blocked: map[string]bool{}, repls: map[string]*replication.Replicator{}}
+	return &partition{blocked: map[string]bool{}, censored: map[string]bool{}, repls: map[string]*replication.Replicator{},
+		reality: map[string]replication.RealityDialer{}}
+}
+
+func censorKey(from, to []byte, k pb.Endpoint_Kind) string {
+	return string(from) + "→" + string(to) + k.String()
+}
+
+// Censor blocks endpoints of kind k from `from` to `to` and cuts their live session.
+func (p *partition) Censor(from, to *simNode, k pb.Endpoint_Kind) {
+	p.mu.Lock()
+	p.censored[censorKey(from.id, to.id, k)] = true
+	r := p.repls[string(from.id)]
+	p.mu.Unlock()
+	r.DropPeer(to.id)
+}
+
+func (p *partition) Uncensor(from, to *simNode, k pb.Endpoint_Kind) {
+	p.mu.Lock()
+	delete(p.censored, censorKey(from.id, to.id, k))
+	p.mu.Unlock()
+}
+
+func (p *partition) net(self []byte) replication.NetDialer {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return replication.NetDialer{AllowPlain: true, Reality: p.reality[string(self)]}
 }
 
 func key(a, b []byte) string {
@@ -55,23 +84,25 @@ type gatedDialer struct {
 	self []byte
 }
 
-func (p *partition) dialer(self []byte) replication.Dialer { return gatedDialer{p, self} }
+func (p *partition) dialer(self []byte, rank *replication.Ranker, l netlog.Logger) replication.Dialer {
+	return &replication.MultiDialer{EP: gatedDialer{p, self}, Rank: rank, Log: l}
+}
 
-func (d gatedDialer) Dial(ctx context.Context, n *pb.NodeInfo) (*websocket.Conn, error) {
+func (d gatedDialer) cut(n *pb.NodeInfo, ep *pb.Endpoint) bool {
 	d.p.mu.Lock()
-	blocked := d.p.blocked[key(d.self, n.NodeId)]
-	d.p.mu.Unlock()
-	if blocked {
+	defer d.p.mu.Unlock()
+	return d.p.blocked[key(d.self, n.NodeId)] || d.p.censored[censorKey(d.self, n.NodeId, ep.Kind)]
+}
+
+func (d gatedDialer) DialEndpoint(ctx context.Context, n *pb.NodeInfo, ep *pb.Endpoint) (*websocket.Conn, error) {
+	if d.cut(n, ep) {
 		return nil, errors.New("partitioned")
 	}
-	c, err := replication.NetDialer{AllowPlain: true}.Dial(ctx, n)
+	c, err := d.p.net(d.self).DialEndpoint(ctx, n, ep)
 	if err != nil {
 		return nil, err
 	}
-	d.p.mu.Lock()
-	blocked = d.p.blocked[key(d.self, n.NodeId)]
-	d.p.mu.Unlock()
-	if blocked { // Block() happened while this dial was in flight
+	if d.cut(n, ep) { // Block() or Censor() happened while this dial was in flight
 		c.CloseNow()
 		return nil, errors.New("partitioned")
 	}

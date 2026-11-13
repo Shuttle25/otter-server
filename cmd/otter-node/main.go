@@ -24,6 +24,7 @@ import (
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netlog"
 	"ottermsg/server/internal/nodecheck"
 	"ottermsg/server/internal/probe"
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -264,8 +265,10 @@ func serve(ctx context.Context, a *app) error {
 			a.log.Warn("manifest says push_capable but no FCM key is installed")
 		}
 	}
-	repl := replication.New(a.svc, replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, a.log)
-	go repl.Run(ctx) // before serving, so accepted peer sessions use the run context
+	rank, nl := replication.NewRanker(time.Now), netlog.StoreLogger{S: a.st}
+	dialer := &replication.MultiDialer{EP: replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, Rank: rank, Log: nl}
+	repl := replication.New(a.svc, dialer, a.log, replication.WithNetlog(nl, rank))
+	go repl.Run(ctx)     // before serving, so accepted peer sessions use the run context
 	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go a.svc.RunJanitor(ctx, 10*time.Minute)

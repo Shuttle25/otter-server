@@ -21,6 +21,7 @@ import (
 	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/records"
@@ -116,6 +117,36 @@ func (s *sim) signManifest(version uint64, nodes []*pb.NodeInfo) *pb.Record {
 		NetworkPub: s.netPub, Nodes: nodes}, s.netPriv)
 }
 
+// nodeInfos returns a copy of the current manifest's nodes.
+func (s *sim) nodeInfos() []*pb.NodeInfo {
+	var m pb.Manifest
+	var body pb.RecordBody
+	proto.Unmarshal(s.manifest.Body, &body)
+	proto.Unmarshal(body.Payload, &m)
+	var out []*pb.NodeInfo
+	for _, n := range m.Nodes {
+		out = append(out, proto.Clone(n).(*pb.NodeInfo))
+	}
+	return out
+}
+
+// publishManifest signs manifest version v with infos and loads it on every running node.
+func (s *sim) publishManifest(v uint64, infos []*pb.NodeInfo) {
+	s.manifest = s.signManifest(v, infos)
+	for _, n := range s.nodes {
+		n.mu.Lock()
+		up := n.srv != nil
+		n.mu.Unlock()
+		if !up {
+			continue
+		}
+		if _, err := n.svc.ImportRecord(context.Background(), s.manifest); err != nil {
+			s.t.Fatal(err)
+		}
+		eventually(s.t, n.label+" loads manifest", func() bool { return n.svc.CurrentManifest().GetVersion() == v })
+	}
+}
+
 func (s *sim) sign(typ pb.RecordType, author []byte, payload proto.Message, k ed25519.PrivateKey) *pb.Record {
 	p, _ := proto.Marshal(payload)
 	id := make([]byte, 16)
@@ -152,7 +183,8 @@ func (s *sim) start(n *simNode) {
 		s.t.Fatal(err)
 	}
 	gw := gateway.New(svc, quiet)
-	repl := replication.New(svc, s.part.dialer(n.id), quiet)
+	rank, nl := replication.NewRanker(time.Now), netlog.StoreLogger{S: st}
+	repl := replication.New(svc, s.part.dialer(n.id, rank, nl), quiet, replication.WithNetlog(nl, rank))
 	ctx, cancel := context.WithCancel(context.Background())
 	go repl.Run(ctx)
 	svc.Fetcher = repl

@@ -23,6 +23,7 @@ import (
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/service"
@@ -38,7 +39,7 @@ var quiet = slog.New(slog.DiscardHandler)
 
 // gate lets tests decide which node pairs can dial each other.
 type gate struct {
-	mu    sync.Mutex
+	mu    *sync.Mutex // shared by all gates of a mesh: they read the same allow map
 	allow map[string]bool
 	inner Dialer
 	self  []byte
@@ -77,6 +78,7 @@ type mesh struct {
 	netPriv ed25519.PrivateKey
 	nodes   []*tnode
 	allow   map[string]bool
+	allowMu sync.Mutex
 	cancel  context.CancelFunc
 }
 
@@ -96,7 +98,8 @@ func newMesh(t *testing.T, n int, gated bool) *mesh {
 		svc := service.New(st, k, pub)
 		svc.Log = quiet
 		nd := &tnode{key: k, id: svc.NodeID, st: st, svc: svc}
-		nd.gate = &gate{allow: m.allow, inner: NetDialer{AllowPlain: true}, self: nd.id}
+		inner := &MultiDialer{EP: NetDialer{AllowPlain: true}, Rank: NewRanker(time.Now), Log: netlog.Nop{}}
+		nd.gate = &gate{mu: &m.allowMu, allow: m.allow, inner: inner, self: nd.id}
 		nd.repl = New(svc, nd.gate, quiet)
 		mux := http.NewServeMux()
 		mux.Handle("/x/peer", nd.repl)
@@ -134,10 +137,9 @@ func (m *mesh) start() {
 }
 
 func (m *mesh) link(a, b int, on bool) {
-	g := m.nodes[a].gate
-	g.mu.Lock()
+	m.allowMu.Lock()
 	m.allow[pairKey(m.nodes[a].id, m.nodes[b].id)] = on
-	g.mu.Unlock()
+	m.allowMu.Unlock()
 }
 
 func (m *mesh) sign(typ pb.RecordType, author []byte, payload proto.Message, k ed25519.PrivateKey) *pb.Record {
@@ -246,7 +248,7 @@ func TestRejectUnknownNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
-	f, err := readFrame(ctx, c)
+	f, _, err := readFrame(ctx, c)
 	if err != nil || f.GetHello() == nil {
 		t.Fatalf("hello: %v %v", f, err)
 	}
@@ -255,7 +257,7 @@ func TestRejectUnknownNode(t *testing.T) {
 	ts := time.Now().UnixMilli()
 	writeFrame(ctx, c, &pb.PeerFrame{Kind: &pb.PeerFrame_Auth{Auth: &pb.PeerAuth{NodeId: sid, TsMs: ts, Nonce: nonce(),
 		Signature: ed25519.Sign(stranger, keys.PeerAuthMessage(a.id, f.GetHello().Nonce, ts))}}})
-	f, err = readFrame(ctx, c)
+	f, _, err = readFrame(ctx, c)
 	if err == nil && f.GetError() == nil {
 		t.Fatalf("stranger accepted: %v", f)
 	}
@@ -274,12 +276,12 @@ func TestBadSignatureRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
-	f, _ := readFrame(ctx, c)
+	f, _, _ := readFrame(ctx, c)
 	ts := time.Now().UnixMilli()
 	// B's id, but signed over the wrong nonce
 	writeFrame(ctx, c, &pb.PeerFrame{Kind: &pb.PeerFrame_Auth{Auth: &pb.PeerAuth{NodeId: b.id, TsMs: ts, Nonce: nonce(),
 		Signature: ed25519.Sign(b.key, keys.PeerAuthMessage(a.id, nonce(), ts))}}})
-	f, err = readFrame(ctx, c)
+	f, _, err = readFrame(ctx, c)
 	if err == nil && f.GetError() == nil {
 		t.Fatalf("bad signature accepted: %v", f)
 	}

@@ -6,6 +6,8 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/coder/websocket v1.8.15
 	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/pion/logging v0.2.4
+	github.com/pion/turn/v5 v5.1.3
 	github.com/xtls/xray-core v1.260327.0
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/oauth2 v0.34.0
@@ -30,10 +32,15 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
+	github.com/pion/dtls/v3 v3.1.9 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/stun/v4 v4.0.1 // indirect
+	github.com/pion/transport/v5 v5.1.1 // indirect
 	github.com/pires/go-proxyproto v0.11.0 // indirect
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sagernet/sing v0.5.1 // indirect
+	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.61.0 // indirect

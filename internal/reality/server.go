@@ -91,7 +91,7 @@ func StartServer(c ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	inst, err := core.New(cfg)
+	inst, err := newInstance(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("reality server: %w", err)
 	}

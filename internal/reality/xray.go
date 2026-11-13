@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 
 	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/app/policy"
@@ -24,6 +25,16 @@ import (
 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
 	_ "github.com/xtls/xray-core/transport/internet/tcp"
 )
+
+// newMu serializes core.New: Xray writes package globals while creating an instance
+// (transport/internet.InitSystemDialer), and a node creates its server and client instances concurrently.
+var newMu sync.Mutex
+
+func newInstance(cfg *core.Config) (*core.Instance, error) {
+	newMu.Lock()
+	defer newMu.Unlock()
+	return core.New(cfg)
+}
 
 // idleTimeout replaces Xray's 300 s default: peer sessions may be silent for long and must not be cut
 // (a dead TCP link still ends the stream).

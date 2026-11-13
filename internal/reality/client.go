@@ -76,7 +76,7 @@ func (c *Client) instance(ep *pb.Endpoint) (*core.Instance, error) {
 	if in := c.inst[k]; in != nil {
 		return in, nil
 	}
-	in, err := core.New(cfg)
+	in, err := newInstance(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("reality client: %w", err)
 	}

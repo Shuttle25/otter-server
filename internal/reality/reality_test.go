@@ -290,3 +290,11 @@ func TestCheckRejectsOversizedHandshake(t *testing.T) {
 		t.Fatalf("want tls/h2/cert ok and handshake failed: %+v %v", r, err)
 	}
 }
+
+// Xray writes package globals while creating an instance (transport/internet.InitSystemDialer); a node creates its
+// REALITY server and client instances concurrently, so creation must be serialized (found by make check, M7).
+func TestConcurrentInstancesNoRace(t *testing.T) {
+	for i := 0; i < 4; i++ {
+		t.Run(strconv.Itoa(i), func(t *testing.T) { t.Parallel(); startPair(t) })
+	}
+}

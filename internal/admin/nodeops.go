@@ -300,7 +300,7 @@ func AddReality(dir string, s RealitySpec) (*pb.Endpoint, error) {
 	keep := n.Endpoints[:0]
 	uuid := newUUID()
 	for _, e := range n.Endpoints {
-		if e.Kind == pb.Endpoint_WSS && path == "" {
+		if (e.Kind == pb.Endpoint_WSS || e.Kind == pb.Endpoint_WS_PLAIN) && path == "" { // WS_PLAIN: dev nodes
 			path = e.Path
 		}
 		if e.Kind == pb.Endpoint_REALITY {
@@ -310,7 +310,7 @@ func AddReality(dir string, s RealitySpec) (*pb.Endpoint, error) {
 		keep = append(keep, e)
 	}
 	if path == "" {
-		return nil, fmt.Errorf("node %s has no WSS endpoint to take the secret path from", s.Label)
+		return nil, fmt.Errorf("node %s has no WSS (or dev ws://) endpoint to take the secret path from", s.Label)
 	}
 	ep := &pb.Endpoint{Kind: pb.Endpoint_REALITY, Host: s.Host, Port: s.Port, Path: path, VlessUuid: uuid,
 		RealityPub: pub, ShortIds: []string{sid}, ServerNames: []string{s.ServerName}, Fingerprint: "chrome"}

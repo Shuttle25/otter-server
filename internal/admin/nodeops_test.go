@@ -233,3 +233,24 @@ func TestAddReality(t *testing.T) {
 		t.Fatalf("explicit uuid: %v %+v", err, ep)
 	}
 }
+
+// A development node (--plain, ws://) can carry a REALITY endpoint too: the path comes from its WS_PLAIN endpoint.
+func TestAddRealityOnPlainDevNode(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitNetwork(dir, []byte("test-passphrase-123")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddNode(dir, NodeSpec{Label: "fi", WSSHost: "127.0.0.1", WSSPort: 9181, Plain: true}); err != nil {
+		t.Fatal(err)
+	}
+	pub := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	ep, err := AddReality(dir, RealitySpec{Label: "fi", Host: "127.0.0.1", Port: 24443, Pub: pub, ServerName: "www.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState(dir)
+	n := st.Nodes[0]
+	if len(n.Endpoints) != 2 || n.Endpoints[0].Kind != pb.Endpoint_WS_PLAIN || ep.Path == "" || ep.Path != n.Endpoints[0].Path {
+		t.Fatalf("endpoints: %+v", n.Endpoints)
+	}
+}

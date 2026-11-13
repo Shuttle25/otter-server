@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Adds a node to the network and installs it; safe to re-run after a failure (docs/11 §8).
 # Usage: add-node.sh LABEL ROOT@HOST --ip IP [--ip IP]... [--domain NAME] [--wss-port PORT] [--ssh-port N] [--version V]
+#        [--dial-out-only|--no-dial-out-only]   (asked on a terminal when neither is given; default No)
 source "$(dirname "$0")/lib.sh"
-usage="usage: add-node.sh LABEL ROOT@HOST --ip IP [--ip IP]... [--domain NAME] [--wss-port PORT] [--ssh-port N] [--version V]"
+usage="usage: add-node.sh LABEL ROOT@HOST --ip IP [--ip IP]... [--domain NAME] [--wss-port PORT] [--ssh-port N] [--version V] [--dial-out-only|--no-dial-out-only]"
 label=${1:-}; target=${2:-}
 [[ -n "$label" && -n "$target" && "$target" != --* ]] || die "$usage"
 shift 2
-ips=(); domain=""; wss_port=""; ssh_port=""; version=""
+ips=(); domain=""; wss_port=""; ssh_port=""; version=""; dial_out=""
 while (( $# )); do
   case "$1" in
     --ip) ips+=("${2:?$usage}"); shift 2 ;;
@@ -14,6 +15,8 @@ while (( $# )); do
     --wss-port) wss_port=${2:?$usage}; shift 2 ;;
     --ssh-port) ssh_port=${2:?$usage}; shift 2 ;;
     --version) version=${2:?$usage}; shift 2 ;;
+    --dial-out-only) dial_out=1; shift ;;
+    --no-dial-out-only) dial_out=0; shift ;;
     *) die "$usage" ;;
   esac
 done
@@ -33,6 +36,17 @@ else
   [[ -z "$wss_port" ]] || args+=(--wss-port "$wss_port")
   say "registering node $label"
   admin node add "${args[@]}"
+  if [[ -z "$dial_out" ]]; then
+    dial_out=0
+    if [[ -t 0 ]]; then
+      read -r -p "Is $label inside a censored network (e.g. Russia)? It will dial out to the other nodes and is never dialed by them. [y/N] " ans
+      [[ "$ans" =~ ^[yYдД] ]] && dial_out=1
+    fi
+  fi
+  if (( dial_out )); then
+    say "marking $label dial_out_only (D71)"
+    admin node set-dial-out-only --label "$label"
+  fi
 fi
 node_env "$label"
 # the pin is unique per node, so a manifest containing it already lists the node (same test as make-bundle.sh)

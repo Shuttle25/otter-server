@@ -240,3 +240,22 @@ func TestGroupEnvelopeAcrossNodes(t *testing.T) {
 		return s.all(func(n *simNode) bool { return !n.has(k) && n.mailbox(ma) == 0 && n.mailbox(mb) == 0 && n.mailbox(mc) == 0 })
 	})
 }
+
+func TestDialOutOnlyIsNeverDialed(t *testing.T) {
+	s := newSim(t, "ru", "fi")
+	ru, fi := s.node("ru"), s.node("fi")
+	infos := s.nodeInfos()
+	infos[0].DialOutOnly = true // ru
+	s.publishManifest(2, infos)
+	eventually(t, "session up", func() bool { return fi.repl.Status()[0].Connected })
+	s.stop(ru)
+	time.Sleep(500 * time.Millisecond) // ~10 dial rounds in test timings
+	es, _ := fi.st.Netlog(context.Background(), 100)
+	for _, e := range es {
+		if e.Direction == "out" && e.Peer == "ru" && e.LastMs > time.Now().Add(-400*time.Millisecond).UnixMilli() {
+			t.Fatalf("fi dialed the dial_out_only node: %+v", e)
+		}
+	}
+	s.start(ru)
+	eventually(t, "ru dials fi again", func() bool { return fi.repl.Status()[0].Connected })
+}

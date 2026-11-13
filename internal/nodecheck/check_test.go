@@ -16,6 +16,7 @@ import (
 
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/pinning"
+	"ottermsg/server/internal/reality"
 )
 
 const pass = "test-passphrase-123"
@@ -119,5 +120,72 @@ func TestCheckWrongPath(t *testing.T) {
 	cfg, _ := setup(t, "/elsewhere")
 	if _, err := Run(cfg); err == nil || !strings.Contains(err.Error(), "wss.path") {
 		t.Fatalf("want wss.path error, got %v", err)
+	}
+}
+
+// withReality adds a [reality] section whose key file is keyPath.
+func withReality(t *testing.T, cfg, keyPath string) {
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, `[reality]
+listen = ":443"
+private_key_file = %q
+dest = "www.example.com:443"
+server_names = ["www.example.com"]
+short_ids = ["a1b2c3d4"]
+vless_uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+`, keyPath)
+	f.Close()
+}
+
+func TestCheckRealityKey(t *testing.T) {
+	cfg, _ := setup(t, "")
+	withReality(t, cfg, filepath.Join(t.TempDir(), "missing.key"))
+	if _, err := Run(cfg); err == nil || !strings.Contains(err.Error(), "reality key") {
+		t.Fatalf("missing key file: want reality key error, got %v", err)
+	}
+
+	cfg, _ = setup(t, "")
+	keyPath := filepath.Join(t.TempDir(), "reality.key")
+	priv, pub, _ := reality.GenerateKey()
+	if err := reality.WriteKeyFile(keyPath, priv); err != nil {
+		t.Fatal(err)
+	}
+	withReality(t, cfg, keyPath)
+	lines, err := Run(cfg)
+	if err != nil || !strings.HasPrefix(lines[len(lines)-1], "ok reality key ") || !strings.Contains(lines[len(lines)-1], pub) {
+		t.Fatalf("valid key: %v %q", err, lines)
+	}
+}
+
+// A manifest REALITY endpoint must carry this node's public key; its path equals wss.path but it is not the WSS
+// endpoint the TLS pins are checked against.
+func TestCheckRealityManifestPub(t *testing.T) {
+	for _, match := range []bool{true, false} {
+		cfg, nd := setup(t, "")
+		dir := filepath.Dir(filepath.Dir(nd))
+		keyPath := filepath.Join(t.TempDir(), "reality.key")
+		priv, pub, _ := reality.GenerateKey()
+		reality.WriteKeyFile(keyPath, priv)
+		withReality(t, cfg, keyPath)
+		if !match {
+			_, pub, _ = reality.GenerateKey()
+		}
+		if _, err := admin.AddReality(dir, admin.RealitySpec{Label: "fi-1", Host: "203.0.113.10", Port: 443, Pub: pub,
+			ServerName: "www.example.com", ShortID: "a1b2c3d4"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := admin.SignManifest(dir, []byte(pass), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		lines, err := Run(cfg)
+		if match && (err != nil || !strings.Contains(lines[len(lines)-1], "matches the manifest")) {
+			t.Fatalf("matching pub: %v %q", err, lines)
+		}
+		if !match && (err == nil || !strings.Contains(err.Error(), "reality key")) {
+			t.Fatalf("other pub: want reality key error, got %v %q", err, lines)
+		}
 	}
 }

@@ -161,6 +161,7 @@ type NodeInfo struct {
 	Label         string                 `protobuf:"bytes,3,opt,name=label,proto3" json:"label,omitempty"`
 	PushCapable   bool                   `protobuf:"varint,4,opt,name=push_capable,json=pushCapable,proto3" json:"push_capable,omitempty"`
 	Endpoints     []*Endpoint            `protobuf:"bytes,5,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
+	DialOutOnly   bool                   `protobuf:"varint,6,opt,name=dial_out_only,json=dialOutOnly,proto3" json:"dial_out_only,omitempty"` // M7 (D71): inside a censored network; dials peers, is never dialed by them
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -228,6 +229,13 @@ func (x *NodeInfo) GetEndpoints() []*Endpoint {
 		return x.Endpoints
 	}
 	return nil
+}
+
+func (x *NodeInfo) GetDialOutOnly() bool {
+	if x != nil {
+		return x.DialOutOnly
+	}
+	return false
 }
 
 type Endpoint struct {
@@ -374,13 +382,14 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"networkPub\x12(\n" +
 	"\x05nodes\x18\x04 \x03(\v2\x12.otter.v1.NodeInfoR\x05nodes\x12&\n" +
 	"\x0fmin_app_version\x18\x05 \x01(\rR\rminAppVersion\x12\x1b\n" +
-	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\"\xa9\x01\n" +
+	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\"\xcd\x01\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\fR\x06nodeId\x12\x19\n" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12!\n" +
 	"\fpush_capable\x18\x04 \x01(\bR\vpushCapable\x120\n" +
-	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\"\x9a\x03\n" +
+	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\x12\"\n" +
+	"\rdial_out_only\x18\x06 \x01(\bR\vdialOutOnly\"\x9a\x03\n" +
 	"\bEndpoint\x12+\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x17.otter.v1.Endpoint.KindR\x04kind\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +

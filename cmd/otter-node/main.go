@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,10 +26,12 @@ import (
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netlog"
 	"ottermsg/server/internal/nodecheck"
 	"ottermsg/server/internal/probe"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/push"
+	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/replication"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
@@ -43,6 +47,9 @@ const usage = `usage: otter-node <command>
   backup --config FILE --out F consistent database copy (safe while running)
   stats --config FILE          database counts (safe while running)
   apk import --config FILE APK... store app update files served by apk.get (keeps the newest 2)
+  reality keygen --config FILE write the REALITY private key file (once) and print the public key
+  reality-check HOST...        test camouflage candidates from this machine (TLS 1.3, h2, valid certificate)
+  netlog --config FILE [--limit 50] [--json]   connectivity log (safe while running)
   probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
   version`
 
@@ -146,7 +153,16 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if cmd == "probe" {
 		return runProbe(ctx, args[1:], out)
 	}
+	if cmd == "reality-check" {
+		return runRealityCheck(ctx, args[1:], out)
+	}
 	rest := args[1:]
+	if cmd == "reality" {
+		if len(rest) == 0 || rest[0] != "keygen" {
+			return errors.New("usage: otter-node reality keygen --config FILE")
+		}
+		rest = rest[1:]
+	}
 	if cmd == "apk" {
 		if len(rest) == 0 || rest[0] != "import" {
 			return errors.New("usage: otter-node apk import --config FILE APK...")
@@ -156,6 +172,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/otter/node.toml", "config file")
 	outPath := fs.String("out", "", "backup file (backup)")
+	limit := fs.Int("limit", 50, "lines (netlog)")
+	asJSON := fs.Bool("json", false, "JSON output (netlog)")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -169,7 +187,10 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return err
 	}
-	if cmd != "run" && cmd != "import" && cmd != "backup" && cmd != "stats" {
+	if cmd == "reality" { // must not touch the database
+		return realityKeygen(*cfgPath, out)
+	}
+	if cmd != "run" && cmd != "import" && cmd != "backup" && cmd != "stats" && cmd != "netlog" {
 		return errors.New(usage)
 	}
 	if cmd == "backup" && *outPath == "" {
@@ -212,6 +233,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "users=%d records=%d oplog_seq=%d blobs=%d blob_bytes=%d peers=%d\n",
 			st.Users, st.Records, st.OplogSeq, st.Blobs, st.BlobBytes, st.Peers)
 		return nil
+	case "netlog":
+		return printNetlog(ctx, a.st, *limit, *asJSON, out)
 	case "run":
 		return serve(ctx, a)
 	default:
@@ -264,15 +287,28 @@ func serve(ctx context.Context, a *app) error {
 			a.log.Warn("manifest says push_capable but no FCM key is installed")
 		}
 	}
-	repl := replication.New(a.svc, replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain}, a.log)
-	go repl.Run(ctx) // before serving, so accepted peer sessions use the run context
+	reality.SetLogger(a.log)
+	rc := reality.NewClient() // dials peers' REALITY endpoints in-process (D72)
+	defer rc.Close()
+	rank, nl := replication.NewRanker(time.Now), netlog.StoreLogger{S: a.st}
+	dialer := &replication.MultiDialer{EP: replication.NetDialer{AllowPlain: a.cfg.Mesh.AllowPlain, Reality: rc}, Rank: rank, Log: nl}
+	repl := replication.New(a.svc, dialer, a.log, replication.WithNetlog(nl, rank))
+	go repl.Run(ctx)     // before serving, so accepted peer sessions use the run context
 	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
-	srv := wss.NewServer(wcfg, gw, repl)
-	errc := make(chan error, 1)
+	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"))
+	errc := make(chan error, 2)
 	go func() { errc <- wss.Serve(srv, wcfg) }()
+	if a.cfg.RealityEnabled() {
+		stopReality, err := startReality(a, gw, repl, errc)
+		if err != nil {
+			srv.Close()
+			return err
+		}
+		defer stopReality()
+	}
 	a.log.Info("otter-node started", "listen", a.cfg.WSS.Listen, "node_id", fmt.Sprintf("%x", a.svc.NodeID), "version", version)
 	select {
 	case err := <-errc:
@@ -285,6 +321,113 @@ func serve(ctx context.Context, a *app) error {
 		defer cancel()
 		return srv.Shutdown(sctx)
 	}
+}
+
+// startReality serves the client/peer mux on an internal listener and puts the REALITY inbound in front (D72).
+func startReality(a *app, gw http.Handler, repl *replication.Replicator, errc chan<- error) (func(), error) {
+	priv, err := reality.ReadKeyFile(a.cfg.Reality.PrivateKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("reality key: %w", err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	icfg := wss.Config{Path: a.cfg.WSS.Path, SiteDir: a.cfg.WSS.SiteDir}
+	isrv := wss.NewServer(icfg, gw, replication.WithListener(repl, "reality"))
+	go func() { errc <- isrv.Serve(ln) }()
+	r := a.cfg.Reality
+	rs, err := reality.StartServer(reality.ServerConfig{Listen: r.Listen, PrivateKey: priv, Dest: r.Dest,
+		ServerNames: r.ServerNames, ShortIDs: r.ShortIDs, VlessUUID: r.VlessUUID, Forward: ln.Addr().String()})
+	if err != nil {
+		isrv.Close()
+		return nil, err
+	}
+	a.log.Info("reality on", "listen", r.Listen, "dest", r.Dest)
+	return func() { rs.Close(); isrv.Close() }, nil
+}
+
+// realityKeygen writes [reality].private_key_file once and prints the public key; with an existing file it
+// re-prints that key's public key (idempotent for deploy scripts).
+func realityKeygen(cfgPath string, out io.Writer) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	if !cfg.RealityEnabled() {
+		return errors.New("reality keygen: add a [reality] section with private_key_file first (deploy/reality-setup.sh does this)")
+	}
+	priv, pub, err := reality.GenerateKey()
+	if err != nil {
+		return err
+	}
+	if err := reality.WriteKeyFile(cfg.Reality.PrivateKeyFile, priv); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if priv, err = reality.ReadKeyFile(cfg.Reality.PrivateKeyFile); err != nil {
+			return err
+		}
+		if pub, err = reality.PublicFromPrivate(priv); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "key file exists; public key: %s\n", pub)
+		return nil
+	}
+	fmt.Fprintf(out, "public key: %s\n", pub)
+	return nil
+}
+
+func runRealityCheck(ctx context.Context, hosts []string, out io.Writer) error {
+	if len(hosts) == 0 {
+		return errors.New("usage: otter-node reality-check HOST...")
+	}
+	good := 0
+	for _, h := range hosts {
+		r, err := reality.Check(ctx, h)
+		switch {
+		case err != nil:
+			fmt.Fprintf(out, "FAIL %s: %v\n", h, err)
+		case !r.OK():
+			fmt.Fprintf(out, "FAIL %s: tls1.3=%v h2=%v cert=%v reality=%v\n", h, r.TLS13, r.H2, r.CertOK, r.Handshake)
+		default:
+			good++
+			fmt.Fprintf(out, "ok   %s: tls1.3 h2 cert reality %dms\n", h, r.Latency.Milliseconds())
+		}
+	}
+	if good == 0 {
+		return errors.New("no candidate passed")
+	}
+	return nil
+}
+
+// printNetlog prints the connectivity log newest first (D74), e.g.
+// "2026-11-20 10:02–14:55  eeee  reality:203.0.113.5:443  out  ok  ×143".
+func printNetlog(ctx context.Context, st *store.Store, limit int, asJSON bool, out io.Writer) error {
+	es, err := st.Netlog(ctx, limit)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		return json.NewEncoder(out).Encode(es)
+	}
+	for _, e := range es {
+		first, last := time.UnixMilli(e.FirstMs).Local(), time.UnixMilli(e.LastMs).Local()
+		span := last.Format("2006-01-02 15:04")
+		if e.Count > 1 {
+			span = first.Format("2006-01-02 15:04") + "–" + last.Format("15:04")
+		}
+		line := fmt.Sprintf("%s  %s  %s  %s  %s", span, e.Peer, e.Endpoint, e.Direction, e.Result)
+		if e.Class != string(netlog.OK) {
+			line += " " + e.Class
+		}
+		line += fmt.Sprintf("  ×%d", e.Count)
+		if e.Detail != "" && e.Class != string(netlog.OK) {
+			line += "  (" + e.Detail + ")"
+		}
+		fmt.Fprintln(out, line)
+	}
+	return nil
 }
 
 func runProbe(ctx context.Context, args []string, out io.Writer) error {

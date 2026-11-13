@@ -18,6 +18,7 @@ import (
 	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/push"
+	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/records"
 )
 
@@ -68,7 +69,8 @@ func Run(cfgPath string) ([]string, error) {
 	out = append(out, fmt.Sprintf("ok manifest version %d lists node %s", m.Version, me.Label))
 	var ep *pb.Endpoint
 	for _, e := range me.Endpoints {
-		if e.Path == cfg.WSS.Path {
+		// a REALITY endpoint shares the secret path but is not served by [wss]
+		if e.Kind != pb.Endpoint_REALITY && e.Path == cfg.WSS.Path {
 			ep = e
 		}
 	}
@@ -84,7 +86,37 @@ func Run(cfgPath string) ([]string, error) {
 	if line, err = checkPush(cfg); err != nil {
 		return out, err
 	}
+	out = append(out, line)
+	if !cfg.RealityEnabled() {
+		return out, nil
+	}
+	if line, err = checkReality(cfg, me); err != nil {
+		return out, err
+	}
 	return append(out, line), nil
+}
+
+// checkReality reads the REALITY private key (D72) and, when the manifest already lists this node's REALITY
+// endpoint, checks that it carries the matching public key.
+func checkReality(cfg *config.Config, me *pb.NodeInfo) (string, error) {
+	priv, err := reality.ReadKeyFile(cfg.Reality.PrivateKeyFile)
+	if err != nil {
+		return "", fmt.Errorf("reality key: %w", err)
+	}
+	pub, err := reality.PublicFromPrivate(priv)
+	if err != nil {
+		return "", fmt.Errorf("reality key: %w", err)
+	}
+	for _, e := range me.Endpoints {
+		if e.Kind != pb.Endpoint_REALITY {
+			continue
+		}
+		if base64.RawURLEncoding.EncodeToString(e.RealityPub) != pub {
+			return "", fmt.Errorf("reality key: public key %s is not the manifest's (node add-reality --pub)", pub)
+		}
+		return "ok reality key " + pub + " matches the manifest", nil
+	}
+	return "ok reality key " + pub + " (no REALITY endpoint in the manifest yet)", nil
 }
 
 // checkTLS verifies the certificate pair against the endpoint's manifest pins (plain endpoints pass).

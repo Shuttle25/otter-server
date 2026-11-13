@@ -79,6 +79,19 @@ download it with `apk.get` and check its SHA-256. Code: `internal/records` (vali
 `news_deleted`), `internal/service/news.go`, `internal/apk`, `cmd/otter-admin`. Reference:
 [`deploy/README.md`](deploy/README.md) ("News"); decisions D64–D69.
 
+## REALITY and dial-out-only nodes (M7)
+
+For members inside a censored network (Russia): phones there use a domestic node marked **`dial_out_only`** in the
+manifest (`add-node.sh` asks, or `otter-admin node set-dial-out-only`): it dials the foreign nodes and is never
+dialed by them. Foreign nodes get a **VLESS+REALITY** listener on :443 for peers only (embedded Xray-core, built with
+just the needed features); probes without the key see the camouflage site, peers run the usual node handshake inside.
+`deploy/reality-setup.sh LABEL --dest dl.google.com` sets it up on a 0.7.0+ node (`otter-node reality-check`
+first: the site needs TLS 1.3, h2 and handshake records ≤ 8 KB), then `manifest sign` + `publish`. Peers try endpoints
+in ranked order (REALITY, WSS fallback) and demote a throttled one; every outcome goes into the merged 200-line
+connectivity log (`otter-node netlog`, last 5 lines in `deploy/status.sh`). Code: `internal/reality`,
+`internal/netlog`, `internal/replication/endpoints.go`. Reference: [`deploy/README.md`](deploy/README.md)
+("REALITY and dial-out-only nodes"); decisions D70–D75; checklist [`docs/m7-manual-test.md`](docs/m7-manual-test.md).
+
 ## Private files (never commit)
 
 | File | Where it lives | Why it is private |

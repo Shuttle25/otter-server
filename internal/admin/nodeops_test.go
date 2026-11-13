@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"ottermsg/server/internal/pinning"
+	pb "ottermsg/server/internal/proto/otterv1"
 )
 
 func newNet(t *testing.T) string {
@@ -140,6 +141,9 @@ func TestNodeEnv(t *testing.T) {
 	if env["OTTER_PIN"] != base64.StdEncoding.EncodeToString(pinOf(t, dir, "fi-1", "tls.crt")) {
 		t.Fatal("pin")
 	}
+	if env["OTTER_IP"] != "203.0.113.10" { // the first recorded public IP (reality-setup.sh)
+		t.Fatalf("OTTER_IP %q", env["OTTER_IP"])
+	}
 	if got := ShellQuote("it's"); got != `'it'\''s'` {
 		t.Fatal(got)
 	}
@@ -171,5 +175,82 @@ func TestSetPush(t *testing.T) {
 	}
 	if err := SetPush(dir, "nope", true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown label: %v", err)
+	}
+}
+
+func TestSetDialOutOnly(t *testing.T) {
+	dir := newNet(t)
+	get := func() bool {
+		st, err := LoadState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Nodes[0].DialOutOnly
+	}
+	if get() {
+		t.Fatal("dial_out_only must default to false")
+	}
+	if err := SetDialOutOnly(dir, "fi-1", true); err != nil || !get() {
+		t.Fatalf("set: %v %v", err, get())
+	}
+	if err := SetDialOutOnly(dir, "fi-1", false); err != nil || get() {
+		t.Fatalf("off: %v %v", err, get())
+	}
+	if err := SetDialOutOnly(dir, "nope", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown label: %v", err)
+	}
+}
+
+func TestAddReality(t *testing.T) {
+	dir := newNet(t)
+	pub := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	ep, err := AddReality(dir, RealitySpec{Label: "fi-1", Host: "203.0.113.10", Port: 443, Pub: pub, ServerName: "www.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Kind != pb.Endpoint_REALITY || len(ep.RealityPub) != 32 || len(ep.ShortIds) != 1 || len(ep.ShortIds[0]) != 8 ||
+		ep.VlessUuid == "" || ep.Fingerprint != "chrome" || ep.ServerNames[0] != "www.example.com" {
+		t.Fatalf("endpoint: %+v", ep)
+	}
+	st, _ := LoadState(dir)
+	n := st.Nodes[0]
+	if len(n.Endpoints) != 2 || n.Endpoints[0].Kind != pb.Endpoint_WSS || n.Endpoints[1].Path != n.Endpoints[0].Path {
+		t.Fatalf("endpoints: %+v", n.Endpoints)
+	}
+	if _, err := AddReality(dir, RealitySpec{Label: "fi-1", Host: "203.0.113.10", Port: 443, Pub: pub, ServerName: "b.example", ShortID: "abcd0123"}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState(dir)
+	if len(st.Nodes[0].Endpoints) != 2 || st.Nodes[0].Endpoints[1].ShortIds[0] != "abcd0123" {
+		t.Fatalf("second add-reality must replace: %+v", st.Nodes[0].Endpoints)
+	}
+	if _, err := AddReality(dir, RealitySpec{Label: "fi-1", Host: "h", Port: 443, Pub: "short", ServerName: "s"}); err == nil {
+		t.Fatal("bad public key accepted")
+	}
+	const uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+	ep, err = AddReality(dir, RealitySpec{Label: "fi-1", Host: "203.0.113.10", Port: 443, Pub: pub, ServerName: "www.example.com", UUID: uuid})
+	if err != nil || ep.VlessUuid != uuid {
+		t.Fatalf("explicit uuid: %v %+v", err, ep)
+	}
+}
+
+// A development node (--plain, ws://) can carry a REALITY endpoint too: the path comes from its WS_PLAIN endpoint.
+func TestAddRealityOnPlainDevNode(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitNetwork(dir, []byte("test-passphrase-123")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddNode(dir, NodeSpec{Label: "fi", WSSHost: "127.0.0.1", WSSPort: 9181, Plain: true}); err != nil {
+		t.Fatal(err)
+	}
+	pub := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	ep, err := AddReality(dir, RealitySpec{Label: "fi", Host: "127.0.0.1", Port: 24443, Pub: pub, ServerName: "www.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState(dir)
+	n := st.Nodes[0]
+	if len(n.Endpoints) != 2 || n.Endpoints[0].Kind != pb.Endpoint_WS_PLAIN || ep.Path == "" || ep.Path != n.Endpoints[0].Path {
+		t.Fatalf("endpoints: %+v", n.Endpoints)
 	}
 }

@@ -22,6 +22,7 @@ runuser -u otter -- /usr/local/bin/otter-node backup --config /etc/otter/node.to
 say "swapping binaries"
 systemctl stop otter-node
 cp -p /usr/local/bin/otter-node /usr/local/bin/otter-node.prev
+cp -p /etc/otter/node.toml /etc/otter/node.toml.prev
 mv /usr/local/bin/otter-node.new /usr/local/bin/otter-node
 systemctl start otter-node || true
 if /usr/local/lib/otter/health.sh; then
@@ -32,6 +33,7 @@ say "health check failed: rolling back"
 systemctl stop otter-node || true
 mv /usr/local/bin/otter-node /usr/local/bin/otter-node.failed
 cp -p /usr/local/bin/otter-node.prev /usr/local/bin/otter-node
+cp -p /etc/otter/node.toml.prev /etc/otter/node.toml
 rm -f /var/lib/otter/node.db-wal /var/lib/otter/node.db-shm
 install -o otter -g otter -m 0600 "$backup" /var/lib/otter/node.db
 systemctl start otter-node || true

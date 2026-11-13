@@ -32,6 +32,8 @@ type session struct {
 	acks   chan struct{} // window slots
 	start  time.Time
 
+	bytesIn atomic.Int64 // payload bytes received (throttling detection, D73)
+
 	mu       sync.Mutex
 	caughtUp bool // peer's oplog fully received
 	cursor   int64
@@ -59,12 +61,13 @@ func (s *session) run() error {
 	if err != nil {
 		return err
 	}
-	s.cursor = cur
+	s.setCursor(cur) // Status() reads it concurrently
 	go s.writeLoop()
 	s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Subscribe{Subscribe: &pb.PeerSubscribe{Cursor: cur}}})
 	started := false
 	for {
-		f, err := readFrame(s.ctx, s.c)
+		f, n, err := readFrame(s.ctx, s.c)
+		s.bytesIn.Add(int64(n))
 		if err != nil {
 			return err
 		}

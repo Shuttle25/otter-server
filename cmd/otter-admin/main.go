@@ -40,6 +40,8 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node rotate-tls --label L
   node drop-old-pins --label L
   node set-push --label L [--off]
+  node set-dial-out-only --label L [--off]
+  node add-reality --label L --host H --port 443 --pub B64URL --server-name S [--short-id HEX] [--uuid UUID]
   node env --label L
   dns records
   dns check [--label L]
@@ -163,7 +165,11 @@ func run(args []string, out io.Writer, in io.Reader) error {
 				if len(e.TlsSpkiPins) > 0 {
 					pin = base64.StdEncoding.EncodeToString(e.TlsSpkiPins[0])
 				}
-				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin)
+				extra := ""
+				if e.Kind == pb.Endpoint_REALITY && len(e.ServerNames) > 0 {
+					extra = " sni=" + e.ServerNames[0]
+				}
+				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s dial_out_only=%v%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin, n.DialOutOnly, extra)
 			}
 		}
 	case "node remove":
@@ -222,6 +228,38 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		fmt.Fprintf(out, "node %s: push_capable=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
+	case "node set-dial-out-only":
+		fs := flag.NewFlagSet("node set-dial-out-only", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		off := fs.Bool("off", false, "the node may be dialed again")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if err := admin.SetDialOutOnly(*dir, *label, !*off); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: dial_out_only=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
+	case "node add-reality":
+		fs := flag.NewFlagSet("node add-reality", flag.ContinueOnError)
+		var s admin.RealitySpec
+		var port uint
+		fs.StringVar(&s.Label, "label", "", "node label")
+		fs.StringVar(&s.Host, "host", "", "public IP or name of the node")
+		fs.UintVar(&port, "port", 443, "REALITY port")
+		fs.StringVar(&s.Pub, "pub", "", "X25519 public key (otter-node reality keygen)")
+		fs.StringVar(&s.ServerName, "server-name", "", "camouflage site name, e.g. dl.google.com")
+		fs.StringVar(&s.ShortID, "short-id", "", "REALITY short id (hex; random if empty)")
+		fs.StringVar(&s.UUID, "uuid", "", "VLESS UUID used in the node's [reality] (random if empty)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		s.Port = uint32(port)
+		ep, err := admin.AddReality(*dir, s)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: REALITY %s:%d server_name=%s\n[reality] for its node.toml:\n  vless_uuid = %q\n  short_ids = [%q]\n  server_names = [%q]\nRun 'manifest sign' and 'manifest publish'.\n",
+			s.Label, ep.Host, ep.Port, s.ServerName, ep.VlessUuid, ep.ShortIds[0], s.ServerName)
 	case "node env":
 		fs := flag.NewFlagSet("node env", flag.ContinueOnError)
 		label := fs.String("label", "", "node label")

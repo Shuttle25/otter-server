@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
@@ -25,15 +27,29 @@ type Replicator struct {
 	ctx    context.Context
 	reg    registry
 	last   lastPeers
+	rank   *Ranker
+	nlog   netlog.Logger
 
 	mu      sync.Mutex
 	backoff map[string]time.Duration
 	nextTry map[string]time.Time
 }
 
-func New(svc *service.Service, dialer Dialer, log *slog.Logger) *Replicator {
+// Option configures a Replicator.
+type Option func(*Replicator)
+
+// WithNetlog sets the connectivity log and the ranker shared with a MultiDialer (D74).
+func WithNetlog(l netlog.Logger, rank *Ranker) Option {
+	return func(r *Replicator) { r.nlog, r.rank = l, rank }
+}
+
+func New(svc *service.Service, dialer Dialer, log *slog.Logger, opts ...Option) *Replicator {
 	r := &Replicator{svc: svc, st: svc.Store, dialer: dialer, log: log, ctx: context.Background(),
-		reg: registry{byPeer: map[string]*session{}}, backoff: map[string]time.Duration{}, nextTry: map[string]time.Time{}}
+		reg: registry{byPeer: map[string]*session{}}, backoff: map[string]time.Duration{}, nextTry: map[string]time.Time{},
+		rank: NewRanker(time.Now), nlog: netlog.Nop{}}
+	for _, o := range opts {
+		o(r)
+	}
 	svc.OnManifest(func(m *pb.Manifest) { r.pruneSessions(m) })
 	return r
 }
@@ -43,6 +59,34 @@ func (r *Replicator) manifestVersion() uint64 {
 		return m.Version
 	}
 	return 0
+}
+
+type listenerKey struct{}
+
+// WithListener tags requests served by one listener ("wss", "reality") for the inbound log.
+func WithListener(h http.Handler, name string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), listenerKey{}, name)))
+	})
+}
+
+func listenerName(req *http.Request) string {
+	if s, ok := req.Context().Value(listenerKey{}).(string); ok {
+		return s
+	}
+	return "wss"
+}
+
+// labelOf is the manifest label of node id, or its hex id.
+func (r *Replicator) labelOf(id []byte) string {
+	if m := r.svc.CurrentManifest(); m != nil {
+		for _, n := range m.Nodes {
+			if bytes.Equal(n.NodeId, id) && n.Label != "" {
+				return n.Label
+			}
+		}
+	}
+	return fmt.Sprintf("%x", id)
 }
 
 // ServeHTTP accepts peer connections on <path>/peer.
@@ -55,14 +99,25 @@ func (r *Replicator) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	peer, err := r.acceptHandshake(req.Context(), c)
 	if err != nil {
 		r.log.Info("peer rejected", "remote", req.RemoteAddr, "err", err)
+		host, _, herr := net.SplitHostPort(req.RemoteAddr)
+		if herr != nil {
+			host = req.RemoteAddr
+		}
+		r.nlog.Add(req.Context(), netlog.Entry{Peer: host, Endpoint: listenerName(req), Direction: "in", Result: "fail",
+			Class: netlog.Handshake, Detail: err.Error()})
 		_ = writeFrame(req.Context(), c, &pb.PeerFrame{Kind: &pb.PeerFrame_Error{Error: &pb.PeerError{Message: "handshake failed"}}})
 		c.Close(websocket.StatusPolicyViolation, "handshake failed")
 		return
 	}
-	r.runSession(c, peer, peer) // the remote side dialed
+	r.nlog.Add(req.Context(), netlog.Entry{Peer: r.labelOf(peer), Endpoint: listenerName(req), Direction: "in", Result: "ok", Class: netlog.OK})
+	r.runSession(c, peer, peer, nil) // the remote side dialed
 }
 
-func (r *Replicator) runSession(c *websocket.Conn, peer, dialer []byte) {
+// throttleSession: an outbound session dropped this soon after receiving ≥ 1 KB counts as throttling (D73).
+const throttleSession = 2 * time.Minute
+
+// runSession serves one authenticated session; ep is the endpoint we dialed (nil for inbound sessions).
+func (r *Replicator) runSession(c *websocket.Conn, peer, dialer []byte, ep *pb.Endpoint) {
 	s := newSession(r, c, peer, dialer)
 	if !r.reg.add(s) {
 		c.Close(websocket.StatusNormalClosure, "duplicate session")
@@ -72,6 +127,14 @@ func (r *Replicator) runSession(c *websocket.Conn, peer, dialer []byte) {
 	r.log.Info("peer session up", "peer", fmt.Sprintf("%x", peer), "dialer", fmt.Sprintf("%x", dialer))
 	err := s.run()
 	r.log.Info("peer session down", "peer", fmt.Sprintf("%x", peer), "err", err)
+	if ep != nil && err != nil && r.baseCtx().Err() == nil {
+		in, dur := s.bytesIn.Load(), time.Since(s.start)
+		if dur < throttleSession && in >= netlog.ThrottleBytes {
+			r.rank.Done(ep, netlog.ResetAfterKB)
+			r.nlog.Add(r.baseCtx(), netlog.Entry{Peer: r.labelOf(peer), Endpoint: EndpointName(ep), Direction: "out",
+				Result: "fail", Class: netlog.ResetAfterKB, Detail: fmt.Sprintf("%d bytes in %s: %v", in, dur.Round(time.Second), err)})
+		}
+	}
 	r.mu.Lock()
 	k := string(peer)
 	if time.Since(s.start) >= stableSession {
@@ -123,9 +186,13 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 	if m == nil {
 		return
 	}
+	selfOut := r.selfDialOutOnly(m)
 	for _, n := range m.Nodes {
 		if bytes.Equal(n.NodeId, r.svc.NodeID) || r.reg.has(n.NodeId) {
 			continue
+		}
+		if n.DialOutOnly && !selfOut {
+			continue // D71: a node inside a censored network dials us, never the other way round
 		}
 		k := string(n.NodeId)
 		r.mu.Lock()
@@ -141,7 +208,14 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 			continue
 		}
 		go func(n *pb.NodeInfo) {
-			c, err := r.dialer.Dial(ctx, n)
+			var c *websocket.Conn
+			var ep *pb.Endpoint
+			var err error
+			if md, ok := r.dialer.(*MultiDialer); ok {
+				c, ep, err = md.DialWith(ctx, n)
+			} else {
+				c, err = r.dialer.Dial(ctx, n)
+			}
 			if err != nil {
 				r.log.Debug("peer dial failed", "peer", n.Label, "err", err)
 				return
@@ -149,11 +223,27 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 			if err := r.dialHandshake(ctx, c, n); err != nil {
 				r.log.Info("peer handshake failed", "peer", n.Label, "err", err)
 				c.CloseNow()
+				if ctx.Err() == nil {
+					// the transport attempt was already logged as ok; which endpoint carried it is not tracked here
+					err = fmt.Errorf("%w: %v", netlog.ErrHandshake, err)
+					r.nlog.Add(ctx, netlog.Entry{Peer: n.Label, Endpoint: "handshake", Direction: "out", Result: "fail",
+						Class: netlog.Classify(err, 0), Detail: err.Error()})
+				}
 				return
 			}
-			r.runSession(c, n.NodeId, r.svc.NodeID)
+			r.runSession(c, n.NodeId, r.svc.NodeID, ep)
 		}(n)
 	}
+}
+
+// selfDialOutOnly reports whether this node is itself dial-out-only; two such nodes may still dial each other.
+func (r *Replicator) selfDialOutOnly(m *pb.Manifest) bool {
+	for _, n := range m.Nodes {
+		if bytes.Equal(n.NodeId, r.svc.NodeID) {
+			return n.DialOutOnly
+		}
+	}
+	return false
 }
 
 func (r *Replicator) pruneSessions(m *pb.Manifest) {

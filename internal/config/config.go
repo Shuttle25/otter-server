@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -41,6 +42,16 @@ type Push struct {
 	FCMCredentials string `toml:"fcm_credentials"`
 }
 
+// Reality (D72): VLESS+REALITY listener for peers; optional.
+type Reality struct {
+	Listen         string   `toml:"listen"`
+	PrivateKeyFile string   `toml:"private_key_file"`
+	Dest           string   `toml:"dest"`
+	ServerNames    []string `toml:"server_names"`
+	ShortIDs       []string `toml:"short_ids"`
+	VlessUUID      string   `toml:"vless_uuid"`
+}
+
 // MaxBlobLimit equals records.MaxBlobSize (kept here to avoid an import cycle).
 const MaxBlobLimit = 100 << 20
 
@@ -55,6 +66,7 @@ type Config struct {
 	Limits       Limits      `toml:"limits"`
 	Replication  Replication `toml:"replication"`
 	Push         Push        `toml:"push"`
+	Reality      Reality     `toml:"reality"`
 
 	// parsed by Load
 	UserQuotaBytes  int64 `toml:"-"`
@@ -111,12 +123,30 @@ func (c *Config) validate() error {
 	if c.BlobBytesPerSec, err = ParseRate(rate); err != nil {
 		return fmt.Errorf("config: replication.blob_bandwidth: %w", err)
 	}
+	if c.RealityEnabled() {
+		r := c.Reality
+		if r.Listen == "" || r.PrivateKeyFile == "" || r.Dest == "" || r.VlessUUID == "" || len(r.ServerNames) == 0 || len(r.ShortIDs) == 0 {
+			return fmt.Errorf("config: [reality] needs listen, private_key_file, dest, server_names, short_ids, vless_uuid")
+		}
+		if _, _, err := net.SplitHostPort(r.Dest); err != nil {
+			return fmt.Errorf("config: reality.dest must be host:port: %w", err)
+		}
+		if _, _, err := net.SplitHostPort(r.Listen); err != nil {
+			return fmt.Errorf("config: reality.listen must be [host]:port: %w", err)
+		}
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("config: log_level %q (debug|info|warn|error)", c.LogLevel)
 	}
 	return nil
+}
+
+// RealityEnabled reports whether a [reality] section is configured (any key set; validation then wants all).
+func (c *Config) RealityEnabled() bool {
+	r := c.Reality
+	return r.Listen != "" || r.PrivateKeyFile != "" || r.Dest != "" || r.VlessUUID != "" || len(r.ServerNames) > 0 || len(r.ShortIDs) > 0
 }
 
 // PushEnabled reports whether a key file is configured and present.

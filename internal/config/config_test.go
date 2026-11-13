@@ -123,3 +123,33 @@ func TestPush(t *testing.T) {
 		t.Fatalf("unknown [push] key accepted: %v", err)
 	}
 }
+
+func TestRealitySection(t *testing.T) {
+	ok := `
+[reality]
+listen = ":443"
+private_key_file = "/etc/otter/reality.key"
+dest = "www.example.com:443"
+server_names = ["www.example.com"]
+short_ids = ["a1b2c3d4"]
+vless_uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
+`
+	c, err := Load(write(t, valid+ok))
+	if err != nil || !c.RealityEnabled() || c.Reality.Dest != "www.example.com:443" || len(c.Reality.ShortIDs) != 1 {
+		t.Fatalf("valid [reality]: %v %+v", err, c)
+	}
+	for name, bad := range map[string]string{
+		"dest without port": strings.Replace(ok, `dest = "www.example.com:443"`, `dest = "www.example.com"`, 1),
+		"no vless_uuid":     strings.Replace(ok, `vless_uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"`, ``, 1),
+		"no short_ids":      strings.Replace(ok, `short_ids = ["a1b2c3d4"]`, ``, 1),
+		"no listen":         strings.Replace(ok, `listen = ":443"`, ``, 1),
+	} {
+		if _, err := Load(write(t, valid+bad)); err == nil || !strings.Contains(err.Error(), "reality") {
+			t.Errorf("%s: want a reality error, got %v", name, err)
+		}
+	}
+	c, err = Load(write(t, valid))
+	if err != nil || c.RealityEnabled() {
+		t.Fatalf("no [reality]: %v", err)
+	}
+}

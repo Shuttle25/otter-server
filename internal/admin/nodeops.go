@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -202,6 +203,10 @@ func NodeEnv(dir, label string) (map[string]string, error) {
 		"OTTER_LABEL": label, "OTTER_HOST": ep.Host, "OTTER_PORT": strconv.Itoa(int(ep.Port)), "OTTER_PATH": ep.Path,
 		"OTTER_NETWORK_PUB": hex.EncodeToString(st.NetworkPub), "OTTER_NODE_ID": hex.EncodeToString(n.NodeId),
 		"OTTER_NODE_DIR": nd, "OTTER_KIND": "wss", "OTTER_TLS_CERT": "", "OTTER_TLS_KEY": "", "OTTER_PIN": "",
+		"OTTER_IP": "", // first recorded public IP (meta.json), e.g. for the REALITY endpoint
+	}
+	if ips, err := NodeIPs(dir, label); err == nil && len(ips) > 0 {
+		env["OTTER_IP"] = ips[0]
 	}
 	if ep.Kind != pb.Endpoint_WSS {
 		env["OTTER_KIND"] = "plain"
@@ -240,4 +245,78 @@ func SetPush(dir, label string, on bool) error {
 	}
 	n.PushCapable = on
 	return saveNodes(dir, st.Nodes)
+}
+
+// SetDialOutOnly marks a node inside a censored network: it dials its peers and is never dialed (D71).
+func SetDialOutOnly(dir, label string, on bool) error {
+	st, err := LoadState(dir)
+	if err != nil {
+		return err
+	}
+	n, err := findNode(st, label)
+	if err != nil {
+		return err
+	}
+	n.DialOutOnly = on
+	return saveNodes(dir, st.Nodes)
+}
+
+type RealitySpec struct {
+	Label, Host, Pub, ServerName, ShortID string
+	UUID                                  string // the node's [reality].vless_uuid; generated when empty
+	Port                                  uint32
+}
+
+// AddReality adds (or replaces) the node's VLESS+REALITY endpoint (D72). Pub is the node's X25519 public key in
+// base64 RawURL encoding, printed by `otter-node reality keygen`. The WSS endpoint stays first.
+func AddReality(dir string, s RealitySpec) (*pb.Endpoint, error) {
+	st, err := LoadState(dir)
+	if err != nil {
+		return nil, err
+	}
+	n, err := findNode(st, s.Label)
+	if err != nil {
+		return nil, err
+	}
+	pub, err := base64.RawURLEncoding.DecodeString(s.Pub)
+	if err != nil || len(pub) != 32 {
+		return nil, errors.New("--pub must be the 32-byte X25519 public key in base64 RawURL encoding (otter-node reality keygen)")
+	}
+	if s.Host == "" || s.ServerName == "" || s.Port == 0 || s.Port > 65535 {
+		return nil, errors.New("--host, --port and --server-name are required")
+	}
+	sid := s.ShortID
+	if sid == "" {
+		b := make([]byte, 4)
+		if _, err := rand.Read(b); err != nil {
+			return nil, err
+		}
+		sid = hex.EncodeToString(b)
+	}
+	if _, err := hex.DecodeString(sid); err != nil || len(sid) > 16 || len(sid)%2 != 0 {
+		return nil, errors.New("--short-id must be 2-16 hex characters, even length")
+	}
+	path := ""
+	keep := n.Endpoints[:0]
+	uuid := newUUID()
+	for _, e := range n.Endpoints {
+		if (e.Kind == pb.Endpoint_WSS || e.Kind == pb.Endpoint_WS_PLAIN) && path == "" { // WS_PLAIN: dev nodes
+			path = e.Path
+		}
+		if e.Kind == pb.Endpoint_REALITY {
+			uuid = e.VlessUuid // keep the UUID across replacements: nodes' configs already use it
+			continue
+		}
+		keep = append(keep, e)
+	}
+	if path == "" {
+		return nil, fmt.Errorf("node %s has no WSS (or dev ws://) endpoint to take the secret path from", s.Label)
+	}
+	ep := &pb.Endpoint{Kind: pb.Endpoint_REALITY, Host: s.Host, Port: s.Port, Path: path, VlessUuid: uuid,
+		RealityPub: pub, ShortIds: []string{sid}, ServerNames: []string{s.ServerName}, Fingerprint: "chrome"}
+	if s.UUID != "" {
+		ep.VlessUuid = s.UUID // reality-setup.sh passes the UUID it wrote into the node's config
+	}
+	n.Endpoints = append(keep, ep)
+	return ep, saveNodes(dir, st.Nodes)
 }

@@ -21,16 +21,17 @@ const (
 	handshakeTimeout = 10 * time.Second
 )
 
-func readFrame(ctx context.Context, c *websocket.Conn) (*pb.PeerFrame, error) {
+// readFrame reads one peer frame; n is the payload length received.
+func readFrame(ctx context.Context, c *websocket.Conn) (f *pb.PeerFrame, n int, err error) {
 	typ, data, err := c.Read(ctx)
 	if err != nil {
-		return nil, err
+		return nil, len(data), err
 	}
 	if typ != websocket.MessageBinary {
-		return nil, errors.New("peer: text frame")
+		return nil, len(data), errors.New("peer: text frame")
 	}
-	f := &pb.PeerFrame{}
-	return f, proto.Unmarshal(data, f)
+	f = &pb.PeerFrame{}
+	return f, len(data), proto.Unmarshal(data, f)
 }
 
 func writeFrame(ctx context.Context, c *websocket.Conn, f *pb.PeerFrame) error {
@@ -57,7 +58,7 @@ func (r *Replicator) acceptHandshake(ctx context.Context, c *websocket.Conn) ([]
 		ProtocolVersion: ProtocolVersion, NodeId: r.svc.NodeID, Nonce: n, ManifestVersion: r.manifestVersion()}}}); err != nil {
 		return nil, err
 	}
-	f, err := readFrame(ctx, c)
+	f, _, err := readFrame(ctx, c)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func (r *Replicator) acceptHandshake(ctx context.Context, c *websocket.Conn) ([]
 func (r *Replicator) dialHandshake(ctx context.Context, c *websocket.Conn, n *pb.NodeInfo) error {
 	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	f, err := readFrame(ctx, c)
+	f, _, err := readFrame(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -100,7 +101,7 @@ func (r *Replicator) dialHandshake(ctx context.Context, c *websocket.Conn, n *pb
 		Signature:       ed25519.Sign(r.svc.NodeKeyPriv, keys.PeerAuthMessage(n.NodeId, h.Nonce, ts))}}}); err != nil {
 		return err
 	}
-	f, err = readFrame(ctx, c)
+	f, _, err = readFrame(ctx, c)
 	if err != nil {
 		return err
 	}

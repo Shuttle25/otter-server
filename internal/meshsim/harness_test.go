@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -132,12 +133,7 @@ func newSimWith(t *testing.T, opts map[string]nodeOpts, labels ...string) *sim {
 	var infos []*pb.NodeInfo
 	for _, l := range labels {
 		_, k, _ := ed25519.GenerateKey(nil)
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr := ln.Addr().String()
-		ln.Close()
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freeTCPPort(t)))
 		n := &simNode{label: l, key: k, id: keys.ID16(k.Public().(ed25519.PublicKey)), dbPath: filepath.Join(t.TempDir(), l+".db"), addr: addr,
 			turnOn: opts[l].turn}
 		_, port, _ := net.SplitHostPort(addr)
@@ -368,13 +364,18 @@ func (s *sim) startTurn(n *simNode) (*turnsrv.Server, turnsrv.Issuer, string, st
 	return nil, turnsrv.Issuer{}, "", ""
 }
 
+// freeTCPPort returns a port that is free now and lies below the kernel's ephemeral range (32768+ on Linux), so an
+// outgoing connection cannot take it between this call and a later (re)bind — nodes keep their address across restarts.
 func freeTCPPort(t *testing.T) int {
-	ln, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for i := 0; i < 200; i++ {
+		p := 20000 + mrand.IntN(12000)
+		if ln, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(p))); err == nil {
+			ln.Close()
+			return p
+		}
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	t.Fatal("no free port in 20000-31999")
+	return 0
 }
 
 func (s *sim) url(n *simNode) string { return "ws://" + n.addr + path }

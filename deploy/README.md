@@ -38,7 +38,7 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
 | Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual; a rollback also restores `node.toml` from `node.toml.prev`) |
 | All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts, disk, push, then the last 5 connectivity log lines per node; exit 1 on any problem) |
-| REALITY on a node | `deploy/reality-setup.sh fi-1 --dest www.microsoft.com [--port 443] [--force]` → `manifest sign` + `manifest publish` (below) |
+| REALITY on a node | `deploy/reality-setup.sh fi-1 --dest dl.google.com [--port 443] [--force]` → `manifest sign` + `manifest publish` (below) |
 | Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1] [--no-news]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual; then offers the news dialog) |
 | SSH target of a node | `deploy/hosts.sh set fi-1 root@203.0.113.10 [port]` / `get` / `list` / `rm` |
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
@@ -62,13 +62,16 @@ peers holding the node's public key get through. Phones still use WSS (D75).
 (that is where REALITY forwards probes):
 
 ```bash
-ssh root@fi-1 /usr/local/bin/otter-node reality-check www.microsoft.com dl.google.com www.apple.com
+ssh root@fi-1 /usr/local/bin/otter-node reality-check dl.google.com www.apple.com www.microsoft.com
 ```
+
+The check includes a REALITY handshake through the site on loopback: sites whose handshake records are over 8 KB
+(www.microsoft.com, with its long certificate chain, on 2026-11-13) pass plain TLS but REALITY cannot mirror them.
 
 **Setup** (node on 0.7.0+; `deploy/upgrade-all.sh` first):
 
 ```bash
-deploy/reality-setup.sh fi-1 --dest www.microsoft.com     # --port 443 by default; --force replaces an existing [reality]
+deploy/reality-setup.sh fi-1 --dest dl.google.com         # --port 443 by default; --force replaces an existing [reality]
 otter-admin manifest sign && otter-admin manifest publish  # your terminal (asks for the admin passphrase)
 ```
 

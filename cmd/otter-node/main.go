@@ -389,10 +389,10 @@ func runRealityCheck(ctx context.Context, hosts []string, out io.Writer) error {
 		case err != nil:
 			fmt.Fprintf(out, "FAIL %s: %v\n", h, err)
 		case !r.OK():
-			fmt.Fprintf(out, "FAIL %s: tls1.3=%v h2=%v cert=%v\n", h, r.TLS13, r.H2, r.CertOK)
+			fmt.Fprintf(out, "FAIL %s: tls1.3=%v h2=%v cert=%v reality=%v\n", h, r.TLS13, r.H2, r.CertOK, r.Handshake)
 		default:
 			good++
-			fmt.Fprintf(out, "ok   %s: tls1.3 h2 cert %dms\n", h, r.Latency.Milliseconds())
+			fmt.Fprintf(out, "ok   %s: tls1.3 h2 cert reality %dms\n", h, r.Latency.Milliseconds())
 		}
 	}
 	if good == 0 {

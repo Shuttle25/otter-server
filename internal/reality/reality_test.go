@@ -268,3 +268,25 @@ func TestCheckLocal(t *testing.T) {
 		t.Fatal("Check must fail for an unresolvable host")
 	}
 }
+
+// A site whose handshake records exceed what REALITY can mirror (8 KB; www.microsoft.com's certificate chain was
+// 8273 bytes on 2026-11-13) passes plain TLS checks but no peer could ever authenticate through it.
+func TestCheckRejectsOversizedHandshake(t *testing.T) {
+	big := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	big.EnableHTTP2 = true
+	big.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	big.StartTLS() // generates the test certificate; reuse it with a padded chain
+	cert := big.TLS.Certificates[0]
+	big.Close()
+	for len(cert.Certificate) < 12 { // extra copies of the leaf: ignored by verification, sent on the wire
+		cert.Certificate = append(cert.Certificate, cert.Certificate[0])
+	}
+	addr, roots := localH2(t, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}})
+	r, err := check(context.Background(), addr, "example.com", roots)
+	if err == nil && r.OK() {
+		t.Fatalf("oversized handshake accepted: %+v", r)
+	}
+	if !r.TLS13 || !r.H2 || !r.CertOK || r.Handshake {
+		t.Fatalf("want tls/h2/cert ok and handshake failed: %+v %v", r, err)
+	}
+}

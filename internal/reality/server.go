@@ -19,7 +19,7 @@ type ServerConfig struct {
 	Listen      string   // ":443"
 	PrivateKey  string   // base64 RawURL
 	Dest        string   // camouflage "host:443": unauthenticated connections are forwarded there
-	ServerNames []string // SNI values accepted, e.g. ["www.microsoft.com"]
+	ServerNames []string // SNI values accepted, e.g. ["dl.google.com"]
 	ShortIDs    []string
 	VlessUUID   string
 	Forward     string // internal plain-HTTP listener, "127.0.0.1:PORT"

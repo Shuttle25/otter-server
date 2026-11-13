@@ -16,7 +16,7 @@ while (( $# )); do
   esac
 done
 [[ -n "$dest" ]] || die "$usage"
-[[ "$dest" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "--dest must be a host name, e.g. www.microsoft.com"
+[[ "$dest" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "--dest must be a host name, e.g. dl.google.com"
 [[ "$port" =~ ^[0-9]+$ ]] && (( port > 0 && port < 65536 )) || die "--port must be 1–65535"
 host_lookup "$label" || die "node $label has no SSH target: deploy/hosts.sh set $label root@HOST"
 export SSH_PORT=$TARGET_PORT
@@ -24,7 +24,7 @@ ip=$(admin_node_ip "$label")
 [[ -n "$ip" ]] || die "no IP recorded for $label (otter-admin node set-ip --label $label --ip IP)"
 say "checking the camouflage site $dest from $label"
 remote "$TARGET" "/usr/local/bin/otter-node reality-check $dest" ||
-  die "$dest failed the check on $label; pick another (e.g. www.microsoft.com, dl.google.com)"
+  die "$dest failed the check on $label; pick another (e.g. dl.google.com, www.apple.com)"
 sid=$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')
 vless=$(cat /proc/sys/kernel/random/uuid)
 say "configuring REALITY on $label (:$port, camouflage $dest)"

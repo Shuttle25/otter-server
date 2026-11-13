@@ -247,7 +247,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		fs.StringVar(&s.Host, "host", "", "public IP or name of the node")
 		fs.UintVar(&port, "port", 443, "REALITY port")
 		fs.StringVar(&s.Pub, "pub", "", "X25519 public key (otter-node reality keygen)")
-		fs.StringVar(&s.ServerName, "server-name", "", "camouflage site name, e.g. www.microsoft.com")
+		fs.StringVar(&s.ServerName, "server-name", "", "camouflage site name, e.g. dl.google.com")
 		fs.StringVar(&s.ShortID, "short-id", "", "REALITY short id (hex; random if empty)")
 		fs.StringVar(&s.UUID, "uuid", "", "VLESS UUID used in the node's [reality] (random if empty)")
 		if err := fs.Parse(a[2:]); err != nil {

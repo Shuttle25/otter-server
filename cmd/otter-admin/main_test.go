@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"log/slog"
 	"net"
 	"net/http"
@@ -326,4 +327,41 @@ func bodyType(r *pb.Record) pb.RecordType {
 	var b pb.RecordBody
 	proto.Unmarshal(r.Body, &b)
 	return b.Type
+}
+
+func TestDialOutOnlyAndRealityCLI(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	pub := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	for _, s := range [][]string{
+		{"--dir", dir, "network", "init"},
+		{"--dir", dir, "node", "add", "--label", "fi-1", "--wss-host", "chat.example.org"},
+		{"--dir", dir, "node", "set-dial-out-only", "--label", "fi-1"},
+		{"--dir", dir, "node", "add-reality", "--label", "fi-1", "--host", "203.0.113.10", "--port", "443", "--pub", pub,
+			"--server-name", "www.example.com", "--short-id", "abcd0123"},
+		{"--dir", dir, "node", "list"},
+	} {
+		if err := run(s, &out, strings.NewReader("")); err != nil {
+			t.Fatalf("%v: %v", s, err)
+		}
+	}
+	for _, want := range []string{"node fi-1: dial_out_only=true. Run 'manifest sign' and 'manifest publish'.",
+		"node fi-1: REALITY 203.0.113.10:443 server_name=www.example.com", `short_ids = ["abcd0123"]`,
+		"REALITY 203.0.113.10:443", "dial_out_only=true sni=www.example.com"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if err := run([]string{"--dir", dir, "node", "set-dial-out-only", "--label", "fi-1", "--off"}, &out, strings.NewReader("")); err != nil ||
+		!strings.Contains(out.String(), "dial_out_only=false") {
+		t.Fatalf("set-dial-out-only --off: %v %s", err, out.String())
+	}
+	if err := run([]string{"--dir", dir, "node", "set-dial-out-only", "--label", "nope"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("set-dial-out-only accepted an unknown label")
+	}
+	if err := run([]string{"--dir", dir, "node", "add-reality", "--label", "fi-1", "--host", "h", "--pub", "short", "--server-name", "s"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("add-reality accepted a bad public key")
+	}
 }

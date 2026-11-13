@@ -20,6 +20,7 @@ message NodeInfo {
   string label = 3;
   bool push_capable = 4;
   repeated Endpoint endpoints = 5;
+  bool dial_out_only = 6;            // M7 (D71): inside a censored network; dials peers, is never dialed by them
 }
 
 message Endpoint {

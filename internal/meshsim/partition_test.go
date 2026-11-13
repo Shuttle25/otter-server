@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket"
 	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/replication"
 )
 
@@ -62,6 +63,15 @@ func (p *partition) register(id []byte, r *replication.Replicator) {
 	p.mu.Lock()
 	p.repls[string(id)] = r
 	p.mu.Unlock()
+}
+
+// ensureReality gives node id a REALITY client (one for the sim's lifetime, closed in newSimWith's cleanup).
+func (p *partition) ensureReality(id []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.reality[string(id)] == nil {
+		p.reality[string(id)] = reality.NewClient()
+	}
 }
 
 func (p *partition) Block(a, b *simNode) {

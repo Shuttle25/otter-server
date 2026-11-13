@@ -257,6 +257,7 @@ grep -q '^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$' deploy/templates/otter-no
 grep -q '^relay_ip = "\${OTTER_IP}"$' deploy/templates/node.toml.turn || fail "turn template relay_ip"
 grep -q '^\[turn\]$' deploy/templates/node.toml.turn && grep -q '^enabled = true$' deploy/templates/node.toml.turn || fail "turn template"
 if grep -q '^\[turn\]' deploy/templates/node.toml; then fail "[turn] in the base template (pre-0.8.0 bundles)"; fi
+grep -q '^RestrictAddressFamilies=.*AF_NETLINK' deploy/templates/otter-node.service || fail "unit template: TURN needs AF_NETLINK"
 grep -q 'otter-node turn keygen --config /etc/otter/node.toml$' deploy/bundle/install.sh || fail "install.sh does not create the TURN secret"
 keygen_line=$(grep -n 'otter-node turn keygen' deploy/bundle/install.sh | cut -d: -f1)
 check_line=$(grep -n 'otter-node check --config' deploy/bundle/install.sh | cut -d: -f1)
@@ -312,7 +313,8 @@ r="$work/turn-remote.sh"
 bash -n "$r" || fail "turn-setup remote script syntax"
 for want in 'otter-node check --config /etc/otter/node.toml.new' 'turn keygen --config /etc/otter/node.toml.new' \
     'cp -p "$cfg" /etc/otter/node.toml.pre-turn' 'mv /etc/otter/node.toml.pre-turn "$cfg"' '"msg":"turn on"' \
-    'relay_ip = "$relay_ip"' 'chmod 0640 /etc/otter/turn.secret'; do
+    'relay_ip = "$relay_ip"' 'chmod 0640 /etc/otter/turn.secret' 'RestrictAddressFamilies=AF_NETLINK' \
+    'systemctl daemon-reload'; do
   grep -qF -- "$want" "$r" || fail "turn-setup remote script lacks $want"
 done
 for v in 0.7.0 dev-abc123; do
@@ -352,8 +354,9 @@ printf '#!/bin/sh\n[ -n "$TURN_FAIL" ] && echo "{\\"msg\\":\\"turn off: could no
 printf '#!/bin/sh\ncase "$1" in status) echo "Status: active";; *) echo "ufw $*" >> "%s/actions.log";; esac\n' "$fake" > "$fake/bin/ufw"
 printf '#!/bin/sh\nexit 0\n' > "$fake/bin/health.sh"
 chmod +x "$fake/bin/"*
-sed -e "s#/etc/otter#$fake/etc#g" -e 's#/usr/local/bin/otter-node#otter-node#g' -e 's#/usr/local/lib/otter/health.sh#health.sh#g' \
-  "$r" > "$work/turn-local.sh"
+sed -e "s#/etc/otter#$fake/etc#g" -e "s#/etc/systemd/system#$fake/systemd#g" -e 's#/usr/local/bin/otter-node#otter-node#g' \
+  -e 's#/usr/local/lib/otter/health.sh#health.sh#g' "$r" > "$work/turn-local.sh"
+mkdir -p "$fake/systemd"; printf '[Service]\nRestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n' > "$fake/systemd/otter-node.service"
 orig=$'data_dir = "/var/lib/otter"\n\n[wss]\nlisten = ":27443"\n\n[push]\nfcm_credentials = "/etc/otter/fcm.json"'
 runremote() { rm -f "$fake/actions.log"; PATH="$fake/bin:$PATH" bash "$work/turn-local.sh" "$@" 2>&1; }
 printf '%s\n' "$orig" > "$fake/etc/node.toml"
@@ -361,6 +364,8 @@ out=$(runremote 192.0.2.1 0 0 1) || fail "remote script: $out"
 cfg=$(cat "$fake/etc/node.toml")
 grep -q '^relay_ip = "192.0.2.1"$' <<< "$cfg" && grep -q '^enabled = true$' <<< "$cfg" || fail "remote: no [turn]: $cfg"
 grep -q '^fcm_credentials' <<< "$cfg" || fail "remote lost [push]: $cfg"
+grep -qx 'RestrictAddressFamilies=AF_NETLINK' "$fake/systemd/otter-node.service.d/netlink.conf" || fail "remote: no AF_NETLINK drop-in"
+grep -q '^systemctl daemon-reload' "$fake/actions.log" || fail "remote: no daemon-reload after the drop-in"
 [[ "$(cat "$fake/etc/node.toml.pre-turn")" == "$orig" ]] || fail "remote: node.toml.pre-turn is not the old config"
 [[ "$(stat -c %a "$fake/etc/turn.secret")" == 640 && "$(stat -c %s "$fake/etc/turn.secret")" == 32 ]] || fail "secret mode/size"
 [[ "$(grep -c '^ufw allow' "$fake/actions.log")" == 4 ]] || fail "ufw rules after a yes: $(cat "$fake/actions.log")"

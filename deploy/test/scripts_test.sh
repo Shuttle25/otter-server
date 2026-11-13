@@ -257,6 +257,7 @@ grep -q '^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$' deploy/templates/otter-no
 grep -q '^relay_ip = "\${OTTER_IP}"$' deploy/templates/node.toml.turn || fail "turn template relay_ip"
 grep -q '^\[turn\]$' deploy/templates/node.toml.turn && grep -q '^enabled = true$' deploy/templates/node.toml.turn || fail "turn template"
 if grep -q '^\[turn\]' deploy/templates/node.toml; then fail "[turn] in the base template (pre-0.8.0 bundles)"; fi
+grep -q '^RestrictAddressFamilies=.*AF_NETLINK' deploy/templates/otter-node.service || fail "unit template: TURN needs AF_NETLINK"
 grep -q 'otter-node turn keygen --config /etc/otter/node.toml$' deploy/bundle/install.sh || fail "install.sh does not create the TURN secret"
 keygen_line=$(grep -n 'otter-node turn keygen' deploy/bundle/install.sh | cut -d: -f1)
 check_line=$(grep -n 'otter-node check --config' deploy/bundle/install.sh | cut -d: -f1)
@@ -312,7 +313,8 @@ r="$work/turn-remote.sh"
 bash -n "$r" || fail "turn-setup remote script syntax"
 for want in 'otter-node check --config /etc/otter/node.toml.new' 'turn keygen --config /etc/otter/node.toml.new' \
     'cp -p "$cfg" /etc/otter/node.toml.pre-turn' 'mv /etc/otter/node.toml.pre-turn "$cfg"' '"msg":"turn on"' \
-    'relay_ip = "$relay_ip"' 'chmod 0640 /etc/otter/turn.secret'; do
+    'relay_ip = "$relay_ip"' 'chmod 0640 /etc/otter/turn.secret' 'RestrictAddressFamilies=AF_NETLINK' \
+    'systemctl daemon-reload'; do
   grep -qF -- "$want" "$r" || fail "turn-setup remote script lacks $want"
 done
 for v in 0.7.0 dev-abc123; do

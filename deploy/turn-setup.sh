@@ -79,6 +79,16 @@ fi
 if ! runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.toml.new >&2; then
   echo "otter-node $(/usr/local/bin/otter-node version) rejects the TURN config; node.toml not changed" >&2; exit 1
 fi
+# The relay lists network interfaces (netlink). Units installed before 0.8.0 allow only AF_INET/AF_INET6/AF_UNIX;
+# a drop-in adds AF_NETLINK (RestrictAddressFamilies lines are merged, so the rest of the hardening stays).
+unit=/etc/systemd/system/otter-node.service
+dropin=/etc/systemd/system/otter-node.service.d/netlink.conf
+if ! grep -q '^RestrictAddressFamilies=.*AF_NETLINK' "$unit" && [[ ! -f $dropin ]]; then
+  echo "allowing AF_NETLINK for otter-node (systemd drop-in $dropin)" >&2
+  mkdir -p "$(dirname "$dropin")"
+  printf '[Service]\n# M8 TURN relay: interface listing needs netlink (added by deploy/turn-setup.sh)\nRestrictAddressFamilies=AF_NETLINK\n' > "$dropin"
+  systemctl daemon-reload
+fi
 cp -p "$cfg" /etc/otter/node.toml.pre-turn
 mv /etc/otter/node.toml.new "$cfg"
 since=$(date '+%Y-%m-%d %H:%M:%S')

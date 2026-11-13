@@ -30,6 +30,16 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 			return nil
 		}
 		var ignore int64
+		// short-lived envelopes (call signaling, D78): gone as soon as their record expiry passes
+		if err := exec(&ignore, `DELETE FROM mailbox WHERE record_key IN
+			(SELECT record_key FROM records WHERE type=? AND expires_ms > 0 AND expires_ms < ?)`,
+			int32(pb.RecordType_ENVELOPE), now); err != nil {
+			return err
+		}
+		if err := exec(&st.Envelopes, `DELETE FROM records WHERE type=? AND expires_ms > 0 AND expires_ms < ?`,
+			int32(pb.RecordType_ENVELOPE), now); err != nil {
+			return err
+		}
 		if err := exec(&ignore, `DELETE FROM mailbox WHERE received_ms < ?`, cut); err != nil {
 			return err
 		}

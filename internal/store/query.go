@@ -106,11 +106,17 @@ func (s *Store) Invite(ctx context.Context, id []byte) (*InviteState, error) {
 	return &st, err
 }
 
-// Mailbox returns pending envelopes for a device, oldest first.
+// Mailbox returns pending envelopes for a device, oldest first. Envelopes whose record expires_ms has passed
+// (short-lived call signaling, D78) are skipped; the janitor deletes them.
 func (s *Store) Mailbox(ctx context.Context, user []byte, device uint32, limit int) ([]MailboxEntry, error) {
+	return s.mailboxAt(ctx, user, device, limit, s.now().UnixMilli())
+}
+
+func (s *Store) mailboxAt(ctx context.Context, user []byte, device uint32, limit int, now int64) ([]MailboxEntry, error) {
 	rows, err := s.r.QueryContext(ctx,
 		`SELECT m.record_key, r.raw FROM mailbox m JOIN records r ON r.record_key=m.record_key
-		 WHERE m.user_id=? AND m.device_id=? ORDER BY m.received_ms, m.record_key LIMIT ?`, user, device, limit)
+		 WHERE m.user_id=? AND m.device_id=? AND (r.expires_ms = 0 OR r.expires_ms > ?)
+		 ORDER BY m.received_ms, m.record_key LIMIT ?`, user, device, now, limit)
 	if err != nil {
 		return nil, err
 	}

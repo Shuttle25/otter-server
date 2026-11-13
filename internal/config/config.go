@@ -194,8 +194,10 @@ func (c *Config) validateTurn() error {
 	defInt(&t.RelayPortMax, 49200)
 	defInt(&t.MaxAllocationsPerUser, 4)
 	defInt(&t.RelayKbps, 200)
-	if net.ParseIP(t.RelayIP) == nil {
+	if ip := net.ParseIP(t.RelayIP); ip == nil {
 		return fmt.Errorf("config: turn.relay_ip %q is not an IP address", t.RelayIP)
+	} else if ip.To4() == nil {
+		return fmt.Errorf("config: turn.relay_ip must be IPv4 (got %q)", t.RelayIP)
 	}
 	if t.RelayPortMin < 1024 || t.RelayPortMax > 65535 || t.RelayPortMin > t.RelayPortMax {
 		return fmt.Errorf("config: turn relay ports %d-%d invalid (1024-65535, min <= max)", t.RelayPortMin, t.RelayPortMax)

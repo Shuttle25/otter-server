@@ -2,35 +2,16 @@ package gateway
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"testing"
-	"time"
 
-	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 )
 
 func TestPushRegister(t *testing.T) {
 	n := startNode(t)
 	ctx := context.Background()
-	newUser := func(name string) (*acct, *client) {
-		secret := make([]byte, 32)
-		rand.Read(secret)
-		sum := sha256.Sum256(secret)
-		inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-		if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-			t.Fatal(err)
-		}
-		c := dial(t, n)
-		a, req := registerReq(t, n, secret, name)
-		if st, msg := c.call("register", req, nil); st != pb.Status_STATUS_OK {
-			t.Fatalf("register %s: %v %s", name, st, msg)
-		}
-		return a, c
-	}
-	anna, ca := newUser("anna")
-	boris, cb := newUser("boris")
+	anna, ca := newTestUser(t, n, "anna")
+	boris, cb := newTestUser(t, n, "boris")
 	cb.c.CloseNow()
 	login(t, ca, anna)
 

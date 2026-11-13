@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -242,8 +244,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "users=%d records=%d oplog_seq=%d blobs=%d blob_bytes=%d peers=%d\n",
+		fmt.Fprintf(out, "users=%d records=%d oplog_seq=%d blobs=%d blob_bytes=%d peers=%d",
 			st.Users, st.Records, st.OplogSeq, st.Blobs, st.BlobBytes, st.Peers)
+		if ts, ok := turnsrv.ReadSnapshot(turnStatsPath(a.cfg), time.Now(), time.Minute); ok {
+			fmt.Fprintf(out, " turn_allocs=%d turn_relayed_bytes=%d", ts.Allocations, ts.Relayed)
+		}
+		fmt.Fprintln(out)
 		return nil
 	case "netlog":
 		return printNetlog(ctx, a.st, *limit, *asJSON, out)
@@ -309,6 +315,17 @@ func serve(ctx context.Context, a *app) error {
 	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
+	// before serving: sessions read svc.Turn without a lock
+	if a.cfg.TurnEnabled() {
+		if ts, iss, err := startTurn(a); err != nil {
+			a.log.Error("turn off: could not start", "err", err)
+			nl.Add(ctx, netlog.Entry{Peer: "turn", Endpoint: "turn", Direction: "in",
+				Result: netlog.Result(netlog.Listen), Class: netlog.Listen, Detail: err.Error()})
+		} else {
+			defer ts.Close()
+			a.svc.Turn = iss
+		}
+	}
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
 	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"))
 	errc := make(chan error, 2)
@@ -334,6 +351,42 @@ func serve(ctx context.Context, a *app) error {
 		return srv.Shutdown(sctx)
 	}
 }
+
+// startTurn runs the embedded relay (D77). A failure leaves the node running without calls.
+func startTurn(a *app) (*turnsrv.Server, turnsrv.Issuer, error) {
+	t := a.cfg.Turn
+	secret, err := turnsrv.ReadSecret(t.SecretFile)
+	if err != nil {
+		return nil, turnsrv.Issuer{}, fmt.Errorf("turn secret: %w", err)
+	}
+	var tc *tls.Config
+	if t.TLSListen != "" {
+		cert, err := tls.LoadX509KeyPair(a.cfg.WSS.TLSCert, a.cfg.WSS.TLSKey)
+		if err != nil {
+			return nil, turnsrv.Issuer{}, fmt.Errorf("turn tls: %w", err)
+		}
+		tc = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+	}
+	srv, err := turnsrv.Start(turnsrv.Config{UDPListen: t.UDPListen, TCPListen: t.TCPListen, TLSListen: t.TLSListen,
+		TLS: tc, RelayIP: net.ParseIP(t.RelayIP).To4(), PortMin: t.RelayPortMin, PortMax: t.RelayPortMax, Secret: secret,
+		Realm: t.Realm, MaxPerUser: t.MaxAllocationsPerUser, MaxTotal: t.MaxAllocations, RelayKbps: t.RelayKbps,
+		AllowPrivatePeers: t.AllowPrivatePeers, Netlog: netlog.StoreLogger{S: a.st}, StatsFile: turnStatsPath(a.cfg),
+		Log: a.log})
+	if err != nil {
+		return nil, turnsrv.Issuer{}, err
+	}
+	return srv, turnsrv.Issuer{Secret: secret, RelayIP: t.RelayIP, TLS: tc != nil,
+		UDPPort: portOf(t.UDPListen), TCPPort: portOf(t.TCPListen), TLSPort: portOf(t.TLSListen)}, nil
+}
+
+func portOf(listen string) int {
+	_, p, _ := net.SplitHostPort(listen)
+	n, _ := strconv.Atoi(p)
+	return n
+}
+
+// turnStatsPath sits next to the database (the unit may write only there).
+func turnStatsPath(c *config.Config) string { return filepath.Join(c.DataDir, "turn.stats.json") }
 
 // startReality serves the client/peer mux on an internal listener and puts the REALITY inbound in front (D72).
 func startReality(a *app, gw http.Handler, repl *replication.Replicator, errc chan<- error) (func(), error) {

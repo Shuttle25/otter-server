@@ -29,6 +29,8 @@ func status(err error) pb.Status {
 		return pb.Status_STATUS_RETRY_LATER
 	case errors.Is(err, service.ErrQuota):
 		return pb.Status_STATUS_QUOTA
+	case errors.Is(err, service.ErrUnavailable):
+		return pb.Status_STATUS_UNAVAILABLE
 	default:
 		return pb.Status_STATUS_INTERNAL
 	}
@@ -218,6 +220,18 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.PublishBackup(ctx, s.userID(), r.Record)
+	case "turn.credentials":
+		return svc.TurnCredentials(s.userID())
+	case "push.status":
+		var r pb.PushStatusRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		ok, err := svc.PushStatus(ctx, r.UserId)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.PushStatus{HasPush: ok}, nil
 	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack", "push.register":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {

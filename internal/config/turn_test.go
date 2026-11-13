@@ -22,13 +22,14 @@ func TestTurnDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("defaults: %+v", tc)
 	}
 	for name, extra := range map[string]string{
-		"no relay_ip":  "[turn]\nenabled = true\n",
-		"bad relay_ip": "[turn]\nenabled = true\nrelay_ip = \"nope\"\n",
-		"min > max":    "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_min = 50000\nrelay_port_max = 49000\n",
-		"low port":     "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_min = 80\n",
-		"high port":    "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_max = 70000\n",
-		"too many":     "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nmax_allocations = 500\n",
-		"unknown key":  "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nbogus = 1\n",
+		"no relay_ip":   "[turn]\nenabled = true\n",
+		"bad relay_ip":  "[turn]\nenabled = true\nrelay_ip = \"nope\"\n",
+		"ipv6 relay_ip": "[turn]\nenabled = true\nrelay_ip = \"2001:db8::1\"\n",
+		"min > max":     "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_min = 50000\nrelay_port_max = 49000\n",
+		"low port":      "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_min = 80\n",
+		"high port":     "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nrelay_port_max = 70000\n",
+		"too many":      "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nmax_allocations = 500\n",
+		"unknown key":   "[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nbogus = 1\n",
 	} {
 		if _, err := Load(write(t, withTLS+extra)); err == nil {
 			t.Errorf("%s: want error", name)

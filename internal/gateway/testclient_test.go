@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/blobs"
+	"ottermsg/server/internal/keys"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 )
@@ -141,4 +144,22 @@ func (c *client) noEvent(typ string, d time.Duration) {
 			return
 		}
 	}
+}
+
+// newTestUser registers a new account through a fresh invite; the returned client is not logged in.
+func newTestUser(t *testing.T, n *node, name string) (*acct, *client) {
+	t.Helper()
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	sum := sha256.Sum256(secret)
+	inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
+	if _, err := n.svc.ImportRecord(context.Background(), inv); err != nil {
+		t.Fatal(err)
+	}
+	c := dial(t, n)
+	a, req := registerReq(t, n, secret, name)
+	if st, msg := c.call("register", req, nil); st != pb.Status_STATUS_OK {
+		t.Fatalf("register %s: %v %s", name, st, msg)
+	}
+	return a, c
 }

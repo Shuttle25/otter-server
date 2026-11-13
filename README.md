@@ -92,6 +92,23 @@ connectivity log (`otter-node netlog`, last 5 lines in `deploy/status.sh`). Code
 `internal/netlog`, `internal/replication/endpoints.go`. Reference: [`deploy/README.md`](deploy/README.md)
 ("REALITY and dial-out-only nodes"); decisions D70–D75; checklist [`docs/m7-manual-test.md`](docs/m7-manual-test.md).
 
+## Calls (TURN, M8)
+
+1:1 audio calls: phones signal through the ordinary encrypted mailbox (`Content.call`, urgent, 2-minute record
+expiry; nodes skip and purge expired envelopes) and send media (WebRTC, DTLS-SRTP end to end) through a **TURN relay
+embedded in `otter-node`** (Pion `turn/v5` v5.1.3, `internal/turnsrv`). Each phone uses the relay of its own node:
+`turn.credentials` (logged in) returns 12-hour TURN-REST credentials for this node only; phones ask on every call.
+Ports **UDP 3478, TCP 3478, TLS 5349** (only when `[wss]` has TLS), relays on **UDP 49160–49200**, IPv4 only. Limits:
+4 allocations per user, the port range per node, 200 kbit/s per allocation (`relay_kbps`); peers in private,
+loopback, link-local, CGNAT, NAT64, 6to4, Teredo and similar ranges are refused, and the node's own addresses only
+for its relay ports. The optional `[turn]` section needs the 0.8.0 binary; the per-node secret
+`/etc/otter/turn.secret` comes from `otter-node turn keygen` and never leaves the node. `deploy/turn-setup.sh LABEL`
+turns it on (`upgrade-all.sh` runs it for 0.8.0+, `--no-turn` skips); ufw only on an explicit yes, the cloud
+firewall by hand. `deploy/status.sh` shows a TURN column, `otter-node stats` adds `turn_allocs=` /
+`turn_relayed_bytes=`, `otter-node netlog` has the classes `auth`, `quota`, `listen`. `push.status` tells a caller
+whether the callee has a push token. Reference: [`deploy/README.md`](deploy/README.md) ("Calls (TURN, M8, D77)");
+decisions D76–D81; checklist [`docs/m8-manual-test.md`](docs/m8-manual-test.md).
+
 ## Private files (never commit)
 
 | File | Where it lives | Why it is private |

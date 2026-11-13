@@ -23,6 +23,10 @@ host_lookup() {
   read -r TARGET TARGET_PORT <<< "$line"
   TARGET_PORT=${TARGET_PORT:-$SSH_PORT}
 }
+# version_ge V MIN → true when release V (x.y.z[-suffix]) is MIN or newer; dev builds and "unknown" are not.
+version_ge() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" == "$2" ]]; }
+# TURN_PORTS: what the embedded TURN relay (M8, D77) listens on; ufw syntax.
+TURN_PORTS="3478/udp 3478/tcp 5349/tcp 49160:49200/udp"
 # node_labels → every node label in manifest order (node list prints one line per endpoint).
 node_labels() { admin node list | awk '{ print $1 }' | uniq; }
 [[ -x "$ADMIN_BIN" && -x "$NODE_BIN" ]] || die "build the tools first: make build"

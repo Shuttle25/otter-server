@@ -18,6 +18,8 @@ var (
 	ErrRetryLater = errors.New("retry later")
 	// ErrQuota: blob larger than max_blob, or the author's live blobs would exceed user_quota (D44).
 	ErrQuota = errors.New("quota")
+	// ErrUnavailable: the feature is not enabled on this node (e.g. TURN off).
+	ErrUnavailable = errors.New("unavailable")
 )
 
 // invalid maps validator errors to service errors.

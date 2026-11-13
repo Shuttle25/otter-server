@@ -137,6 +137,61 @@ func (ReceiptMessage_Type) EnumDescriptor() ([]byte, []int) {
 	return file_otter_v1_content_proto_rawDescGZIP(), []int{9, 0}
 }
 
+type CallHangup_Reason int32
+
+const (
+	CallHangup_NORMAL   CallHangup_Reason = 0
+	CallHangup_BUSY     CallHangup_Reason = 1
+	CallHangup_DECLINED CallHangup_Reason = 2
+	CallHangup_TIMEOUT  CallHangup_Reason = 3
+	CallHangup_FAILED   CallHangup_Reason = 4
+)
+
+// Enum value maps for CallHangup_Reason.
+var (
+	CallHangup_Reason_name = map[int32]string{
+		0: "NORMAL",
+		1: "BUSY",
+		2: "DECLINED",
+		3: "TIMEOUT",
+		4: "FAILED",
+	}
+	CallHangup_Reason_value = map[string]int32{
+		"NORMAL":   0,
+		"BUSY":     1,
+		"DECLINED": 2,
+		"TIMEOUT":  3,
+		"FAILED":   4,
+	}
+)
+
+func (x CallHangup_Reason) Enum() *CallHangup_Reason {
+	p := new(CallHangup_Reason)
+	*p = x
+	return p
+}
+
+func (x CallHangup_Reason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CallHangup_Reason) Descriptor() protoreflect.EnumDescriptor {
+	return file_otter_v1_content_proto_enumTypes[2].Descriptor()
+}
+
+func (CallHangup_Reason) Type() protoreflect.EnumType {
+	return &file_otter_v1_content_proto_enumTypes[2]
+}
+
+func (x CallHangup_Reason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CallHangup_Reason.Descriptor instead.
+func (CallHangup_Reason) EnumDescriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{16, 0}
+}
+
 type Content struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Body:
@@ -146,6 +201,7 @@ type Content struct {
 	//	*Content_GroupUpdate
 	//	*Content_SenderKey
 	//	*Content_SessionReset
+	//	*Content_Call
 	Body          isContent_Body `protobuf_oneof:"body"`
 	SentMs        int64          `protobuf:"varint,10,opt,name=sent_ms,json=sentMs,proto3" json:"sent_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -234,6 +290,15 @@ func (x *Content) GetSessionReset() *SessionReset {
 	return nil
 }
 
+func (x *Content) GetCall() *CallMessage {
+	if x != nil {
+		if x, ok := x.Body.(*Content_Call); ok {
+			return x.Call
+		}
+	}
+	return nil
+}
+
 func (x *Content) GetSentMs() int64 {
 	if x != nil {
 		return x.SentMs
@@ -265,6 +330,10 @@ type Content_SessionReset struct {
 	SessionReset *SessionReset `protobuf:"bytes,5,opt,name=session_reset,json=sessionReset,proto3,oneof"`
 }
 
+type Content_Call struct {
+	Call *CallMessage `protobuf:"bytes,6,opt,name=call,proto3,oneof"`
+}
+
 func (*Content_Data) isContent_Body() {}
 
 func (*Content_Receipt) isContent_Body() {}
@@ -274,6 +343,8 @@ func (*Content_GroupUpdate) isContent_Body() {}
 func (*Content_SenderKey) isContent_Body() {}
 
 func (*Content_SessionReset) isContent_Body() {}
+
+func (*Content_Call) isContent_Body() {}
 
 type DataMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -913,18 +984,387 @@ func (*SessionReset) Descriptor() ([]byte, []int) {
 	return file_otter_v1_content_proto_rawDescGZIP(), []int{10}
 }
 
+// 1:1 call signaling (D78). Sent as an ordinary Signal-encrypted 1:1 envelope, urgent, record expiry created + 2 min.
+// The DTLS fingerprints inside the SDP travel only here, so nodes and TURN relays cannot intercept the media.
+type CallMessage struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	CallId []byte                 `protobuf:"bytes,1,opt,name=call_id,json=callId,proto3" json:"call_id,omitempty"` // 16 random bytes chosen by the caller; glare: the smaller call_id (bytewise) wins
+	// Types that are valid to be assigned to Kind:
+	//
+	//	*CallMessage_Offer
+	//	*CallMessage_Answer
+	//	*CallMessage_Candidates
+	//	*CallMessage_Hangup
+	Kind          isCallMessage_Kind `protobuf_oneof:"kind"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallMessage) Reset() {
+	*x = CallMessage{}
+	mi := &file_otter_v1_content_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallMessage) ProtoMessage() {}
+
+func (x *CallMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallMessage.ProtoReflect.Descriptor instead.
+func (*CallMessage) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CallMessage) GetCallId() []byte {
+	if x != nil {
+		return x.CallId
+	}
+	return nil
+}
+
+func (x *CallMessage) GetKind() isCallMessage_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return nil
+}
+
+func (x *CallMessage) GetOffer() *CallOffer {
+	if x != nil {
+		if x, ok := x.Kind.(*CallMessage_Offer); ok {
+			return x.Offer
+		}
+	}
+	return nil
+}
+
+func (x *CallMessage) GetAnswer() *CallAnswer {
+	if x != nil {
+		if x, ok := x.Kind.(*CallMessage_Answer); ok {
+			return x.Answer
+		}
+	}
+	return nil
+}
+
+func (x *CallMessage) GetCandidates() *IceCandidates {
+	if x != nil {
+		if x, ok := x.Kind.(*CallMessage_Candidates); ok {
+			return x.Candidates
+		}
+	}
+	return nil
+}
+
+func (x *CallMessage) GetHangup() *CallHangup {
+	if x != nil {
+		if x, ok := x.Kind.(*CallMessage_Hangup); ok {
+			return x.Hangup
+		}
+	}
+	return nil
+}
+
+type isCallMessage_Kind interface {
+	isCallMessage_Kind()
+}
+
+type CallMessage_Offer struct {
+	Offer *CallOffer `protobuf:"bytes,2,opt,name=offer,proto3,oneof"`
+}
+
+type CallMessage_Answer struct {
+	Answer *CallAnswer `protobuf:"bytes,3,opt,name=answer,proto3,oneof"`
+}
+
+type CallMessage_Candidates struct {
+	Candidates *IceCandidates `protobuf:"bytes,4,opt,name=candidates,proto3,oneof"`
+}
+
+type CallMessage_Hangup struct {
+	Hangup *CallHangup `protobuf:"bytes,5,opt,name=hangup,proto3,oneof"`
+}
+
+func (*CallMessage_Offer) isCallMessage_Kind() {}
+
+func (*CallMessage_Answer) isCallMessage_Kind() {}
+
+func (*CallMessage_Candidates) isCallMessage_Kind() {}
+
+func (*CallMessage_Hangup) isCallMessage_Kind() {}
+
+type CallOffer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sdp           string                 `protobuf:"bytes,1,opt,name=sdp,proto3" json:"sdp,omitempty"`          // includes the candidates gathered in the first ~2 s
+	Restart       bool                   `protobuf:"varint,2,opt,name=restart,proto3" json:"restart,omitempty"` // ICE restart within an existing call (same call_id)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallOffer) Reset() {
+	*x = CallOffer{}
+	mi := &file_otter_v1_content_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallOffer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallOffer) ProtoMessage() {}
+
+func (x *CallOffer) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallOffer.ProtoReflect.Descriptor instead.
+func (*CallOffer) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CallOffer) GetSdp() string {
+	if x != nil {
+		return x.Sdp
+	}
+	return ""
+}
+
+func (x *CallOffer) GetRestart() bool {
+	if x != nil {
+		return x.Restart
+	}
+	return false
+}
+
+type CallAnswer struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sdp           string                 `protobuf:"bytes,1,opt,name=sdp,proto3" json:"sdp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallAnswer) Reset() {
+	*x = CallAnswer{}
+	mi := &file_otter_v1_content_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallAnswer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallAnswer) ProtoMessage() {}
+
+func (x *CallAnswer) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallAnswer.ProtoReflect.Descriptor instead.
+func (*CallAnswer) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CallAnswer) GetSdp() string {
+	if x != nil {
+		return x.Sdp
+	}
+	return ""
+}
+
+type IceCandidate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SdpMid        string                 `protobuf:"bytes,1,opt,name=sdp_mid,json=sdpMid,proto3" json:"sdp_mid,omitempty"`
+	SdpMlineIndex int32                  `protobuf:"varint,2,opt,name=sdp_mline_index,json=sdpMlineIndex,proto3" json:"sdp_mline_index,omitempty"`
+	Candidate     string                 `protobuf:"bytes,3,opt,name=candidate,proto3" json:"candidate,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IceCandidate) Reset() {
+	*x = IceCandidate{}
+	mi := &file_otter_v1_content_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IceCandidate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IceCandidate) ProtoMessage() {}
+
+func (x *IceCandidate) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IceCandidate.ProtoReflect.Descriptor instead.
+func (*IceCandidate) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *IceCandidate) GetSdpMid() string {
+	if x != nil {
+		return x.SdpMid
+	}
+	return ""
+}
+
+func (x *IceCandidate) GetSdpMlineIndex() int32 {
+	if x != nil {
+		return x.SdpMlineIndex
+	}
+	return 0
+}
+
+func (x *IceCandidate) GetCandidate() string {
+	if x != nil {
+		return x.Candidate
+	}
+	return ""
+}
+
+type IceCandidates struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Candidates    []*IceCandidate        `protobuf:"bytes,1,rep,name=candidates,proto3" json:"candidates,omitempty"` // late (trickled) candidates only
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IceCandidates) Reset() {
+	*x = IceCandidates{}
+	mi := &file_otter_v1_content_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IceCandidates) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IceCandidates) ProtoMessage() {}
+
+func (x *IceCandidates) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IceCandidates.ProtoReflect.Descriptor instead.
+func (*IceCandidates) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *IceCandidates) GetCandidates() []*IceCandidate {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+type CallHangup struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        CallHangup_Reason      `protobuf:"varint,1,opt,name=reason,proto3,enum=otter.v1.CallHangup_Reason" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallHangup) Reset() {
+	*x = CallHangup{}
+	mi := &file_otter_v1_content_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallHangup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallHangup) ProtoMessage() {}
+
+func (x *CallHangup) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_content_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallHangup.ProtoReflect.Descriptor instead.
+func (*CallHangup) Descriptor() ([]byte, []int) {
+	return file_otter_v1_content_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CallHangup) GetReason() CallHangup_Reason {
+	if x != nil {
+		return x.Reason
+	}
+	return CallHangup_NORMAL
+}
+
 var File_otter_v1_content_proto protoreflect.FileDescriptor
 
 const file_otter_v1_content_proto_rawDesc = "" +
 	"\n" +
-	"\x16otter/v1/content.proto\x12\botter.v1\"\xca\x02\n" +
+	"\x16otter/v1/content.proto\x12\botter.v1\"\xf7\x02\n" +
 	"\aContent\x12+\n" +
 	"\x04data\x18\x01 \x01(\v2\x15.otter.v1.DataMessageH\x00R\x04data\x124\n" +
 	"\areceipt\x18\x02 \x01(\v2\x18.otter.v1.ReceiptMessageH\x00R\areceipt\x12:\n" +
 	"\fgroup_update\x18\x03 \x01(\v2\x15.otter.v1.GroupUpdateH\x00R\vgroupUpdate\x12@\n" +
 	"\n" +
 	"sender_key\x18\x04 \x01(\v2\x1f.otter.v1.SenderKeyDistributionH\x00R\tsenderKey\x12=\n" +
-	"\rsession_reset\x18\x05 \x01(\v2\x16.otter.v1.SessionResetH\x00R\fsessionReset\x12\x17\n" +
+	"\rsession_reset\x18\x05 \x01(\v2\x16.otter.v1.SessionResetH\x00R\fsessionReset\x12+\n" +
+	"\x04call\x18\x06 \x01(\v2\x15.otter.v1.CallMessageH\x00R\x04call\x12\x17\n" +
 	"\asent_ms\x18\n" +
 	" \x01(\x03R\x06sentMsB\x06\n" +
 	"\x04body\"\xa6\x01\n" +
@@ -992,7 +1432,41 @@ const file_otter_v1_content_proto_rawDesc = "" +
 	"\x04Type\x12\r\n" +
 	"\tDELIVERED\x10\x00\x12\b\n" +
 	"\x04READ\x10\x01\"\x0e\n" +
-	"\fSessionResetBI\n" +
+	"\fSessionReset\"\xf6\x01\n" +
+	"\vCallMessage\x12\x17\n" +
+	"\acall_id\x18\x01 \x01(\fR\x06callId\x12+\n" +
+	"\x05offer\x18\x02 \x01(\v2\x13.otter.v1.CallOfferH\x00R\x05offer\x12.\n" +
+	"\x06answer\x18\x03 \x01(\v2\x14.otter.v1.CallAnswerH\x00R\x06answer\x129\n" +
+	"\n" +
+	"candidates\x18\x04 \x01(\v2\x17.otter.v1.IceCandidatesH\x00R\n" +
+	"candidates\x12.\n" +
+	"\x06hangup\x18\x05 \x01(\v2\x14.otter.v1.CallHangupH\x00R\x06hangupB\x06\n" +
+	"\x04kind\"7\n" +
+	"\tCallOffer\x12\x10\n" +
+	"\x03sdp\x18\x01 \x01(\tR\x03sdp\x12\x18\n" +
+	"\arestart\x18\x02 \x01(\bR\arestart\"\x1e\n" +
+	"\n" +
+	"CallAnswer\x12\x10\n" +
+	"\x03sdp\x18\x01 \x01(\tR\x03sdp\"m\n" +
+	"\fIceCandidate\x12\x17\n" +
+	"\asdp_mid\x18\x01 \x01(\tR\x06sdpMid\x12&\n" +
+	"\x0fsdp_mline_index\x18\x02 \x01(\x05R\rsdpMlineIndex\x12\x1c\n" +
+	"\tcandidate\x18\x03 \x01(\tR\tcandidate\"G\n" +
+	"\rIceCandidates\x126\n" +
+	"\n" +
+	"candidates\x18\x01 \x03(\v2\x16.otter.v1.IceCandidateR\n" +
+	"candidates\"\x88\x01\n" +
+	"\n" +
+	"CallHangup\x123\n" +
+	"\x06reason\x18\x01 \x01(\x0e2\x1b.otter.v1.CallHangup.ReasonR\x06reason\"E\n" +
+	"\x06Reason\x12\n" +
+	"\n" +
+	"\x06NORMAL\x10\x00\x12\b\n" +
+	"\x04BUSY\x10\x01\x12\f\n" +
+	"\bDECLINED\x10\x02\x12\v\n" +
+	"\aTIMEOUT\x10\x03\x12\n" +
+	"\n" +
+	"\x06FAILED\x10\x04BI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -1007,39 +1481,53 @@ func file_otter_v1_content_proto_rawDescGZIP() []byte {
 	return file_otter_v1_content_proto_rawDescData
 }
 
-var file_otter_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_otter_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_otter_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_otter_v1_content_proto_goTypes = []any{
 	(GroupEvent_Type)(0),          // 0: otter.v1.GroupEvent.Type
 	(ReceiptMessage_Type)(0),      // 1: otter.v1.ReceiptMessage.Type
-	(*Content)(nil),               // 2: otter.v1.Content
-	(*DataMessage)(nil),           // 3: otter.v1.DataMessage
-	(*Attachment)(nil),            // 4: otter.v1.Attachment
-	(*GroupContext)(nil),          // 5: otter.v1.GroupContext
-	(*GroupState)(nil),            // 6: otter.v1.GroupState
-	(*SignedGroupState)(nil),      // 7: otter.v1.SignedGroupState
-	(*GroupUpdate)(nil),           // 8: otter.v1.GroupUpdate
-	(*SenderKeyDistribution)(nil), // 9: otter.v1.SenderKeyDistribution
-	(*GroupEvent)(nil),            // 10: otter.v1.GroupEvent
-	(*ReceiptMessage)(nil),        // 11: otter.v1.ReceiptMessage
-	(*SessionReset)(nil),          // 12: otter.v1.SessionReset
+	(CallHangup_Reason)(0),        // 2: otter.v1.CallHangup.Reason
+	(*Content)(nil),               // 3: otter.v1.Content
+	(*DataMessage)(nil),           // 4: otter.v1.DataMessage
+	(*Attachment)(nil),            // 5: otter.v1.Attachment
+	(*GroupContext)(nil),          // 6: otter.v1.GroupContext
+	(*GroupState)(nil),            // 7: otter.v1.GroupState
+	(*SignedGroupState)(nil),      // 8: otter.v1.SignedGroupState
+	(*GroupUpdate)(nil),           // 9: otter.v1.GroupUpdate
+	(*SenderKeyDistribution)(nil), // 10: otter.v1.SenderKeyDistribution
+	(*GroupEvent)(nil),            // 11: otter.v1.GroupEvent
+	(*ReceiptMessage)(nil),        // 12: otter.v1.ReceiptMessage
+	(*SessionReset)(nil),          // 13: otter.v1.SessionReset
+	(*CallMessage)(nil),           // 14: otter.v1.CallMessage
+	(*CallOffer)(nil),             // 15: otter.v1.CallOffer
+	(*CallAnswer)(nil),            // 16: otter.v1.CallAnswer
+	(*IceCandidate)(nil),          // 17: otter.v1.IceCandidate
+	(*IceCandidates)(nil),         // 18: otter.v1.IceCandidates
+	(*CallHangup)(nil),            // 19: otter.v1.CallHangup
 }
 var file_otter_v1_content_proto_depIdxs = []int32{
-	3,  // 0: otter.v1.Content.data:type_name -> otter.v1.DataMessage
-	11, // 1: otter.v1.Content.receipt:type_name -> otter.v1.ReceiptMessage
-	8,  // 2: otter.v1.Content.group_update:type_name -> otter.v1.GroupUpdate
-	9,  // 3: otter.v1.Content.sender_key:type_name -> otter.v1.SenderKeyDistribution
-	12, // 4: otter.v1.Content.session_reset:type_name -> otter.v1.SessionReset
-	5,  // 5: otter.v1.DataMessage.group:type_name -> otter.v1.GroupContext
-	4,  // 6: otter.v1.DataMessage.attachments:type_name -> otter.v1.Attachment
-	7,  // 7: otter.v1.GroupUpdate.state:type_name -> otter.v1.SignedGroupState
-	0,  // 8: otter.v1.GroupEvent.type:type_name -> otter.v1.GroupEvent.Type
-	1,  // 9: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	4,  // 0: otter.v1.Content.data:type_name -> otter.v1.DataMessage
+	12, // 1: otter.v1.Content.receipt:type_name -> otter.v1.ReceiptMessage
+	9,  // 2: otter.v1.Content.group_update:type_name -> otter.v1.GroupUpdate
+	10, // 3: otter.v1.Content.sender_key:type_name -> otter.v1.SenderKeyDistribution
+	13, // 4: otter.v1.Content.session_reset:type_name -> otter.v1.SessionReset
+	14, // 5: otter.v1.Content.call:type_name -> otter.v1.CallMessage
+	6,  // 6: otter.v1.DataMessage.group:type_name -> otter.v1.GroupContext
+	5,  // 7: otter.v1.DataMessage.attachments:type_name -> otter.v1.Attachment
+	8,  // 8: otter.v1.GroupUpdate.state:type_name -> otter.v1.SignedGroupState
+	0,  // 9: otter.v1.GroupEvent.type:type_name -> otter.v1.GroupEvent.Type
+	1,  // 10: otter.v1.ReceiptMessage.type:type_name -> otter.v1.ReceiptMessage.Type
+	15, // 11: otter.v1.CallMessage.offer:type_name -> otter.v1.CallOffer
+	16, // 12: otter.v1.CallMessage.answer:type_name -> otter.v1.CallAnswer
+	18, // 13: otter.v1.CallMessage.candidates:type_name -> otter.v1.IceCandidates
+	19, // 14: otter.v1.CallMessage.hangup:type_name -> otter.v1.CallHangup
+	17, // 15: otter.v1.IceCandidates.candidates:type_name -> otter.v1.IceCandidate
+	2,  // 16: otter.v1.CallHangup.reason:type_name -> otter.v1.CallHangup.Reason
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_content_proto_init() }
@@ -1053,14 +1541,21 @@ func file_otter_v1_content_proto_init() {
 		(*Content_GroupUpdate)(nil),
 		(*Content_SenderKey)(nil),
 		(*Content_SessionReset)(nil),
+		(*Content_Call)(nil),
+	}
+	file_otter_v1_content_proto_msgTypes[11].OneofWrappers = []any{
+		(*CallMessage_Offer)(nil),
+		(*CallMessage_Answer)(nil),
+		(*CallMessage_Candidates)(nil),
+		(*CallMessage_Hangup)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_content_proto_rawDesc), len(file_otter_v1_content_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   11,
+			NumEnums:      3,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

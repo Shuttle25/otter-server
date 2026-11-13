@@ -2,7 +2,7 @@
 # Offline tests for the admin-side deploy scripts (no VM; ssh/scp are stubs).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-work=$(mktemp -d); trap 'rm -rf "$work"; rm -f dist/otter-node_0.0.0-st_linux_* dist/bundle-n3.* dist/news/0.0.0-st.md' EXIT
+work=$(mktemp -d); trap 'rm -rf "$work"; rm -f dist/otter-node_0.0.0-st_linux_* dist/otter-node_0.8.0-st_linux_* dist/bundle-n3.* dist/bundle-n1.* dist/bundle-n8.* dist/news/0.0.0-st.md' EXIT
 fail() { echo "scripts test: FAIL: $*" >&2; exit 1; }
 export OTTER_ADMIN_DIR="$work/admin" OTTER_ADMIN_PASSPHRASE=scripts-test-passphrase
 unset OTTER_SSH_PORT OTTER_SSH_OPTS
@@ -125,12 +125,12 @@ cat > "$work/stub/ssh" <<'STUB'
 printf '0.5.0\nactive\nusers=1\n1M\non\n'
 STUB
 out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
-grep -q '^LABEL .* PUSH$' <<< "$out" || fail "status header: $out"
-grep -qE '^n1 .* 1M +on$' <<< "$out" || fail "status push column: $out"
+grep -qE '^LABEL .* PUSH +TURN$' <<< "$out" || fail "status header: $out"
+grep -qE '^n1 .* 1M +on +-$' <<< "$out" || fail "status push column: $out"
 # netlog lines (after the --netlog-- marker) are printed under the table, indented with the label
 printf '#!/bin/sh\nprintf "0.7.0\\nactive\\nusers=1\\n1M\\non\\n--netlog--\\n2026-11-20 10:02  fi  reality:192.0.2.5:443  out  ok\\n"\n' > "$work/stub/ssh"
 out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
-grep -qE '^n1 .* 1M +on$' <<< "$out" || fail "status row with netlog: $out"
+grep -qE '^n1 .* 1M +on +-$' <<< "$out" || fail "status row with netlog: $out"
 grep -q '^  n1  2026-11-20 10:02  fi  reality:192.0.2.5:443  out  ok$' <<< "$out" || fail "status netlog: $out"
 
 # --- release-apk.sh / news-dialog.sh with stubbed ssh, scp, apksigner, aapt2 and 'otter-admin announce'
@@ -245,5 +245,191 @@ done
 bash -n "$work/remote.sh" || fail "remote script syntax"
 grep -q '^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$' deploy/templates/otter-node.service &&
   grep -q '^AmbientCapabilities=CAP_NET_BIND_SERVICE$' deploy/templates/otter-node.service || fail "unit lacks CAP_NET_BIND_SERVICE"
+
+# --- M8: TURN relay for calls (D77) ------------------------------------------------------------------------------
+# lib.sh version_ge: releases only (dev builds and "unknown" are not 0.8.0+)
+(
+  source deploy/lib.sh
+  for v in 0.8.0 0.8.0-st 0.8.1 0.10.0 1.0.0; do version_ge "$v" 0.8.0 || fail "version_ge $v"; done
+  for v in 0.7.0 0.7.9 0.0.0-st dev-abc123 unknown ""; do if version_ge "$v" 0.8.0; then fail "version_ge accepted '$v'"; fi; done
+) || exit 1
+# templates and install.sh (static: install.sh runs only on a real server)
+grep -q '^relay_ip = "\${OTTER_IP}"$' deploy/templates/node.toml.turn || fail "turn template relay_ip"
+grep -q '^\[turn\]$' deploy/templates/node.toml.turn && grep -q '^enabled = true$' deploy/templates/node.toml.turn || fail "turn template"
+if grep -q '^\[turn\]' deploy/templates/node.toml; then fail "[turn] in the base template (pre-0.8.0 bundles)"; fi
+grep -q 'otter-node turn keygen --config /etc/otter/node.toml$' deploy/bundle/install.sh || fail "install.sh does not create the TURN secret"
+keygen_line=$(grep -n 'otter-node turn keygen' deploy/bundle/install.sh | cut -d: -f1)
+check_line=$(grep -n 'otter-node check --config' deploy/bundle/install.sh | cut -d: -f1)
+bin_line=$(grep -n 'install -o root -g root -m 0755 "otter-node-\$arch"' deploy/bundle/install.sh | cut -d: -f1)
+(( bin_line < keygen_line && keygen_line < check_line )) || fail "install.sh: keygen must run after the binary install and before check"
+grep -q 'chown root:otter /etc/otter/turn.secret && chmod 0640 /etc/otter/turn.secret' deploy/bundle/install.sh || fail "install.sh secret mode"
+grep -q '49160:49200/udp' deploy/bundle/install.sh || fail "install.sh firewall: relay range"
+grep -q 'if \[\[ "\$turn_ufw" == 1 \]\]; then' deploy/bundle/install.sh || fail "install.sh changes ufw for TURN without a yes"
+grep -q 'cloud firewall: also open UDP 3478, TCP 3478, TCP 5349, UDP 49160-49200' deploy/bundle/install.sh || fail "install.sh cloud reminder"
+grep -q 'OTTER_TURN_UFW=\$turn_ufw ./bundle-' deploy/push.sh || fail "push.sh does not pass the ufw answer"
+
+# make-bundle.sh: [turn] with the node's IP only for 0.8.0+
+printf 'fake' > dist/otter-node_0.8.0-st_linux_amd64; printf 'fake' > dist/otter-node_0.8.0-st_linux_arm64
+touch dist/otter-node_0.0.0-st_linux_amd64 dist/otter-node_0.0.0-st_linux_arm64
+deploy/make-bundle.sh n1 0.8.0-st >/dev/null || fail "make-bundle 0.8.0-st"
+toml=$(tar -xzOf dist/bundle-n1.tar.gz bundle-n1/node.toml)
+grep -q '^\[turn\]$' <<< "$toml" || fail "0.8.0 bundle without [turn]: $toml"
+grep -q '^relay_ip = "192.0.2.1"$' <<< "$toml" || fail "0.8.0 bundle relay_ip: $toml"
+[[ "$(grep -c '^\[' <<< "$toml")" == "$(grep '^\[' <<< "$toml" | sort -u | wc -l)" ]] || fail "duplicate sections: $toml"
+if grep -q 'turn.secret$' <<< "$(tar -tzf dist/bundle-n1.tar.gz)"; then fail "a TURN secret in the bundle"; fi
+rm -f dist/bundle-n1.*
+deploy/make-bundle.sh n1 0.0.0-st >/dev/null || fail "make-bundle 0.0.0-st"
+if grep -q 'turn' <<< "$(tar -xzOf dist/bundle-n1.tar.gz bundle-n1/node.toml)"; then fail "pre-0.8.0 bundle has [turn]"; fi
+rm -f dist/bundle-n1.*
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node add --label n8 --wss-host 192.0.2.8 >/dev/null # no --ip: no relay_ip
+if out=$(deploy/make-bundle.sh n8 0.8.0-st 2>&1); then fail "0.8.0 bundle without an IPv4"; fi
+grep -q 'set-ip --label n8' <<< "$out" || fail "make-bundle no-IP message: $out"
+bin/otter-admin --dir "$OTTER_ADMIN_DIR" node remove --label n8 >/dev/null
+rm -f dist/otter-node_0.0.0-st_linux_*
+
+# turn-setup.sh with stubbed ssh: probe answers "$VER / $HAS / $FW"; the remote script's stdin is saved
+if out=$(deploy/turn-setup.sh 2>&1); then fail "turn-setup without a label"; fi
+grep -q 'usage: turn-setup.sh LABEL' <<< "$out" || fail "turn-setup usage: $out"
+if out=$(deploy/turn-setup.sh n1 --bogus 2>&1); then fail "turn-setup accepted --bogus"; fi
+if out=$(deploy/turn-setup.sh n2 2>&1); then fail "turn-setup without a host"; fi
+grep -q 'hosts.sh set n2' <<< "$out" || fail "turn-setup host message: $out"
+cat > "$work/stub/ssh" <<STUB
+#!/bin/sh
+echo "ssh \$*" >> "$work/ssh.log"
+case "\$*" in
+  *"ufw status"*) printf '%s\n%s\n%s\n' "\${PVER:-\${VER:-0.8.0}}" "\${HAS:-no-turn}" "\${FW:-no-ufw}" ;;
+  *uname*) echo x86_64 ;;
+  *"otter-node version"*) echo "\${VER:-0.8.0}" ;;
+  *"bash -s"*) cat > "$work/turn-remote.sh"; [ -z "\$REMOTE_FAIL" ] || exit 1; echo "TURN is on" ;;
+esac
+STUB
+chmod +x "$work/stub/ssh"
+tsetup() { rm -f "$work/ssh.log" "$work/turn-remote.sh"; touch "$work/ssh.log"; PATH="$work/stub:$PATH" deploy/turn-setup.sh "$@" < /dev/null 2>&1; }
+out=$(tsetup n1) || fail "turn-setup: $out"
+grep -q '^ssh -p 22 .*root@n1.example bash -s -- 192.0.2.1 0 0 0$' "$work/ssh.log" || fail "turn-setup remote call: $(cat "$work/ssh.log")"
+grep -q 'cloud firewall, open there: UDP 3478, TCP 3478, TCP 5349, UDP 49160-49200' <<< "$out" || fail "turn-setup cloud reminder: $out"
+r="$work/turn-remote.sh"
+bash -n "$r" || fail "turn-setup remote script syntax"
+for want in 'otter-node check --config /etc/otter/node.toml.new' 'turn keygen --config /etc/otter/node.toml.new' \
+    'cp -p "$cfg" /etc/otter/node.toml.pre-turn' 'mv /etc/otter/node.toml.pre-turn "$cfg"' '"msg":"turn on"' \
+    'relay_ip = "$relay_ip"' 'chmod 0640 /etc/otter/turn.secret'; do
+  grep -qF -- "$want" "$r" || fail "turn-setup remote script lacks $want"
+done
+for v in 0.7.0 dev-abc123; do
+  if out=$(VER=$v tsetup n1); then fail "turn-setup accepted $v"; fi
+  grep -q 'needs 0.8.0' <<< "$out" || fail "turn-setup old-version message: $out"
+  if grep -q 'bash -s' "$work/ssh.log"; then fail "turn-setup configured a $v node"; fi
+done
+out=$(HAS=turn tsetup n1 --if-missing) || fail "turn-setup --if-missing with [turn]: $out"
+grep -q 'already has \[turn\]' <<< "$out" || fail "--if-missing message: $out"
+if grep -q 'bash -s' "$work/ssh.log"; then fail "--if-missing reconfigured"; fi
+if out=$(HAS=turn tsetup n1); then fail "turn-setup replaced [turn] without --force"; fi
+grep -q -- '--force' <<< "$out" || fail "turn-setup --force hint: $out"
+out=$(HAS=turn tsetup n1 --force) || fail "turn-setup --force: $out"
+grep -q 'bash -s -- 192.0.2.1 1 0 0$' "$work/ssh.log" || fail "--force not passed: $(cat "$work/ssh.log")"
+# an active ufw without a terminal: not changed, the commands are printed
+out=$(FW=ufw tsetup n1) || fail "turn-setup with ufw: $out"
+grep -q 'bash -s -- 192.0.2.1 0 0 0$' "$work/ssh.log" || fail "ufw changed without a yes: $(cat "$work/ssh.log")"
+grep -q 'NOT be changed.*ufw allow 3478/udp && ufw allow 3478/tcp && ufw allow 5349/tcp && ufw allow 49160:49200/udp' <<< "$out" ||
+  fail "ufw commands not printed: $out"
+if out=$(REMOTE_FAIL=1 tsetup n1); then fail "turn-setup ignored a remote failure"; fi
+grep -q 'previous config' <<< "$out" || fail "turn-setup failure message: $out"
+
+# the remote script itself, run against a fake /etc/otter with stub tools
+fake="$work/fake"; mkdir -p "$fake/bin" "$fake/etc"
+cat > "$fake/bin/otter-node" <<STUB
+#!/bin/sh
+case "\$1" in
+  version) echo 0.8.0 ;;
+  turn) [ -f "$fake/etc/turn.secret" ] && exit 1; head -c32 /dev/urandom > "$fake/etc/turn.secret"; echo "turn secret written $fake/etc/turn.secret" ;;
+  check) [ -z "\$CHECK_FAIL" ] || { echo "config: bad" >&2; exit 1; }; grep -q '^relay_ip = "192.0.2.1"' "\$3" ;;
+esac
+STUB
+printf '#!/bin/sh\nshift 3; exec "$@"\n' > "$fake/bin/runuser"
+printf '#!/bin/sh\nexit 0\n' > "$fake/bin/chown"
+printf '#!/bin/sh\necho "systemctl $*" >> "%s/actions.log"\n' "$fake" > "$fake/bin/systemctl"
+printf '#!/bin/sh\n[ -n "$TURN_FAIL" ] && echo "{\\"msg\\":\\"turn off: could not start\\"}" || echo "{\\"msg\\":\\"turn on\\"}"\n' > "$fake/bin/journalctl"
+printf '#!/bin/sh\ncase "$1" in status) echo "Status: active";; *) echo "ufw $*" >> "%s/actions.log";; esac\n' "$fake" > "$fake/bin/ufw"
+printf '#!/bin/sh\nexit 0\n' > "$fake/bin/health.sh"
+chmod +x "$fake/bin/"*
+sed -e "s#/etc/otter#$fake/etc#g" -e 's#/usr/local/bin/otter-node#otter-node#g' -e 's#/usr/local/lib/otter/health.sh#health.sh#g' \
+  "$r" > "$work/turn-local.sh"
+orig=$'data_dir = "/var/lib/otter"\n\n[wss]\nlisten = ":27443"\n\n[push]\nfcm_credentials = "/etc/otter/fcm.json"'
+runremote() { rm -f "$fake/actions.log"; PATH="$fake/bin:$PATH" bash "$work/turn-local.sh" "$@" 2>&1; }
+printf '%s\n' "$orig" > "$fake/etc/node.toml"
+out=$(runremote 192.0.2.1 0 0 1) || fail "remote script: $out"
+cfg=$(cat "$fake/etc/node.toml")
+grep -q '^relay_ip = "192.0.2.1"$' <<< "$cfg" && grep -q '^enabled = true$' <<< "$cfg" || fail "remote: no [turn]: $cfg"
+grep -q '^fcm_credentials' <<< "$cfg" || fail "remote lost [push]: $cfg"
+[[ "$(cat "$fake/etc/node.toml.pre-turn")" == "$orig" ]] || fail "remote: node.toml.pre-turn is not the old config"
+[[ "$(stat -c %a "$fake/etc/turn.secret")" == 640 && "$(stat -c %s "$fake/etc/turn.secret")" == 32 ]] || fail "secret mode/size"
+[[ "$(grep -c '^ufw allow' "$fake/actions.log")" == 4 ]] || fail "ufw rules after a yes: $(cat "$fake/actions.log")"
+grep -q '^+ ufw allow 49160:49200/udp$' <<< "$out" || fail "ufw commands not printed: $out"
+[[ ! -e "$fake/etc/node.toml.new" ]] || fail "node.toml.new left behind"
+secret_hex=$(od -An -tx1 "$fake/etc/turn.secret" | tr -d ' \n')
+if grep -qF "$secret_hex" <<< "$(od -An -tx1 <<< "$out" | tr -d ' \n')"; then fail "the secret was printed"; fi
+if grep -qE '(^|[;|&( ])(cat|od|xxd|base64|scp|head|tail|less) [^#]*turn\.secret' "$r" deploy/turn-setup.sh deploy/bundle/install.sh; then fail "a script reads the secret out"; fi
+# --force replaces the section once and keeps the secret and the sections after it
+printf '%s\n' "$orig" > "$fake/etc/node.toml"
+printf '\n# Embedded TURN relay for calls (M8, D77), old.\n[turn]\nenabled = true\nrelay_ip = "198.51.100.1"\n\n[limits]\nmax_blob = "50MiB"\n' >> "$fake/etc/node.toml"
+cp "$fake/etc/turn.secret" "$work/secret.before"
+if out=$(runremote 192.0.2.1 0 0 0); then fail "remote replaced [turn] without force"; fi
+out=$(runremote 192.0.2.1 0 1 0) || fail "remote --if-missing: $out"
+grep -q '198.51.100.1' "$fake/etc/node.toml" || fail "--if-missing changed the config"
+out=$(runremote 192.0.2.1 1 0 0) || fail "remote --force: $out"
+cfg=$(cat "$fake/etc/node.toml")
+[[ "$(grep -c '^\[turn\]' <<< "$cfg")" == 1 && "$(grep -c '^# Embedded TURN relay' <<< "$cfg")" == 1 ]] || fail "--force duplicated [turn]: $cfg"
+if grep -q '198.51.100.1' <<< "$cfg"; then fail "--force kept the old relay_ip: $cfg"; fi
+grep -q '^max_blob = "50MiB"$' <<< "$cfg" || fail "--force dropped [limits]: $cfg"
+cmp -s "$fake/etc/turn.secret" "$work/secret.before" || fail "--force replaced the secret"
+[[ ! -e "$fake/actions.log" ]] || ! grep -q '^ufw' "$fake/actions.log" || fail "ufw changed without a yes"
+# a config otter-node check rejects: live node.toml untouched, no restart
+printf '%s\n' "$orig" > "$fake/etc/node.toml"; rm -f "$fake/etc/node.toml.pre-turn"
+if out=$(CHECK_FAIL=1 runremote 192.0.2.1 0 0 1); then fail "remote ignored a failed check"; fi
+[[ "$(cat "$fake/etc/node.toml")" == "$orig" && ! -e "$fake/etc/node.toml.pre-turn" && ! -e "$fake/etc/node.toml.new" ]] ||
+  fail "failed check changed the config"
+[[ ! -e "$fake/actions.log" ]] || fail "failed check restarted or touched ufw: $(cat "$fake/actions.log")"
+# TURN does not come up: rolled back to the previous config, no firewall change
+if out=$(TURN_FAIL=1 runremote 192.0.2.1 0 0 1); then fail "remote ignored a TURN start failure"; fi
+[[ "$(cat "$fake/etc/node.toml")" == "$orig" ]] || fail "no rollback: $(cat "$fake/etc/node.toml")"
+[[ "$(grep -c '^systemctl restart otter-node$' "$fake/actions.log")" == 2 ]] || fail "rollback restarts: $(cat "$fake/actions.log")"
+if grep -q '^ufw' "$fake/actions.log"; then fail "ufw changed although TURN failed"; fi
+
+# upgrade-all.sh runs turn-setup --if-missing after 0.8.0+ (also for nodes already on it), unless --no-turn
+grep -q '"\$ROOT/deploy/turn-setup.sh" "\$1" --if-missing' deploy/upgrade-all.sh || fail "upgrade-all does not call turn-setup"
+touch dist/otter-node_0.8.0-st_linux_amd64 dist/otter-node_0.8.0-st_linux_arm64
+rm -f "$work/ssh.log"
+out=$(VER=0.8.0-st PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.8.0-st --only n1 --no-news < /dev/null 2>&1) || fail "upgrade-all turn: $out"
+grep -q 'bash -s -- 192.0.2.1 0 1 0$' "$work/ssh.log" || fail "upgrade-all did not run turn-setup: $(cat "$work/ssh.log")"
+grep -q '^n1 .*already 0.8.0-st, TURN ok$' <<< "$out" || fail "upgrade-all TURN summary: $out"
+rm -f "$work/ssh.log"
+# a real upgrade (upgrade.sh's remote script is stubbed too), then TURN
+out=$(VER=0.7.0 PVER=0.8.0-st PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.8.0-st --only n1 --no-news < /dev/null 2>&1) ||
+  fail "upgrade-all upgrade + turn: $out"
+grep -q '^n1 .*upgraded 0.7.0 → 0.8.0-st, TURN ok$' <<< "$out" || fail "upgrade-all upgrade + TURN summary: $out"
+[[ "$(grep -c 'bash -s' "$work/ssh.log")" == 2 ]] && grep -q 'bash -s -- 192.0.2.1 0 1 0$' "$work/ssh.log" ||
+  fail "upgrade then turn-setup: $(cat "$work/ssh.log")"
+rm -f "$work/ssh.log"
+out=$(VER=0.8.0-st REMOTE_FAIL=1 PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.8.0-st --only n1 --no-news < /dev/null 2>&1) ||
+  fail "upgrade-all must not stop on a TURN failure: $out"
+grep -q '^n1 .*TURN NOT ENABLED$' <<< "$out" || fail "upgrade-all TURN failure summary: $out"
+rm -f "$work/ssh.log"
+out=$(VER=0.8.0-st PATH="$work/stub:$PATH" deploy/upgrade-all.sh 0.8.0-st --only n1 --no-news --no-turn < /dev/null 2>&1) || fail "--no-turn: $out"
+if grep -q 'ufw status\|bash -s' "$work/ssh.log"; then fail "--no-turn ran turn-setup: $(cat "$work/ssh.log")"; fi
+grep -q '^n1 .*already 0.8.0-st$' <<< "$out" || fail "--no-turn summary: $out"
+rm -f "$work/ssh.log" dist/otter-node_0.8.0-st_linux_*
+
+# status.sh TURN column and the turn_allocs stats suffix
+cat > "$work/stub/ssh" <<'STUB'
+#!/bin/sh
+printf '0.8.0\nactive\nusers=1 turn_allocs=2 turn_relayed_bytes=10\n1M\non\non\n--netlog--\n'
+STUB
+out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
+grep -qE '^LABEL .* PUSH +TURN$' <<< "$out" || fail "status header: $out"
+grep -qE '^n1 .*users=1 turn_allocs=2 turn_relayed_bytes=10 .* on +on$' <<< "$out" || fail "status TURN column: $out"
+printf '#!/bin/sh\nprintf "0.8.0\\nactive\\nusers=1\\n1M\\non\\noff\\n--netlog--\\n"\n' > "$work/stub/ssh"
+out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
+grep -qE '^n1 .* on +off$' <<< "$out" || fail "status TURN off: $out"
+grep -q 'grep -q "^\\\[turn\\\]" /etc/otter/node.toml' deploy/status.sh || fail "status.sh does not check [turn]"
 
 echo "scripts test: ok"

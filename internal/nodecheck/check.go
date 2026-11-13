@@ -20,6 +20,7 @@ import (
 	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/turnsrv"
 )
 
 // Run returns one "ok …" line per passed check, or the first failure. It never opens the database.
@@ -87,13 +88,30 @@ func Run(cfgPath string) ([]string, error) {
 		return out, err
 	}
 	out = append(out, line)
-	if !cfg.RealityEnabled() {
-		return out, nil
+	if cfg.RealityEnabled() {
+		if line, err = checkReality(cfg, me); err != nil {
+			return out, err
+		}
+		out = append(out, line)
 	}
-	if line, err = checkReality(cfg, me); err != nil {
-		return out, err
+	if cfg.TurnEnabled() {
+		if line, err = checkTurn(cfg); err != nil {
+			return out, err
+		}
+		out = append(out, line)
 	}
-	return append(out, line), nil
+	return out, nil
+}
+
+// checkTurn reads the TURN secret (D77) and checks its length; the secret is never printed.
+func checkTurn(cfg *config.Config) (string, error) {
+	t := cfg.Turn
+	b, err := turnsrv.ReadSecret(t.SecretFile)
+	if err != nil {
+		return "", fmt.Errorf("turn secret %s: %w (otter-node turn keygen)", t.SecretFile, err)
+	}
+	return fmt.Sprintf("ok turn secret %s (%d bytes), relay %s:%d-%d", t.SecretFile, len(b), t.RelayIP,
+		t.RelayPortMin, t.RelayPortMax), nil
 }
 
 // checkReality reads the REALITY private key (D72) and, when the manifest already lists this node's REALITY

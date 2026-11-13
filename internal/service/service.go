@@ -67,6 +67,7 @@ type Service struct {
 	Fetcher     ChunkFetcher // asks peers for missing chunks; nil = no peers
 	Waker       Waker        // push wake-ups (D58); nil = this node never pushes
 	Apks        ApkSource    // APK files (D68); nil = apk.get unavailable
+	Turn        TurnIssuer   // TURN credentials (D77); nil = turn.credentials unavailable
 	Limits      Limits
 
 	sweep      chan struct{}

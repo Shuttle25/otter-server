@@ -52,6 +52,26 @@ type Reality struct {
 	VlessUUID      string   `toml:"vless_uuid"`
 }
 
+// Turn is the embedded TURN relay for calls (D77). Missing section or enabled = false: no relay.
+type Turn struct {
+	Enabled               bool   `toml:"enabled"`
+	UDPListen             string `toml:"udp_listen"`
+	TCPListen             string `toml:"tcp_listen"`
+	TLSListen             string `toml:"tls_listen"` // "" = no TURN over TLS; defaults to ":5349" when [wss] has TLS
+	RelayIP               string `toml:"relay_ip"`   // public IP written into relay addresses (OTTER_IP)
+	RelayPortMin          int    `toml:"relay_port_min"`
+	RelayPortMax          int    `toml:"relay_port_max"`
+	SecretFile            string `toml:"secret_file"`
+	Realm                 string `toml:"realm"`
+	MaxAllocationsPerUser int    `toml:"max_allocations_per_user"`
+	MaxAllocations        int    `toml:"max_allocations"`
+	RelayKbps             int    `toml:"relay_kbps"`          // per allocation, each direction
+	AllowPrivatePeers     bool   `toml:"allow_private_peers"` // tests and dev mesh only
+}
+
+// DefaultTurnSecretFile is where `otter-node turn keygen` writes when [turn] names no secret_file.
+const DefaultTurnSecretFile = "/etc/otter/turn.secret"
+
 // MaxBlobLimit equals records.MaxBlobSize (kept here to avoid an import cycle).
 const MaxBlobLimit = 100 << 20
 
@@ -67,6 +87,7 @@ type Config struct {
 	Replication  Replication `toml:"replication"`
 	Push         Push        `toml:"push"`
 	Reality      Reality     `toml:"reality"`
+	Turn         Turn        `toml:"turn"`
 
 	// parsed by Load
 	UserQuotaBytes  int64 `toml:"-"`
@@ -135,6 +156,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: reality.listen must be [host]:port: %w", err)
 		}
 	}
+	if err := c.validateTurn(); err != nil {
+		return err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
@@ -142,6 +166,58 @@ func (c *Config) validate() error {
 	}
 	return nil
 }
+
+// validateTurn fills [turn] defaults and checks it; only when enabled.
+func (c *Config) validateTurn() error {
+	t := &c.Turn
+	if !t.Enabled {
+		return nil
+	}
+	def := func(s *string, v string) {
+		if *s == "" {
+			*s = v
+		}
+	}
+	defInt := func(p *int, v int) {
+		if *p == 0 {
+			*p = v
+		}
+	}
+	def(&t.UDPListen, ":3478")
+	def(&t.TCPListen, ":3478")
+	def(&t.SecretFile, DefaultTurnSecretFile)
+	def(&t.Realm, "otter")
+	if t.TLSListen == "" && c.WSS.TLSCert != "" {
+		t.TLSListen = ":5349"
+	}
+	defInt(&t.RelayPortMin, 49160)
+	defInt(&t.RelayPortMax, 49200)
+	defInt(&t.MaxAllocationsPerUser, 4)
+	defInt(&t.RelayKbps, 200)
+	if ip := net.ParseIP(t.RelayIP); ip == nil {
+		return fmt.Errorf("config: turn.relay_ip %q is not an IP address", t.RelayIP)
+	} else if ip.To4() == nil {
+		return fmt.Errorf("config: turn.relay_ip must be IPv4 (got %q)", t.RelayIP)
+	}
+	if t.RelayPortMin < 1024 || t.RelayPortMax > 65535 || t.RelayPortMin > t.RelayPortMax {
+		return fmt.Errorf("config: turn relay ports %d-%d invalid (1024-65535, min <= max)", t.RelayPortMin, t.RelayPortMax)
+	}
+	span := t.RelayPortMax - t.RelayPortMin + 1
+	defInt(&t.MaxAllocations, span)
+	if t.MaxAllocations > span {
+		return fmt.Errorf("config: turn.max_allocations %d > relay port range %d", t.MaxAllocations, span)
+	}
+	if t.MaxAllocationsPerUser < 0 || t.MaxAllocations < 0 || t.RelayKbps < 0 {
+		return fmt.Errorf("config: turn limits must not be negative")
+	}
+	if t.TLSListen != "" && c.WSS.TLSCert == "" {
+		return fmt.Errorf("config: turn.tls_listen needs [wss] tls_cert/tls_key")
+	}
+	return nil
+}
+
+// TurnEnabled reports whether the embedded TURN relay is on ([turn] enabled = true).
+func (c *Config) TurnEnabled() bool { return c.Turn.Enabled }
 
 // RealityEnabled reports whether a [reality] section is configured (any key set; validation then wants all).
 func (c *Config) RealityEnabled() bool {

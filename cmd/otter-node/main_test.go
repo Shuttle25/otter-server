@@ -27,6 +27,7 @@ import (
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/store"
+	"ottermsg/server/internal/turnsrv"
 )
 
 var pass = []byte("a very long passphrase")
@@ -88,8 +89,31 @@ func TestStats(t *testing.T) {
 	if err := run(context.Background(), []string{"stats", "--config", cfg}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(out.String()); !strings.HasPrefix(got, "users=0 records=1 oplog_seq=1 blobs=0 blob_bytes=0 peers=") {
+	if got := strings.TrimSpace(out.String()); !strings.HasPrefix(got, "users=0 records=1 oplog_seq=1 blobs=0 blob_bytes=0 peers=") ||
+		strings.Contains(got, "turn_") {
 		t.Fatalf("stats: %q", got)
+	}
+
+	// a running relay publishes its counters next to the database; only a fresh snapshot is shown
+	snap := filepath.Join(filepath.Dir(cfg), "data", "turn.stats.json")
+	var ts turnsrv.Stats
+	ts.Allocations.Store(2)
+	ts.Relayed.Store(12345)
+	for _, c := range []struct {
+		at   time.Time
+		want bool
+	}{{time.Now(), true}, {time.Now().Add(-2 * time.Minute), false}} {
+		if err := ts.WriteFile(snap, c.at); err != nil {
+			t.Fatal(err)
+		}
+		out.Reset()
+		if err := run(context.Background(), []string{"stats", "--config", cfg}, &out); err != nil {
+			t.Fatal(err)
+		}
+		got := out.String()
+		if has := strings.HasSuffix(got, " turn_allocs=2 turn_relayed_bytes=12345\n"); has != c.want {
+			t.Fatalf("snapshot at %v: %q", c.at, got)
+		}
 	}
 }
 
@@ -396,5 +420,150 @@ func TestRunWithReality(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not stop")
+	}
+}
+
+func TestTurnKeygen(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	secret := filepath.Join(t.TempDir(), "turn.secret")
+	appendConfig(t, cfg, fmt.Sprintf("[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nsecret_file = %q\n", secret))
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "turn secret written "+secret {
+		t.Fatalf("output %q", got)
+	}
+	first, err := turnsrv.ReadSecret(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), string(first)) || strings.Contains(out.String(), hex.EncodeToString(first)) {
+		t.Fatal("secret printed")
+	}
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg}, &out); err == nil {
+		t.Fatal("second keygen without --force accepted")
+	}
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg, "--force"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := turnsrv.ReadSecret(secret); bytes.Equal(again, first) {
+		t.Fatal("--force did not replace the secret")
+	}
+	if err := run(context.Background(), []string{"turn"}, &out); err == nil {
+		t.Fatal("turn without keygen accepted")
+	}
+}
+
+func turnSection(listen, secret string) string {
+	return fmt.Sprintf("[turn]\nenabled = true\nudp_listen = %q\ntcp_listen = %q\nrelay_ip = \"127.0.0.1\"\nsecret_file = %q\nallow_private_peers = true\n",
+		listen, listen, secret)
+}
+
+// runNode starts `otter-node run`, waits for the hello on the client WebSocket and returns the logs and a stop func.
+func runNode(t *testing.T, cfg, addr, path string) (*syncBuf, func()) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	logs := &syncBuf{}
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, []string{"run", "--config", cfg}, logs) }()
+	var c *websocket.Conn
+	var err error
+	for i := 0; i < 100; i++ {
+		dctx, dcancel := context.WithTimeout(context.Background(), time.Second)
+		c, _, err = websocket.Dial(dctx, "ws://"+addr+path, nil)
+		dcancel()
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		cancel()
+		t.Fatalf("dial: %v\nlogs: %s", err, logs.String())
+	}
+	rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, data, err := c.Read(rctx)
+	rcancel()
+	var f pb.Frame
+	if err != nil || proto.Unmarshal(data, &f) != nil || f.GetEvent().GetType() != "hello" {
+		cancel()
+		t.Fatalf("hello: %v %v", err, f.GetEvent())
+	}
+	c.CloseNow()
+	return logs, func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("run did not stop")
+		}
+	}
+}
+
+// With [turn], run starts the embedded relay and publishes its counters; Close releases the ports on stop.
+func TestRunWithTurn(t *testing.T) {
+	cfg, manifest, _, addr, path := testNode(t)
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"import", "--config", cfg, manifest}, &out); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "turn.secret")
+	turnAddr := freePort(t)
+	appendConfig(t, cfg, turnSection(turnAddr, secret))
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg}, &out); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := turnsrv.ReadSecret(secret)
+	logs, stop := runNode(t, cfg, addr, path)
+	if !strings.Contains(logs.String(), `"msg":"turn on"`) {
+		t.Fatalf("logs: %s", logs.String())
+	}
+	if _, ok := turnsrv.ReadSnapshot(filepath.Join(filepath.Dir(cfg), "data", "turn.stats.json"), time.Now(), time.Minute); !ok {
+		t.Fatal("no stats snapshot")
+	}
+	stop()
+	if strings.Contains(logs.String(), hex.EncodeToString(raw)) || strings.Contains(logs.String(), base64.StdEncoding.EncodeToString(raw)) {
+		t.Fatal("secret logged")
+	}
+	// the relay's TCP port is free again after the node stopped
+	ln, err := net.Listen("tcp4", turnAddr)
+	if err != nil {
+		t.Fatalf("turn port still bound: %v", err)
+	}
+	ln.Close()
+}
+
+// A relay that cannot start (no secret file) is logged and netlogged; the node keeps serving without calls.
+func TestRunTurnStartFailure(t *testing.T) {
+	cfg, manifest, _, addr, path := testNode(t)
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"import", "--config", cfg, manifest}, &out); err != nil {
+		t.Fatal(err)
+	}
+	appendConfig(t, cfg, turnSection(freePort(t), filepath.Join(t.TempDir(), "missing.secret")))
+	logs, stop := runNode(t, cfg, addr, path)
+	stop()
+	if !strings.Contains(logs.String(), "turn off: could not start") || strings.Contains(logs.String(), `"msg":"turn on"`) {
+		t.Fatalf("logs: %s", logs.String())
+	}
+	st, err := store.Open(filepath.Join(filepath.Dir(cfg), "data", "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	es, err := st.Netlog(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range es {
+		found = found || (e.Peer == "turn" && e.Class == "listen" && e.Result == "fail")
+	}
+	if !found {
+		t.Fatalf("netlog: %+v", es)
 	}
 }

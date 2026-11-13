@@ -17,6 +17,7 @@ enum Status {
   STATUS_REVOKED = 6;
   STATUS_QUOTA = 7;
   STATUS_INTERNAL = 8;
+  STATUS_UNAVAILABLE = 9; // feature not enabled on this node (e.g. TURN off)
 }
 
 message Frame {
@@ -145,4 +146,21 @@ message ApkGetRequest {
 message ApkChunk {
   bytes data = 1;
   uint64 total_size = 2;
+}
+
+// turn.credentials (logged in) → TurnCredentials. TURN-REST credentials valid only on this node (D77).
+message TurnCredentials {
+  string username = 1;      // "<unix expiry>:<hex(sha256(user_id))[0:16]>"
+  string password = 2;      // base64(HMAC-SHA1(node secret, username))
+  uint32 ttl_s = 3;         // 43200 (12 h)
+  repeated string urls = 4; // turn:IP:3478?transport=udp, turn:IP:3478?transport=tcp, turns:IP:5349?transport=tcp
+}
+
+// push.status (logged in): may this user's phone be woken by push? Family-internal information only.
+message PushStatusRequest {
+  bytes user_id = 1;
+}
+
+message PushStatus {
+  bool has_push = 1;
 }

@@ -12,6 +12,7 @@ message Content {
     GroupUpdate group_update = 3;
     SenderKeyDistribution sender_key = 4;
     SessionReset session_reset = 5;
+    CallMessage call = 6;
   }
   int64 sent_ms = 10;
 }
@@ -100,3 +101,45 @@ message ReceiptMessage {
 
 // Sent 1:1 after a restore or when a message could not be decrypted (D53). No fields.
 message SessionReset {}
+
+// 1:1 call signaling (D78). Sent as an ordinary Signal-encrypted 1:1 envelope, urgent, record expiry created + 2 min.
+// The DTLS fingerprints inside the SDP travel only here, so nodes and TURN relays cannot intercept the media.
+message CallMessage {
+  bytes call_id = 1; // 16 random bytes chosen by the caller; glare: the smaller call_id (bytewise) wins
+  oneof kind {
+    CallOffer offer = 2;
+    CallAnswer answer = 3;
+    IceCandidates candidates = 4;
+    CallHangup hangup = 5;
+  }
+}
+
+message CallOffer {
+  string sdp = 1;     // includes the candidates gathered in the first ~2 s
+  bool restart = 2;   // ICE restart within an existing call (same call_id)
+}
+
+message CallAnswer {
+  string sdp = 1;
+}
+
+message IceCandidate {
+  string sdp_mid = 1;
+  int32 sdp_mline_index = 2;
+  string candidate = 3;
+}
+
+message IceCandidates {
+  repeated IceCandidate candidates = 1; // late (trickled) candidates only
+}
+
+message CallHangup {
+  enum Reason {
+    NORMAL = 0;
+    BUSY = 1;
+    DECLINED = 2;
+    TIMEOUT = 3;
+    FAILED = 4;
+  }
+  Reason reason = 1;
+}

@@ -37,9 +37,10 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 |------|---------|
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
 | Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual; a rollback also restores `node.toml` from `node.toml.prev`) |
-| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts, disk, push, then the last 5 connectivity log lines per node; exit 1 on any problem) |
+| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts (+ `turn_allocs=`), disk, push, TURN, then the last 5 connectivity log lines per node; exit 1 on any problem) |
+| TURN relay (calls) on a node | `deploy/turn-setup.sh fi-1 [--if-missing] [--force]` (0.8.0+; `upgrade-all.sh` runs it; below) |
 | REALITY on a node | `deploy/reality-setup.sh fi-1 --dest dl.google.com [--port 443] [--force]` → `manifest sign` + `manifest publish` (below) |
-| Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1] [--no-news]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual; then offers the news dialog) |
+| Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1] [--no-news] [--no-turn]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual; 0.8.0+: TURN on each node unless `--no-turn`; then offers the news dialog) |
 | SSH target of a node | `deploy/hosts.sh set fi-1 root@203.0.113.10 [port]` / `get` / `list` / `rm` |
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
@@ -99,6 +100,50 @@ below 0.7.0 by hand, remove its `[reality]` section (older binaries refuse unkno
 endpoint left in the manifest then only costs peers one failed dial before WSS. The drop-in
 `/etc/systemd/system/otter-node.service.d/reality.conf` may stay.
 
+## Calls (TURN, M8, D77)
+
+Every 0.8.0+ node embeds a TURN relay for 1:1 audio calls. Phones get short-lived credentials from their node
+(`turn.credentials`); the relay only forwards encrypted media. It listens on **UDP 3478, TCP 3478, TLS 5349** (TLS
+uses the node's [wss] certificate) and relays on **UDP 49160–49200**. Config in `node.toml`:
+
+```toml
+[turn]
+enabled = true
+relay_ip = "203.0.113.10"   # the node's public IPv4 (first IP from otter-admin node set-ip)
+```
+
+The per-node secret `/etc/otter/turn.secret` (32 random bytes, `root:otter 0640`) is created on the node by
+`otter-node turn keygen` and never leaves it: not in bundles, not in `~/.otter-admin`, never printed.
+`otter-node check` reports `ok turn secret … relay IP:49160-49200`; `deploy/status.sh` shows `TURN on/off` (`-` =
+no `[turn]`, e.g. before 0.8.0) and `turn_allocs=` / `turn_relayed_bytes=` in STATS.
+
+**New nodes.** `make-bundle.sh` adds `[turn]` (template `templates/node.toml.turn`, `relay_ip` = the node's
+recorded IPv4) only to bundles of 0.8.0 or newer; `install.sh` creates the secret if missing. `push.sh` asks on
+your terminal whether to allow the TURN ports in an **active ufw** on the node (default No; without a terminal it
+is No and `install.sh` prints the `ufw allow` commands instead).
+
+**Existing nodes** get it after their binary is 0.8.0 (older binaries refuse unknown keys):
+
+```bash
+deploy/upgrade-all.sh 0.8.0                # upgrades, then runs turn-setup.sh LABEL --if-missing per node
+deploy/turn-setup.sh fi-1                  # by hand / retry; --force rewrites an existing [turn] (secret kept)
+```
+
+`turn-setup.sh` refuses nodes below 0.8.0, writes `[turn]` into `node.toml.new`, creates the secret if missing,
+validates with `otter-node check`, keeps `node.toml.pre-turn`, swaps, restarts and waits for the health check and
+the `"turn on"` log line. On any failure the previous `node.toml` is back in place. If ufw is active it asks (on a
+terminal, default No) before `ufw allow 3478/udp 3478/tcp 5349/tcp 49160:49200/udp`, run only after TURN is up;
+otherwise it prints those commands. A TURN failure in `upgrade-all.sh` does not stop the rollout: the summary says
+`TURN NOT ENABLED`; retry with `turn-setup.sh LABEL`.
+
+**Cloud firewall.** If the provider has one (Hetzner, …), open UDP 3478, TCP 3478, TCP 5349 and UDP 49160–49200 to
+the node there yourself; the scripts only remind you.
+
+**Rollback.** `upgrade.sh` restores `node.toml.prev` with the old binary, so a failed 0.8.0 upgrade never leaves
+`[turn]` behind. 0.7.0 binaries refuse `[turn]`: before a manual downgrade below 0.8.0, remove the `[turn]` section
+(or restore `node.toml.pre-turn`). `/etc/otter/turn.secret` may stay. Re-installs (`push.sh`) rewrite `node.toml`
+from the template, which for 0.8.0+ bundles includes `[turn]` again (the secret is kept).
+
 ## News (Otter news, D64–D69)
 
 Members see news as messages from «Выдра» in the chat «Новости Выдры». They are signed by the **news key**, which
@@ -152,7 +197,7 @@ Lost or leaked news key: `otter-admin news revoke --pub HEX` (from `news show`),
 
 ```bash
 deploy/test/bundle_test.sh      # offline: bundle contents and `otter-node check`
-deploy/test/scripts_test.sh     # offline: hosts, add-node, status, upgrade-all, release-apk, news dialog, reality-setup (stubbed ssh)
+deploy/test/scripts_test.sh     # offline: hosts, add-node, status, upgrade-all, release-apk, news dialog, reality-setup, turn-setup (stubbed ssh)
 deploy/test/e2e.sh [--keep]     # disposable Debian 12 VM (QEMU/KVM): install, upgrade, rollback, backup, uninstall
 deploy/test/e2e-mesh.sh [--keep] # two VMs: add-node, replication, status, upgrade-all (needs internet in the VMs)
 make deploy-test                # all four: scripts, bundle, e2e, e2e-mesh

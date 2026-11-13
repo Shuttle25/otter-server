@@ -19,6 +19,10 @@ const (
 	ResetAfterKB Class = "reset_after_kb" // dropped after ≥ 1 KB: typical throttling
 	TLS          Class = "tls"            // alert, bad certificate, pin mismatch
 	Handshake    Class = "handshake"      // transport worked, the node handshake failed
+	// TURN relay (D77): login refused, quota reached, listener could not start.
+	Auth   Class = "auth"
+	Quota  Class = "quota"
+	Listen Class = "listen"
 )
 
 // ThrottleBytes is the minimum received before a reset counts as throttling.

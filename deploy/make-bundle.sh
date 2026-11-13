@@ -10,6 +10,9 @@ fi
 for arch in amd64 arm64; do [[ -f "$ROOT/dist/otter-node_${version}_linux_$arch" ]] || die "missing dist/otter-node_${version}_linux_$arch"; done
 node_env "$label"
 [[ "$OTTER_KIND" == wss ]] || die "node $label has a plain endpoint (development only); bundles need TLS"
+if version_ge "$version" 0.8.0 && ! [[ "${OTTER_IP:-}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+  die "node $label has no IPv4 address recorded (TURN relay_ip): otter-admin node set-ip --label $label --ip IP"
+fi
 [[ -f "$ADMIN_DIR/manifest.bin" ]] || die "no signed manifest: run 'otter-admin manifest sign'"
 # the pin is unique per node, so this also checks that the manifest lists the node
 manifest=$(admin manifest show) || die "manifest.bin does not verify"
@@ -27,6 +30,12 @@ cp "$OTTER_TLS_KEY" "$b/tls.key"
 cp "$ADMIN_DIR/manifest.bin" "$b/manifest.bin"
 export OTTER_LABEL OTTER_NETWORK_PUB OTTER_PORT OTTER_PATH
 envsubst '${OTTER_LABEL} ${OTTER_NETWORK_PUB} ${OTTER_PORT} ${OTTER_PATH}' < "$ROOT/deploy/templates/node.toml" > "$b/node.toml"
+# [turn] only for 0.8.0+: older binaries refuse unknown config keys
+if version_ge "$version" 0.8.0; then
+  export OTTER_IP
+  envsubst '${OTTER_IP}' < "$ROOT/deploy/templates/node.toml.turn" >> "$b/node.toml"
+  say "TURN relay for calls on (relay_ip $OTTER_IP)"
+fi
 cp "$ROOT"/deploy/templates/otter-node.service "$ROOT"/deploy/templates/otter-backup.service "$ROOT"/deploy/templates/otter-backup.timer "$b/"
 cp -r "$ROOT/deploy/templates/site/." "$b/site/"
 cp "$ROOT"/deploy/bundle/*.sh "$b/"

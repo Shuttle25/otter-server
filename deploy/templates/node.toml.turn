@@ -1,0 +1,6 @@
+
+# Embedded TURN relay for calls (M8, D77), added by make-bundle.sh for 0.8.0+ bundles.
+# Ports: UDP 3478, TCP 3478, TLS 5349, UDP relay 49160-49200. Secret: /etc/otter/turn.secret (install.sh creates it).
+[turn]
+enabled = true
+relay_ip = "${OTTER_IP}"

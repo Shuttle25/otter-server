@@ -27,10 +27,13 @@ Replace the placeholders everywhere:
 | systemd units `otter-node.service`, `otter-backup.service`, `otter-backup.timer` | `/etc/systemd/system/` |
 | `systemd-timesyncd` (only if no chrony/timesyncd is running) | apt package |
 | ufw rules for SSH and port 27443 (only if ufw is already active; otherwise it just warns) | — |
+| 0.8.0+: TURN secret for calls (created on the server, never leaves it) | `/etc/otter/turn.secret` (root:otter, 0640) |
+| 0.8.0+: ufw rules for the TURN ports (only if ufw is active **and** you answered yes in `push.sh`; otherwise it prints the commands) | — |
 
-Nothing else: no Docker, no web server, no database server. The node listens on **TCP 27443** only (WSS with a
+Nothing else: no Docker, no web server, no database server. The node listens on **TCP 27443** (WSS with a
 self-signed certificate whose key is pinned in the apps; `https://DOMAIN:27443/` shows a neutral "Under maintenance"
-page). The network admin key never leaves this PC. `uninstall.sh` removes everything (`--purge` also deletes data).
+page); 0.8.0+ also on the TURN relay ports for calls: UDP/TCP 3478, TCP 5349, UDP 49160–49200 (see
+[README.md](README.md#calls-turn-m8-d77)). The network admin key never leaves this PC. `uninstall.sh` removes everything (`--purge` also deletes data).
 
 ## 0. Server prerequisites
 

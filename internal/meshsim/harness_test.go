@@ -27,6 +27,7 @@ import (
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
 	"ottermsg/server/internal/netlog"
+	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/push"
 	"ottermsg/server/internal/reality"
@@ -35,6 +36,7 @@ import (
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 	"ottermsg/server/internal/transport/wss"
+	"ottermsg/server/internal/turnsrv"
 )
 
 func TestMain(m *testing.M) {
@@ -57,6 +59,8 @@ type simNode struct {
 	sender  *recSender   // non-nil: the node has an FCM key (push_test.go)
 	clock   *fakeClock   // drives the pusher's coalescing window
 	reality *realityInfo // non-nil: the node also serves a REALITY endpoint (reality_test.go)
+	turnOn  bool         // the node runs the embedded TURN relay (turn_test.go)
+	turnKey []byte       // its TURN-REST secret, kept across restarts
 
 	mu     sync.Mutex
 	st     *store.Store
@@ -67,6 +71,9 @@ type simNode struct {
 	pusher *push.Pusher
 	rsrv   *reality.Server  // running REALITY inbound
 	isrv   *httptest.Server // internal plain-HTTP listener behind it
+	turn   *turnsrv.Server
+	// turnAddr serves UDP and TCP on the same port, turnTLSAddr TLS; both are re-picked on every start
+	turnAddr, turnTLSAddr string
 }
 
 // realityInfo is a node's REALITY endpoint, its private key and the camouflage site it forwards probes to.
@@ -77,7 +84,7 @@ type realityInfo struct {
 }
 
 // nodeOpts are per-node knobs for newSimWith.
-type nodeOpts struct{ reality, dialOutOnly bool }
+type nodeOpts struct{ reality, dialOutOnly, turn bool }
 
 const (
 	realityUUID = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
@@ -131,7 +138,8 @@ func newSimWith(t *testing.T, opts map[string]nodeOpts, labels ...string) *sim {
 		}
 		addr := ln.Addr().String()
 		ln.Close()
-		n := &simNode{label: l, key: k, id: keys.ID16(k.Public().(ed25519.PublicKey)), dbPath: filepath.Join(t.TempDir(), l+".db"), addr: addr}
+		n := &simNode{label: l, key: k, id: keys.ID16(k.Public().(ed25519.PublicKey)), dbPath: filepath.Join(t.TempDir(), l+".db"), addr: addr,
+			turnOn: opts[l].turn}
 		_, port, _ := net.SplitHostPort(addr)
 		p, _ := strconv.Atoi(port)
 		info := &pb.NodeInfo{NodeId: n.id, NodePub: k.Public().(ed25519.PublicKey), Label: l, DialOutOnly: opts[l].dialOutOnly,
@@ -244,6 +252,13 @@ func (s *sim) start(n *simNode) {
 	if _, err := svc.LoadManifest(context.Background()); err != nil {
 		s.t.Fatal(err)
 	}
+	var ts *turnsrv.Server
+	var turnAddr, turnTLSAddr string
+	if n.turnOn { // before serving: sessions read svc.Turn without a lock (as otter-node run)
+		var iss turnsrv.Issuer
+		ts, iss, turnAddr, turnTLSAddr = s.startTurn(n)
+		svc.Turn = iss
+	}
 	gw := gateway.New(svc, quiet)
 	s.part.ensureReality(n.id) // before the replicator's first dial
 	rank, nl := replication.NewRanker(time.Now), netlog.StoreLogger{S: st}
@@ -287,6 +302,7 @@ func (s *sim) start(n *simNode) {
 	}
 	n.mu.Lock()
 	n.st, n.svc, n.repl, n.srv, n.cancel, n.isrv, n.rsrv = st, svc, repl, srv, cancel, isrv, rsrv
+	n.turn, n.turnAddr, n.turnTLSAddr = ts, turnAddr, turnTLSAddr
 	n.mu.Unlock()
 	s.part.register(n.id, repl)
 }
@@ -305,10 +321,60 @@ func (s *sim) stop(n *simNode) {
 		n.isrv.Close()
 		n.rsrv, n.isrv = nil, nil
 	}
+	if n.turn != nil {
+		n.turn.Close()
+		n.turn = nil
+	}
 	n.srv.CloseClientConnections()
 	n.srv.Close()
 	n.st.Close()
 	n.srv = nil
+}
+
+// Relay ports shared by every node of a sim. On one host all relays have the same IP (127.0.0.1), and a relay drops
+// writes to its own address unless the port is one of its relay ports, so one shared range stands in for "another
+// node's public IP" (on real nodes the ranges are per host). pion retries a busy port.
+const simRelayMin, simRelayMax = 53000, 53040
+
+// startTurn starts n's relay on fresh loopback ports (UDP and TCP on one port, TLS on another) with a self-signed
+// certificate and returns it with the issuer for svc.Turn.
+func (s *sim) startTurn(n *simNode) (*turnsrv.Server, turnsrv.Issuer, string, string) {
+	if n.turnKey == nil {
+		n.turnKey = make([]byte, turnsrv.SecretLen)
+		rand.Read(n.turnKey)
+	}
+	certPEM, keyPEM, _, err := pinning.GenerateCert([]string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 1)}, time.Hour)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ { // a free TCP port may be taken for UDP (or by now): pick again
+		p, tp := freeTCPPort(s.t), freeTCPPort(s.t)
+		addr, tlsAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(p)), net.JoinHostPort("127.0.0.1", strconv.Itoa(tp))
+		srv, err := turnsrv.Start(turnsrv.Config{UDPListen: addr, TCPListen: addr, TLSListen: tlsAddr,
+			TLS:     &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}},
+			RelayIP: net.IPv4(127, 0, 0, 1), PortMin: simRelayMin, PortMax: simRelayMax, Secret: n.turnKey, Realm: "otter",
+			MaxPerUser: 4, MaxTotal: 16, RelayKbps: 2000, AllowPrivatePeers: true, Log: quiet})
+		if err != nil {
+			continue
+		}
+		return srv, turnsrv.Issuer{Secret: n.turnKey, RelayIP: "127.0.0.1", TLS: true, UDPPort: p, TCPPort: p, TLSPort: tp},
+			addr, tlsAddr
+	}
+	s.t.Fatal("turn: no free ports")
+	return nil, turnsrv.Issuer{}, "", ""
+}
+
+func freeTCPPort(t *testing.T) int {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
 
 func (s *sim) url(n *simNode) string { return "ws://" + n.addr + path }

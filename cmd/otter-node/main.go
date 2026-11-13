@@ -36,6 +36,7 @@ import (
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 	"ottermsg/server/internal/transport/wss"
+	"ottermsg/server/internal/turnsrv"
 )
 
 var version = "dev"
@@ -48,6 +49,7 @@ const usage = `usage: otter-node <command>
   stats --config FILE          database counts (safe while running)
   apk import --config FILE APK... store app update files served by apk.get (keeps the newest 2)
   reality keygen --config FILE write the REALITY private key file (once) and print the public key
+  turn keygen --config FILE [--force]  write the TURN secret file (once; never printed)
   reality-check HOST...        test camouflage candidates from this machine (TLS 1.3, h2, valid certificate)
   netlog --config FILE [--limit 50] [--json]   connectivity log (safe while running)
   probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
@@ -163,6 +165,12 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		rest = rest[1:]
 	}
+	if cmd == "turn" {
+		if len(rest) == 0 || rest[0] != "keygen" {
+			return errors.New("usage: otter-node turn keygen --config FILE [--force]")
+		}
+		rest = rest[1:]
+	}
 	if cmd == "apk" {
 		if len(rest) == 0 || rest[0] != "import" {
 			return errors.New("usage: otter-node apk import --config FILE APK...")
@@ -174,6 +182,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	outPath := fs.String("out", "", "backup file (backup)")
 	limit := fs.Int("limit", 50, "lines (netlog)")
 	asJSON := fs.Bool("json", false, "JSON output (netlog)")
+	force := fs.Bool("force", false, "replace an existing secret (turn keygen)")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -189,6 +198,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if cmd == "reality" { // must not touch the database
 		return realityKeygen(*cfgPath, out)
+	}
+	if cmd == "turn" { // must not touch the database
+		return turnKeygen(*cfgPath, *force, out)
 	}
 	if cmd != "run" && cmd != "import" && cmd != "backup" && cmd != "stats" && cmd != "netlog" {
 		return errors.New(usage)
@@ -375,6 +387,24 @@ func realityKeygen(cfgPath string, out io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(out, "public key: %s\n", pub)
+	return nil
+}
+
+// turnKeygen writes the TURN-REST shared secret ([turn] secret_file, default /etc/otter/turn.secret) once; with
+// --force it replaces it (active credentials stop working). The secret is never printed.
+func turnKeygen(cfgPath string, force bool, out io.Writer) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	path := cfg.Turn.SecretFile
+	if path == "" {
+		path = config.DefaultTurnSecretFile
+	}
+	if err := turnsrv.WriteSecret(path, force); err != nil {
+		return fmt.Errorf("turn keygen: %w", err)
+	}
+	fmt.Fprintf(out, "turn secret written %s\n", path)
 	return nil
 }
 

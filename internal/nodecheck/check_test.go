@@ -17,6 +17,7 @@ import (
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/pinning"
 	"ottermsg/server/internal/reality"
+	"ottermsg/server/internal/turnsrv"
 )
 
 const pass = "test-passphrase-123"
@@ -187,5 +188,43 @@ func TestCheckRealityManifestPub(t *testing.T) {
 		if !match && (err == nil || !strings.Contains(err.Error(), "reality key")) {
 			t.Fatalf("other pub: want reality key error, got %v %q", err, lines)
 		}
+	}
+}
+
+// withTurn adds an enabled [turn] section whose secret file is secretPath.
+func withTurn(t *testing.T, cfg, secretPath string) {
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, "[turn]\nenabled = true\nrelay_ip = \"203.0.113.10\"\nsecret_file = %q\n", secretPath)
+	f.Close()
+}
+
+func TestCheckTurnSecret(t *testing.T) {
+	cfg, _ := setup(t, "")
+	withTurn(t, cfg, filepath.Join(t.TempDir(), "missing.secret"))
+	if _, err := Run(cfg); err == nil || !strings.Contains(err.Error(), "turn secret") {
+		t.Fatalf("missing secret: want turn secret error, got %v", err)
+	}
+
+	cfg, _ = setup(t, "")
+	short := filepath.Join(t.TempDir(), "short.secret")
+	os.WriteFile(short, make([]byte, 16), 0o640)
+	withTurn(t, cfg, short)
+	if _, err := Run(cfg); err == nil || !strings.Contains(err.Error(), "turn secret") {
+		t.Fatalf("short secret: want turn secret error, got %v", err)
+	}
+
+	cfg, _ = setup(t, "")
+	p := filepath.Join(t.TempDir(), "turn.secret")
+	if err := turnsrv.WriteSecret(p, false); err != nil {
+		t.Fatal(err)
+	}
+	withTurn(t, cfg, p)
+	lines, err := Run(cfg)
+	want := fmt.Sprintf("ok turn secret %s (32 bytes), relay 203.0.113.10:49160-49200", p)
+	if err != nil || lines[len(lines)-1] != want {
+		t.Fatalf("valid secret: %v %q", err, lines)
 	}
 }

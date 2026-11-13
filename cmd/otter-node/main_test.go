@@ -27,6 +27,7 @@ import (
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/reality"
 	"ottermsg/server/internal/store"
+	"ottermsg/server/internal/turnsrv"
 )
 
 var pass = []byte("a very long passphrase")
@@ -396,5 +397,37 @@ func TestRunWithReality(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not stop")
+	}
+}
+
+func TestTurnKeygen(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	secret := filepath.Join(t.TempDir(), "turn.secret")
+	appendConfig(t, cfg, fmt.Sprintf("[turn]\nenabled = true\nrelay_ip = \"203.0.113.7\"\nsecret_file = %q\n", secret))
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "turn secret written "+secret {
+		t.Fatalf("output %q", got)
+	}
+	first, err := turnsrv.ReadSecret(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), string(first)) || strings.Contains(out.String(), hex.EncodeToString(first)) {
+		t.Fatal("secret printed")
+	}
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg}, &out); err == nil {
+		t.Fatal("second keygen without --force accepted")
+	}
+	if err := run(context.Background(), []string{"turn", "keygen", "--config", cfg, "--force"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := turnsrv.ReadSecret(secret); bytes.Equal(again, first) {
+		t.Fatal("--force did not replace the secret")
+	}
+	if err := run(context.Background(), []string{"turn"}, &out); err == nil {
+		t.Fatal("turn without keygen accepted")
 	}
 }

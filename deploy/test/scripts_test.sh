@@ -168,17 +168,59 @@ grep -q 'debug-signed' <<< "$out" || fail "debug APK message: $out"
 if out=$(PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/old.apk" 2>&1); then fail "wrong versionName accepted"; fi
 grep -q "versionName is '0.0.0-old'" <<< "$out" || fail "versionName message: $out"
 [[ ! -e "$work/ssh.log" ]] || fail "refused APK reached ssh/scp"
-out=$(PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/good.apk" < /dev/null 2>&1) || fail "release-apk: $out"
+# release-apk uses its own ssh stub: it answers 'version', records the remote command as the remote shell would
+# split it, and keeps what arrived on stdin (C3: the APK travels on ssh stdin, never via scp or /tmp)
+mkdir -p "$work/stub-apk"
+cat > "$work/stub-apk/ssh" <<STUB
+#!/bin/bash
+echo "ssh \$*" >> "$work/ssh.log"
+target=\$3; shift 3
+case "\$*" in *"otter-node version"*) echo "\${NODE_VERSION:-0.8.3}"; exit 0 ;; esac
+eval "set -- \$*"
+printf '%s\n' "\$@" > "$work/remote-\$target.cmd"
+cat > "$work/remote-\$target.stdin"
+case "\$target" in *"\$SSH_FAIL"*) [ -n "\$SSH_FAIL" ] && exit 1 ;; esac
+exit 0
+STUB
+chmod +x "$work/stub-apk/ssh"
+apkpath="$work/stub-apk:$work/stub:$PATH"
+if out=$(NODE_VERSION=0.8.1 PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "release to a 0.8.1 node accepted"; fi
+grep -q 'runs otter-node 0.8.1: upgrade it to 0.8.3' <<< "$out" || fail "old node message: $out"
+[[ ! -e "$work/remote-root@n1.example.stdin" ]] || fail "APK sent to an old node"
+out=$(PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" < /dev/null 2>&1) || fail "release-apk: $out"
 sha=$(sha256sum "$work/good.apk" | cut -d' ' -f1)
-grep -q "^scp -q -P 22 .*good.apk root@n1.example:/tmp/otter-$sha.apk$" "$work/ssh.log" || fail "upload n1: $(cat "$work/ssh.log")"
-grep -q "^scp -q -P 2222 .*good.apk root@n2.example:/tmp/otter-$sha.apk$" "$work/ssh.log" || fail "upload n2: $(cat "$work/ssh.log")"
-[[ "$(grep -c "^ssh -p .* root@n[12].example /usr/local/bin/otter-node apk import --config /etc/otter/node.toml /tmp/otter-$sha.apk" "$work/ssh.log")" == 2 ]] ||
-  fail "apk import: $(cat "$work/ssh.log")"
+if grep -q '^scp\|/tmp/otter-' "$work/ssh.log"; then fail "release-apk still uses scp or /tmp: $(cat "$work/ssh.log")"; fi
+for t in root@n1.example root@n2.example; do
+  cmp -s "$work/remote-$t.stdin" "$work/good.apk" || fail "$t: APK not streamed on stdin"
+  c="$work/remote-$t.cmd"
+  [[ "$(sed -n 1,2p "$c" | tr '\n' ' ')" == "bash -c " ]] || fail "$t: not bash -c: $(cat "$c")"
+  grep -qF 'd=$(mktemp -d /root/otter-apk.XXXXXX)' "$c" || fail "$t: no root-only temp dir: $(cat "$c")"
+  grep -qF 'sha256sum --quiet -c' "$c" || fail "$t: no checksum: $(cat "$c")"
+  grep -qF 'runuser -u otter -- /usr/local/bin/otter-node apk import --config /etc/otter/node.toml - < "$d/app.apk"' "$c" ||
+    fail "$t: import not as otter from stdin: $(cat "$c")"
+  [[ "$(sed -n 5p "$c")" == "$sha" ]] || fail "$t: sha not passed: $(cat "$c")"
+done
 grep -q "news: deploy/news-dialog.sh 0.0.0-st --apk .*good.apk --version-code 6" <<< "$out" || fail "release-apk news hint: $out"
 [[ ! -e "$work/announce.log" ]] || fail "release-apk announced without a terminal"
-rm -f "$work/ssh.log"
-if out=$(SCP_FAIL=n2.example PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "failed upload ignored"; fi
-grep -q 'upload to n2 failed' <<< "$out" || fail "upload failure message: $out"
+# run the remote script itself with stub runuser/otter-node: imported as sent, temp dir removed; a bad sum imports nothing
+ra="$work/remote-apk"; mkdir -p "$ra/bin" "$ra/root"
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-u otter --" ] || exit 9\nshift 3; exec "$@"\n' > "$ra/bin/runuser"
+printf '#!/bin/sh\n[ "$*" = "apk import --config /etc/otter/node.toml -" ] || exit 9\ncat > "%s/imported"\n' "$ra" > "$ra/bin/otter-node"
+chmod +x "$ra/bin/"*
+script=$(sed -n 3p "$work/remote-root@n1.example.cmd" | sed -e "s#/root/otter-apk#$ra/root/otter-apk#" -e "s#/usr/local/bin/otter-node#otter-node#")
+# hostile layout: the node user planted the old predictable upload path as a link to a file of root's
+mkdir -p "$ra/tmp"; printf 'root only' > "$ra/victim"; ln -s "$ra/victim" "$ra/tmp/otter-$sha.apk"
+TMPDIR="$ra/tmp" PATH="$ra/bin:$PATH" bash -c "$script" import "$sha" < "$work/good.apk" || fail "remote script failed"
+cmp -s "$ra/imported" "$work/good.apk" || fail "remote script: imported bytes differ"
+[[ -z "$(ls -A "$ra/root")" ]] || fail "remote script left its temp dir"
+[[ "$(cat "$ra/victim")" == 'root only' ]] || fail "remote script wrote through the planted link"
+rm -f "$ra/imported"
+if PATH="$ra/bin:$PATH" bash -c "$script" import "$(printf '0%.0s' {1..64})" < "$work/good.apk" >/dev/null 2>&1; then fail "bad sum accepted"; fi
+[[ ! -e "$ra/imported" ]] || fail "bad sum imported"
+[[ -z "$(ls -A "$ra/root")" ]] || fail "remote script left its temp dir after a bad sum"
+rm -f "$work/ssh.log" "$work"/remote-root@*
+if out=$(SSH_FAIL=n2.example PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "failed import ignored"; fi
+grep -q 'apk import on n2 failed' <<< "$out" || fail "import failure message: $out"
 
 mkdir -p dist/news
 printf '## ru\n\nВышла версия 0.0.0-st.\nОбновите приложение.\n\n## en\nVersion 0.0.0-st is out.\n' > dist/news/0.0.0-st.md

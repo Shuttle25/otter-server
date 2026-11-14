@@ -34,8 +34,9 @@ systemctl stop otter-node || true
 mv /usr/local/bin/otter-node /usr/local/bin/otter-node.failed
 cp -p /usr/local/bin/otter-node.prev /usr/local/bin/otter-node
 cp -p /etc/otter/node.toml.prev /etc/otter/node.toml
-rm -f /var/lib/otter/node.db-wal /var/lib/otter/node.db-shm
-install -o otter -g otter -m 0600 "$backup" /var/lib/otter/node.db
+runuser -u otter -- rm -f /var/lib/otter/node.db-wal /var/lib/otter/node.db-shm
+# as otter: the backup sits in otter's directory and could be a planted link (D82)
+runuser -u otter -- install -m 0600 "$backup" /var/lib/otter/node.db
 systemctl start otter-node || true
 if /usr/local/lib/otter/health.sh; then
   say "rolled back to $(/usr/local/bin/otter-node version); the failed binary is /usr/local/bin/otter-node.failed"

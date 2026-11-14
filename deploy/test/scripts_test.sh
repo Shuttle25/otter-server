@@ -311,6 +311,99 @@ grep -q 'if \[\[ "\$turn_ufw" == 1 \]\]; then' deploy/bundle/install.sh || fail 
 grep -q 'cloud firewall: also open UDP 3478, TCP 3478, TCP 5349, UDP 49160-49200' deploy/bundle/install.sh || fail "install.sh cloud reminder"
 grep -q 'OTTER_TURN_UFW=\$turn_ufw ./bundle-' deploy/push.sh || fail "push.sh does not pass the ufw answer"
 
+# --- root-run steps never write into the node user's directories (C3 class, D82)
+grep -nH '/var/lib/otter\|/var/backups/otter' deploy/bundle/install.sh deploy/upgrade.sh deploy/release-apk.sh |
+  grep -v -e 'runuser -u otter --' -e 'install -d -o otter -g otter -m 0700 /var/\(lib\|backups\)/otter$' \
+    -e ':backup=/var/backups/otter/pre-upgrade-' -e ':  useradd --system --home-dir /var/lib/otter --no-create-home ' \
+    > "$work/rootwrites" || true
+[[ ! -s "$work/rootwrites" ]] || fail "root-run lines touching otter's directories: $(cat "$work/rootwrites")"
+grep -qF 'runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml - < "$f"' deploy/bundle/install.sh ||
+  fail "install.sh: invites not imported as otter from stdin"
+# The same, executed: install.sh and the upgrade.sh rollback run against a fake root. A guard stands in for the
+# root/otter split: every file tool refuses to act as root (no OTTER_AS=otter) on a path inside otter's directories,
+# and only 'runuser -u otter --' sets OTTER_AS=otter. The node user plants links; the deploy steps must not follow them.
+fr="$work/fakeroot"
+mkdir -p "$fr/bin" "$fr/etc/otter" "$fr/etc/systemd/system" "$fr/var/lib" "$fr/var/backups" "$fr/usr/local/bin" \
+  "$fr/usr/local/lib/otter" "$fr/bundle/site/css" "$fr/bundle/invites"
+for t in install cp tar mkdir chown chmod rm ln mv touch; do
+  cat > "$fr/bin/$t" <<STUB
+#!/bin/bash
+if [ "\$OTTER_AS" != otter ]; then
+  for a in "\$@"; do case "\$a" in "$fr/var/lib/otter/"*|"$fr/var/backups/otter/"*) echo "root $t \$*" >> "$fr/violations"; exit 1 ;; esac; done
+fi
+[ $t = chown ] && exit 0  # not root here: ownership is the guard's job
+args=(); skip=0
+for a in "\$@"; do if ((skip)); then skip=0; elif [ $t = install ] && [[ "\$a" == -[og] ]]; then skip=1; else args+=("\$a"); fi; done
+exec $(command -v $t) "\${args[@]}"
+STUB
+done
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-u otter --" ] || exit 9\nshift 3; OTTER_AS=otter exec "$@"\n' > "$fr/bin/runuser"
+printf '#!/bin/sh\ncase "$1" in is-active) [ "$3" = chrony ] ;; esac\n' > "$fr/bin/systemctl"
+printf '#!/bin/sh\necho yes\n' > "$fr/bin/timedatectl"
+printf '#!/bin/sh\nexit 0\n' > "$fr/bin/id"
+printf '#!/bin/sh\nexit 0\n' > "$fr/bin/ss"
+printf '#!/bin/sh\necho x86_64\n' > "$fr/bin/uname"
+printf '#!/bin/sh\necho "Status: inactive"\n' > "$fr/bin/ufw"
+chmod +x "$fr/bin/"*
+printf 'ID=debian\n' > "$fr/etc/os-release"
+paths=(-e "s#/etc/otter#$fr/etc/otter#g" -e "s#/etc/os-release#$fr/etc/os-release#g" -e "s#/etc/systemd/system#$fr/etc/systemd/system#g"
+  -e "s#/var/lib/otter#$fr/var/lib/otter#g" -e "s#/var/backups/otter#$fr/var/backups/otter#g"
+  -e "s#/usr/local/bin/#$fr/usr/local/bin/#g" -e "s#/usr/local/lib/otter#$fr/usr/local/lib/otter#g")
+b="$fr/bundle"
+sed "${paths[@]}" -e 's/\$EUID -eq 0/0 -eq 0/' deploy/bundle/install.sh > "$b/install.sh"
+# the node binary: imports what arrives on stdin (as otter only), reports itself, backs up per $BACKUP_MODE
+cat > "$b/otter-node-amd64" <<STUB
+#!/bin/bash
+case "\$1" in
+  version) echo 0.8.3 ;;
+  check) exit 0 ;;
+  import) [ "\$OTTER_AS" = otter ] && [ "\${@: -1}" = - ] || exit 9; cat >> "$fr/imported" ;;
+  backup) out=\${@: -1}; if [ "\$BACKUP_MODE" = link ]; then ln -s "$fr/rootsecret" "\$out"; else echo db-copy > "\$out"; fi ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$b/health.sh"
+chmod +x "$b/otter-node-amd64" "$b/health.sh" "$b/install.sh"
+for f in node.key tls.key manifest.bin tls.crt uninstall.sh backup.sh otter-node.service otter-backup.service otter-backup.timer; do echo "$f" > "$b/$f"; done
+printf 'data_dir = "/var/lib/otter"\n' > "$b/node.toml"
+printf 'OTTER_PORT=27443\nOTTER_PROBE_URL=https://192.0.2.1:27443/\n' > "$b/probe.env"
+echo '<html>decoy</html>' > "$b/site/index.html"; echo 'body{}' > "$b/site/css/a.css"
+printf 'invite-1' > "$b/invites/a.bin"
+(cd "$b" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+fakeinstall() { rm -f "$fr/violations" "$fr/imported"; (cd "$b" && PATH="$fr/bin:$PATH" bash ./install.sh) > "$work/install.out" 2>&1; }
+fakeinstall || fail "fake-root install: $(cat "$work/install.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "install.sh as root inside otter's directories: $(cat "$fr/violations")"
+cmp -s "$fr/var/lib/otter/site/css/a.css" "$b/site/css/a.css" || fail "install.sh did not unpack the site"
+[[ "$(cat "$fr/imported")" == invite-1 ]] || fail "invite not imported on otter's stdin"
+if compgen -G "$fr/var/lib/otter/import-*" >/dev/null; then fail "invite copied into otter's directory"; fi
+# hostile layout: otter replaced its site directory with a link to a directory of root's (read-only for otter)
+mkdir -p "$fr/victim"; chmod 0555 "$fr/victim"
+mv "$fr/var/lib/otter/site" "$fr/var/lib/otter/site.real"; ln -s "$fr/victim" "$fr/var/lib/otter/site"
+if fakeinstall; then fail "install.sh followed the planted site link"; fi
+[[ ! -e "$fr/violations" ]] || fail "install.sh as root inside otter's directories: $(cat "$fr/violations")"
+[[ -z "$(ls -A "$fr/victim")" && "$(stat -c %a "$fr/victim")" == 555 ]] || fail "the link target was changed"
+chmod 0755 "$fr/victim"; rm "$fr/var/lib/otter/site"; mv "$fr/var/lib/otter/site.real" "$fr/var/lib/otter/site"
+# upgrade.sh rollback (health check fails once): the pre-upgrade copy is restored by otter, never by root
+sed -n "/<<'REMOTE'$/,/^REMOTE$/p" deploy/upgrade.sh | sed -e 1d -e '$d' | sed "${paths[@]}" > "$fr/upgrade-remote.sh"
+printf '#!/bin/sh\n[ -e "%s/healthy-once" ] && exit 0; touch "%s/healthy-once"; exit 1\n' "$fr" "$fr" > "$fr/usr/local/lib/otter/health.sh"
+chmod +x "$fr/usr/local/lib/otter/health.sh"
+printf 'secret of root' > "$fr/rootsecret"; chmod 0000 "$fr/rootsecret"
+fakeupgrade() {
+  rm -f "$fr/violations" "$fr/healthy-once" "$fr/var/lib/otter/node.db" "$fr/var/backups/otter/"*; cp "$b/otter-node-amd64" "$fr/usr/local/bin/otter-node.new"
+  cp "$b/node.toml" "$fr/etc/otter/node.toml"
+  PATH="$fr/bin:$PATH" bash "$fr/upgrade-remote.sh" "$(sha256sum "$fr/usr/local/bin/otter-node.new" | cut -d' ' -f1)" > "$work/upgrade.out" 2>&1
+}
+rc=0; BACKUP_MODE=file fakeupgrade || rc=$?
+[[ $rc == 2 ]] || fail "fake-root rollback exit $rc: $(cat "$work/upgrade.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh rollback as root inside otter's directories: $(cat "$fr/violations")"
+[[ "$(cat "$fr/var/lib/otter/node.db")" == db-copy && "$(stat -c %a "$fr/var/lib/otter/node.db")" == 600 ]] ||
+  fail "rollback did not restore the copy 0600"
+# hostile layout: the 'backup' is otter's link to a file only root may read; the rollback must not copy it out
+rc=0; BACKUP_MODE=link fakeupgrade || rc=$?
+[[ $rc != 0 ]] || fail "rollback restored through a planted link"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh rollback as root inside otter's directories: $(cat "$fr/violations")"
+if grep -qs 'secret of root' "$fr/var/lib/otter/node.db"; then fail "rollback handed root's file to otter"; fi
+chmod 0600 "$fr/rootsecret"
+
 # make-bundle.sh: [turn] with the node's IP only for 0.8.0+
 printf 'fake' > dist/otter-node_0.8.0-st_linux_amd64; printf 'fake' > dist/otter-node_0.8.0-st_linux_arm64
 touch dist/otter-node_0.0.0-st_linux_amd64 dist/otter-node_0.0.0-st_linux_arm64

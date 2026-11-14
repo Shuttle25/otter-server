@@ -118,4 +118,5 @@ decisions D76–D81; checklist [`docs/m8-manual-test.md`](docs/m8-manual-test.md
 | `/etc/otter/fcm.json` | push-capable servers only (`deploy/push-key.sh`) | Firebase service-account key |
 | `local.properties`, `*.jks`, `keystore.properties` | owner's PC only | SDK path, release signing key |
 
-`scripts/secrets-check.sh` (gitleaks v8.24.0 + personal-data grep) must pass before publishing.
+`scripts/secrets-check.sh` (gitleaks v8.24.0 + personal-data grep) must pass before publishing. It needs
+`~/.otter-real-ips` and `~/.otter-private-words` (exit 2 if either is missing) and prints findings as `file:line` only.

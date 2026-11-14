@@ -82,6 +82,36 @@ grep -q '^cp -p /etc/otter/node.toml /etc/otter/node.toml.prev$' deploy/upgrade.
 rollback=$(sed -n '/rolling back/,/^REMOTE$/p' deploy/upgrade.sh)
 grep -q '^cp -p /etc/otter/node.toml.prev /etc/otter/node.toml$' <<< "$rollback" || fail "upgrade.sh: rollback does not restore node.toml"
 
+# --- upgrade.sh (remote part, run locally): backup dir 0700, copies 0600, newest 3 pre-upgrade copies (C26)
+up="$work/up"; mkdir -p "$up/bin" "$up/etc" "$up/lib" "$up/backups"
+printf '#!/bin/sh\nshift 3; exec "$@"\n' > "$up/bin/runuser"
+printf '#!/bin/bash\nargs=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) args+=("$1"); shift;; esac; done\nexec /usr/bin/install "${args[@]}"\n' > "$up/bin/install"
+cat > "$up/bin/otter-node" <<'STUB'
+#!/bin/bash
+case "$1" in
+  version) echo 0.8.1 ;;
+  backup) while (($#)); do [[ "$1" == --out ]] && { umask 022; echo db > "$2"; }; shift; done ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$up/bin/systemctl"; printf '#!/bin/sh\nexit 0\n' > "$up/bin/health.sh"
+chmod +x "$up/bin/"*
+cp "$up/bin/otter-node" "$up/bin/otter-node.new"; echo 'x = 1' > "$up/etc/node.toml"
+chmod 0755 "$up/backups"
+for d in 20250101 20250201 20250301 20250401; do (umask 022; echo old > "$up/backups/pre-upgrade-$d-000000.db"); done
+(umask 022; echo daily > "$up/backups/node-2026-11-01.db")
+sed -n "/^remote \"\$target\" bash -s -- \"\$sum\" <<'REMOTE'$/,/^REMOTE$/p" deploy/upgrade.sh | sed '1d;$d' |
+  sed -e "s#/usr/local/bin/otter-node#$up/bin/otter-node#g" -e "s#/var/backups/otter#$up/backups#g" \
+      -e "s#/var/lib/otter#$up/lib#g" -e "s#/etc/otter#$up/etc#g" -e "s#/usr/local/lib/otter/health.sh#health.sh#g" > "$work/upgrade-local.sh"
+sum=$(sha256sum "$up/bin/otter-node.new" | cut -d' ' -f1)
+PATH="$up/bin:$PATH" bash "$work/upgrade-local.sh" "$sum" > "$work/upgrade-local.out" 2>&1 || fail "upgrade remote part: $(cat "$work/upgrade-local.out")"
+[[ "$(stat -c %a "$up/backups")" == 700 ]] || fail "backup dir mode $(stat -c %a "$up/backups")"
+[[ -z "$(find "$up/backups" -name '*.db' ! -perm 0600)" ]] || fail "backup files not 0600: $(ls -l "$up/backups")"
+[[ "$(ls "$up/backups" | grep -c '^pre-upgrade-')" == 3 ]] || fail "pre-upgrade copies kept: $(ls "$up/backups")"
+[[ ! -e "$up/backups/pre-upgrade-20250101-000000.db" && ! -e "$up/backups/pre-upgrade-20250201-000000.db" ]] || fail "oldest copies not pruned"
+[[ -e "$up/backups/node-2026-11-01.db" ]] || fail "daily copy pruned"
+pr=$(grep -n 'pre-upgrade-\*\.db' deploy/upgrade.sh)
+grep -q 'runuser -u otter -- find .* | sort -zr | tail -zn +4 | runuser -u otter -- xargs -0r rm -f --' <<< "$pr" || fail "prune not as otter: $pr"
+
 # --- status.sh with stubbed ssh: unreachable nodes are reported, exit 1
 mkdir -p "$work/stub"
 printf '#!/bin/sh\necho "ssh: connect to host: Connection refused" >&2\nexit 255\n' > "$work/stub/ssh"
@@ -390,6 +420,10 @@ printf 'secret of root' > "$fr/rootsecret"; chmod 0000 "$fr/rootsecret"
 fakeupgrade() {
   rm -f "$fr/violations" "$fr/healthy-once" "$fr/var/lib/otter/node.db" "$fr/var/backups/otter/"*; cp "$b/otter-node-amd64" "$fr/usr/local/bin/otter-node.new"
   cp "$b/node.toml" "$fr/etc/otter/node.toml"
+  if [[ -n "${PLANT:-}" ]]; then  # otter's own layout: old 0644 copies and a link to root's file among them
+    for d in 1 2 3 4; do (umask 022; echo old > "$fr/var/backups/otter/pre-upgrade-2025010$d-000000.db"); done
+    ln -s "$fr/rootsecret" "$fr/var/backups/otter/node-planted.db"
+  fi
   PATH="$fr/bin:$PATH" bash "$fr/upgrade-remote.sh" "$(sha256sum "$fr/usr/local/bin/otter-node.new" | cut -d' ' -f1)" > "$work/upgrade.out" 2>&1
 }
 rc=0; BACKUP_MODE=file fakeupgrade || rc=$?
@@ -402,6 +436,14 @@ rc=0; BACKUP_MODE=link fakeupgrade || rc=$?
 [[ $rc != 0 ]] || fail "rollback restored through a planted link"
 [[ ! -e "$fr/violations" ]] || fail "upgrade.sh rollback as root inside otter's directories: $(cat "$fr/violations")"
 if grep -qs 'secret of root' "$fr/var/lib/otter/node.db"; then fail "rollback handed root's file to otter"; fi
+# hostile layout: the 0600 pass and the pruning (C26) run as otter and never chmod through otter's planted link
+rc=0; PLANT=1 BACKUP_MODE=file fakeupgrade || rc=$?
+[[ $rc == 2 ]] || fail "fake-root upgrade with planted copies exit $rc: $(cat "$work/upgrade.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh as root inside otter's directories: $(cat "$fr/violations")"
+[[ "$(stat -c %a "$fr/rootsecret")" == 0 ]] || fail "the 0600 pass changed root's file through a link"
+[[ "$(stat -c %a "$fr/var/backups/otter")" == 700 ]] || fail "fake-root backup dir mode $(stat -c %a "$fr/var/backups/otter")"
+[[ "$(find "$fr/var/backups/otter" -name 'pre-upgrade-*' -type f | wc -l)" == 3 && -z "$(find "$fr/var/backups/otter" -type f ! -perm 0600)" ]] ||
+  fail "fake-root copies after upgrade: $(ls -l "$fr/var/backups/otter")"
 chmod 0600 "$fr/rootsecret"
 
 # make-bundle.sh: [turn] with the node's IP only for 0.8.0+

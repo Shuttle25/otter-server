@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -94,5 +95,86 @@ func TestKeepsNewestTwo(t *testing.T) {
 		if _, _, err := d.Chunk(s, 0); err != nil {
 			t.Fatal("newer dropped:", err)
 		}
+	}
+}
+
+func TestImportRefusesSymlinkAndSpecialFiles(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := writeTemp(t, 100)
+	link := filepath.Join(t.TempDir(), "link.apk")
+	if err := os.Symlink(orig, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Import(link); !errors.Is(err, syscall.ELOOP) {
+		t.Fatalf("symlink source: %v", err)
+	}
+	fifo := filepath.Join(t.TempDir(), "fifo.apk")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := d.Import(fifo); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotRegular) {
+			t.Fatalf("fifo: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("import blocked on a FIFO")
+	}
+	if _, err := d.Import(t.TempDir()); !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("directory: %v", err)
+	}
+	if e, _ := os.ReadDir(d.path); len(e) != 0 {
+		t.Fatalf("stored %d entries", len(e))
+	}
+}
+
+// Regression guard: rename replaces a planted link and never writes through it.
+func TestImportReplacesPlantedSymlinkAtDestination(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, data := writeTemp(t, 100)
+	sum := sha256.Sum256(data)
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(d.path, hexName(sum[:]))
+	if err := os.Symlink(victim, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Import(src); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep me" {
+		t.Fatal("wrote through the planted symlink")
+	}
+	if st, err := os.Lstat(dst); err != nil || !st.Mode().IsRegular() {
+		t.Fatalf("destination: %v %v", st, err)
+	}
+}
+
+func TestImportReader(t *testing.T) {
+	d, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte{7}, 3000)
+	sum, err := d.ImportReader(bytes.NewReader(data))
+	want := sha256.Sum256(data)
+	if err != nil || !bytes.Equal(sum, want[:]) {
+		t.Fatalf("import: %x %v", sum, err)
+	}
+	if _, err := d.ImportReader(bytes.NewReader(nil)); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("empty stream: %v", err)
+	}
+	if files, _ := filepath.Glob(filepath.Join(d.path, "*.apk")); len(files) != 1 {
+		t.Fatalf("files: %v", files)
 	}
 }

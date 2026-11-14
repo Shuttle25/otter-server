@@ -13,6 +13,10 @@ const RetentionMs = int64(30 * 24 * 60 * 60 * 1000)
 // OrphanBackupMs: a persistent blob no BACKUP_META references is deleted this long after its creation (D50).
 const OrphanBackupMs = int64(7 * 24 * 60 * 60 * 1000)
 
+// NetlogMaxAgeMs: connectivity-log lines not updated for this long are deleted; they hold source IPs of rejected
+// peers (C25, D85).
+const NetlogMaxAgeMs = int64(7 * 24 * 60 * 60 * 1000)
+
 type ExpireStats struct{ Envelopes, Acks, Tombstones, Oplog, Blobs int64 }
 
 // Expire removes data past retention (docs/03 "Deletion & garbage collection").
@@ -89,6 +93,9 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 			st.Blobs++
 		}
 		if err := exec(&ignore, `DELETE FROM auth_failures WHERE at_ms < ?`, now-24*time.Hour.Milliseconds()); err != nil {
+			return err
+		}
+		if err := exec(&ignore, `DELETE FROM netlog WHERE last_ms < ?`, now-NetlogMaxAgeMs); err != nil {
 			return err
 		}
 		if err := exec(&ignore, `DELETE FROM records WHERE type=? AND record_key IN

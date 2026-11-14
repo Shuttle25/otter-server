@@ -192,7 +192,7 @@ func (c *Config) validateTurn() error {
 	}
 	defInt(&t.RelayPortMin, 49160)
 	defInt(&t.RelayPortMax, 49200)
-	defInt(&t.MaxAllocationsPerUser, 4)
+	defInt(&t.MaxAllocationsPerUser, 12) // up to 3 per phone per call (UDP, TCP, TLS); old ones linger until they time out
 	defInt(&t.RelayKbps, 200)
 	if ip := net.ParseIP(t.RelayIP); ip == nil {
 		return fmt.Errorf("config: turn.relay_ip %q is not an IP address", t.RelayIP)

@@ -18,7 +18,7 @@ func TestTurnDefaultsAndValidation(t *testing.T) {
 	tc := c.Turn
 	if !c.TurnEnabled() || tc.UDPListen != ":3478" || tc.TCPListen != ":3478" || tc.TLSListen != ":5349" ||
 		tc.RelayPortMin != 49160 || tc.RelayPortMax != 49200 || tc.SecretFile != "/etc/otter/turn.secret" ||
-		tc.MaxAllocationsPerUser != 4 || tc.MaxAllocations != 41 || tc.RelayKbps != 200 || tc.Realm != "otter" {
+		tc.MaxAllocationsPerUser != 12 || tc.MaxAllocations != 41 || tc.RelayKbps != 200 || tc.Realm != "otter" {
 		t.Fatalf("defaults: %+v", tc)
 	}
 	for name, extra := range map[string]string{

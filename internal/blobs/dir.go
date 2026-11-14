@@ -3,6 +3,8 @@ package blobs
 
 import (
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,14 +19,26 @@ func New(root string) (*Dir, error) {
 	return &Dir{root: root}, nil
 }
 
-func (d *Dir) blobDir(key []byte) string {
+// KeyLen is the only valid blob key length: 16-byte owner ‖ 16 random bytes (D45).
+const KeyLen = 32
+
+// ErrBadKey: a key that is not KeyLen bytes; it never names a file (C11).
+var ErrBadKey = errors.New("blobs: key must be 32 bytes")
+
+func (d *Dir) blobDir(key []byte) (string, error) {
+	if len(key) != KeyLen {
+		return "", fmt.Errorf("%w (got %d)", ErrBadKey, len(key))
+	}
 	h := hex.EncodeToString(key)
-	return filepath.Join(d.root, h[:2], h)
+	return filepath.Join(d.root, h[:2], h), nil
 }
 
 // Write stores a chunk atomically (temp file, fsync, rename).
 func (d *Dir) Write(key []byte, idx uint32, data []byte) error {
-	dir := d.blobDir(key)
+	dir, err := d.blobDir(key)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -49,15 +63,22 @@ func (d *Dir) Write(key []byte, idx uint32, data []byte) error {
 	return os.Rename(f.Name(), filepath.Join(dir, strconv.FormatUint(uint64(idx), 10)))
 }
 
-// Read returns a chunk; os.ErrNotExist when missing.
+// Read returns a chunk; os.ErrNotExist when missing, ErrBadKey for a malformed key.
 func (d *Dir) Read(key []byte, idx uint32) ([]byte, error) {
-	return os.ReadFile(filepath.Join(d.blobDir(key), strconv.FormatUint(uint64(idx), 10)))
+	dir, err := d.blobDir(key)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(dir, strconv.FormatUint(uint64(idx), 10)))
 }
 
 // Remove deletes every chunk of a blob.
 func (d *Dir) Remove(key []byte) error {
-	dir := d.blobDir(key)
-	err := os.RemoveAll(dir)
+	dir, err := d.blobDir(key)
+	if err != nil {
+		return err
+	}
+	err = os.RemoveAll(dir)
 	os.Remove(filepath.Dir(dir)) // prefix dir, only if empty
 	return err
 }
@@ -79,7 +100,7 @@ func (d *Dir) Keys() ([][]byte, error) {
 		}
 		for _, e := range entries {
 			k, err := hex.DecodeString(e.Name())
-			if !e.IsDir() || err != nil || len(k) != 32 {
+			if !e.IsDir() || err != nil || len(k) != KeyLen {
 				continue
 			}
 			out = append(out, k)

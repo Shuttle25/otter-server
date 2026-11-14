@@ -38,7 +38,10 @@ type Notifier interface {
 
 // Waker sends a push wake-up (internal/push.Pusher). nil = this node never pushes.
 type Waker interface {
+	// Wake sends a message wake-up; coalesced (≤ 1 per (user, device) per 10 s, D58).
 	Wake(ctx context.Context, user []byte, device uint32)
+	// WakeCall sends a call wake-up: never coalesced, so a quick redial still rings.
+	WakeCall(ctx context.Context, user []byte, device uint32)
 }
 
 type nopNotifier struct{}

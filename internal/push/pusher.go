@@ -39,13 +39,29 @@ func New(sender Sender, tokens Tokens, log *slog.Logger) *Pusher {
 	return &Pusher{Every: 10 * time.Second, Now: time.Now, sender: sender, tokens: tokens, log: log, last: map[string]time.Time{}}
 }
 
-// Wake implements service.Waker.
+// Wake implements service.Waker: a message wake-up, coalesced to ≤ 1 per (user, device) per Every.
 func (p *Pusher) Wake(ctx context.Context, user []byte, device uint32) {
+	p.wake(ctx, user, device, false)
+}
+
+// WakeCall implements service.Waker: a call wake-up, never coalesced (a redial right after a call must
+// ring). It still records the time, so message pushes right after it are coalesced.
+func (p *Pusher) WakeCall(ctx context.Context, user []byte, device uint32) {
+	p.wake(ctx, user, device, true)
+}
+
+func (p *Pusher) wake(ctx context.Context, user []byte, device uint32, call bool) {
+	kind := "message"
+	if call {
+		kind = "call"
+	}
+	tag := userTag(user)
 	k := fmt.Sprintf("%x/%d", user, device)
 	now := p.Now()
 	p.mu.Lock()
-	if t, ok := p.last[k]; ok && now.Sub(t) < p.Every {
+	if t, ok := p.last[k]; ok && now.Sub(t) < p.Every && !call {
 		p.mu.Unlock()
+		p.log.Info("push skipped", "user", tag, "device", device, "kind", kind, "reason", "coalesced")
 		return
 	}
 	p.last[k] = now
@@ -67,14 +83,19 @@ func (p *Pusher) Wake(ctx context.Context, user []byte, device uint32) {
 		}
 		switch err := p.sender.Send(ctx, tok); {
 		case err == nil:
-			p.log.Debug("push sent", "user", fmt.Sprintf("%x", user))
+			p.log.Info("push sent", "user", tag, "device", device, "kind", kind)
 		case errors.Is(err, ErrUnregistered):
-			p.log.Info("push token unregistered: dropped", "user", fmt.Sprintf("%x", user))
+			p.log.Info("push token unregistered: dropped", "user", tag, "device", device)
 			_ = p.tokens.DropPushToken(ctx, user, device, tok)
 		default:
-			p.log.Warn("push failed", "err", err)
+			p.log.Warn("push failed", "user", tag, "device", device, "kind", kind, "err", err)
 		}
 	}()
+}
+
+// userTag: the first 4 bytes of a user id in hex, enough to follow one user through the logs.
+func userTag(user []byte) string {
+	return fmt.Sprintf("%x", user[:min(len(user), 4)])
 }
 
 // Wait blocks until in-flight sends finish (tests, shutdown).

@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"time"
 
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -44,14 +46,44 @@ func (s *Service) pushDuty(from []byte) bool {
 	return false
 }
 
-// maybePush wakes offline recipients of a fresh urgent envelope this node is responsible for (D58).
+// callMaxTTL: an urgent envelope that expires at most this long after creation is call signaling.
+// Clients send call messages with expires_ms = created_ms + 120 s (D78); ordinary messages use 0 or ~30 days.
+const callMaxTTL = 150 * time.Second
+
+// isCall recognises call signaling without seeing the (end-to-end encrypted) content.
+func isCall(body *pb.RecordBody, e *pb.Envelope) bool {
+	ttl := body.ExpiresMs - body.CreatedMs
+	return e.Urgent && body.ExpiresMs > 0 && ttl > 0 && ttl <= callMaxTTL.Milliseconds()
+}
+
+// maybePush wakes recipients of a fresh urgent envelope this node is responsible for (D58).
+// Ordinary messages wake only recipients without a live session here; call messages wake every recipient
+// (a phone's socket may be half-open and still count as online) and bypass coalescing.
 func (s *Service) maybePush(ctx context.Context, body *pb.RecordBody, e *pb.Envelope, from []byte) {
 	if !e.Urgent || body.CreatedMs < s.Now().Add(-pushMaxAge).UnixMilli() || !s.pushDuty(from) {
 		return
 	}
+	call := isCall(body, e)
 	for _, r := range e.Recipients {
-		if !s.Notify.Online(r.User, r.Device) {
+		switch {
+		case call:
+			s.Waker.WakeCall(ctx, r.User, r.Device)
+		case s.Notify.Online(r.User, r.Device):
+			s.logger().Info("push skipped", "user", userTag(r.User), "device", r.Device, "kind", "message", "reason", "online")
+		default:
 			s.Waker.Wake(ctx, r.User, r.Device)
 		}
 	}
+}
+
+func (s *Service) logger() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
+}
+
+// userTag: the first 4 bytes of a user id in hex, enough to follow one user through the logs.
+func userTag(user []byte) string {
+	return fmt.Sprintf("%x", user[:min(len(user), 4)])
 }

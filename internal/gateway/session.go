@@ -3,7 +3,9 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
@@ -74,6 +76,39 @@ func (s *session) dropReplaced() bool {
 	s.cancel() // ends the read loop at once; the close handshake must not keep it serving requests
 	go s.conn.Close(websocket.StatusPolicyViolation, "install replaced")
 	return true
+}
+
+// keepalive pings the client every interval; a ping without a pong within timeout ends the session
+// (cancel stops the read loop, which removes the session). Pongs are processed by the concurrent read loop.
+func (s *session) keepalive(interval, timeout time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-t.C:
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, timeout)
+		err := s.conn.Ping(ctx)
+		cancel()
+		if err != nil {
+			if s.ctx.Err() != nil {
+				return // the session ended anyway
+			}
+			s.mu.Lock()
+			u, dev := s.user, s.device
+			s.mu.Unlock()
+			args := []any{"err", err}
+			if u != nil {
+				args = append(args, "user", fmt.Sprintf("%x", u[:min(len(u), 4)]), "device", dev)
+			}
+			s.g.log.Info("session ping failed", args...)
+			s.cancel()
+			s.conn.CloseNow()
+			return
+		}
+	}
 }
 
 func (s *session) kick() {

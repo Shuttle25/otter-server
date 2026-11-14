@@ -99,7 +99,7 @@ expiry; nodes skip and purge expired envelopes) and send media (WebRTC, DTLS-SRT
 embedded in `otter-node`** (Pion `turn/v5` v5.1.3, `internal/turnsrv`). Each phone uses the relay of its own node:
 `turn.credentials` (logged in) returns 12-hour TURN-REST credentials for this node only; phones ask on every call.
 Ports **UDP 3478, TCP 3478, TLS 5349** (only when `[wss]` has TLS), relays on **UDP 49160–49200**, IPv4 only. Limits:
-4 allocations per user, the port range per node, 200 kbit/s per allocation (`relay_kbps`); peers in private,
+12 allocations per user, the port range per node, 200 kbit/s per allocation (`relay_kbps`); peers in private,
 loopback, link-local, CGNAT, NAT64, 6to4, Teredo and similar ranges are refused, and the node's own addresses only
 for its relay ports. The optional `[turn]` section needs the 0.8.0 binary; the per-node secret
 `/etc/otter/turn.secret` comes from `otter-node turn keygen` and never leaves the node. `deploy/turn-setup.sh LABEL`

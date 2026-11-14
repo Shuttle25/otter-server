@@ -29,7 +29,7 @@ type node struct {
 	netPriv ed25519.PrivateKey
 }
 
-func startNode(t *testing.T) *node {
+func startNode(t *testing.T, opts ...func(*Gateway)) *node {
 	st, err := store.Open(filepath.Join(t.TempDir(), "n.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +43,9 @@ func startNode(t *testing.T) *node {
 	}
 	svc.Blobs = bd
 	gw := New(svc, slog.New(slog.DiscardHandler))
+	for _, o := range opts {
+		o(gw)
+	}
 	srv := httptest.NewServer(gw)
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return &node{url: "ws" + strings.TrimPrefix(srv.URL, "http"), svc: svc, netPriv: priv}
@@ -57,10 +60,12 @@ type client struct {
 	hello  *pb.Hello
 }
 
-func dial(t *testing.T, n *node) *client {
+func dial(t *testing.T, n *node) *client { return dialWith(t, n, nil) }
+
+func dialWith(t *testing.T, n *node, opts *websocket.DialOptions) *client {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, n.url, nil)
+	c, _, err := websocket.Dial(ctx, n.url, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

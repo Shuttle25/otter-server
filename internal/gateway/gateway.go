@@ -24,8 +24,11 @@ const (
 )
 
 type Gateway struct {
-	// PingInterval/PingTimeout: server-side keep-alive. A phone's socket can die silently (half-open TCP); an
-	// unanswered ping closes the session so Online turns false and pushes go out again. Set before serving.
+	// PingInterval/PingTimeout: server-side keep-alive. A phone's socket can die silently (half-open TCP) and would
+	// count as online, so its pushes are skipped. Pongs are read by the session's read loop, which also reads large
+	// frames (blob chunks); on a slow or throttled mobile link one chunk can take tens of seconds, so the timeout is
+	// generous (60 s): a dead socket is dropped within ~90 s, a slow healthy one is never cut. Call pushes do not
+	// depend on this (they ignore Online).
 	PingInterval time.Duration
 	PingTimeout  time.Duration
 
@@ -36,7 +39,7 @@ type Gateway struct {
 }
 
 func New(svc *service.Service, log *slog.Logger) *Gateway {
-	g := &Gateway{PingInterval: 30 * time.Second, PingTimeout: 10 * time.Second,
+	g := &Gateway{PingInterval: 30 * time.Second, PingTimeout: 60 * time.Second,
 		svc: svc, log: log, sessions: map[*session]struct{}{}}
 	svc.Notify = g
 	return g

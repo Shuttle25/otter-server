@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -159,5 +160,45 @@ func TestPublishBackupRules(t *testing.T) {
 	}
 	if _, err := f.persistentBlob(boris); !errors.Is(err, ErrQuota) {
 		t.Fatalf("4th persistent blob: %v", err)
+	}
+}
+
+// C12 (D103): a clashed plain name never resolves to one account: backup.auth lists the candidates (no salt) and
+// backup.fetch refuses; each "name#tag" resolves to its own account.
+func TestBackupAuthAmbiguousName(t *testing.T) {
+	f := newFx(t)
+	withBlobs(t, f)
+	ctx := context.Background()
+	f.withManifest(1)
+	anna := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	secret := bytes.Repeat([]byte{9}, 32)
+	salt := f.publishBackup(anna, secret)
+	other, rec := f.replicatedEntry(f.invite(anna, time.Hour), "anna", nil) // a clash from another partition
+	if _, err := f.svc.ApplyReplicated(ctx, r16(), rec); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.svc.BackupAuth(ctx, "anna")
+	if err != nil || len(res.Candidates) != 2 || len(res.Salt) != 0 {
+		t.Fatalf("ambiguous: %+v %v", res, err)
+	}
+	want := map[string]bool{"anna#" + hex.EncodeToString(anna.id[:4]): true, "anna#" + hex.EncodeToString(other.id[:4]): true}
+	for _, c := range res.Candidates {
+		if !want[c] {
+			t.Fatalf("unexpected candidate %q in %v", c, res.Candidates)
+		}
+		r, err := f.svc.BackupAuth(ctx, c)
+		if err != nil || len(r.Candidates) != 0 || len(r.Salt) == 0 {
+			t.Fatalf("%s: %+v %v", c, r, err)
+		}
+	}
+	annaTag := "anna#" + hex.EncodeToString(anna.id[:4])
+	if r, _ := f.svc.BackupAuth(ctx, annaTag); !bytes.Equal(r.Salt, salt) {
+		t.Fatalf("%s does not resolve to anna's backup", annaTag)
+	}
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", secret); !errors.Is(err, ErrConflict) {
+		t.Fatalf("fetch by an ambiguous name: %v", err)
+	}
+	if res, _, err := f.svc.BackupFetch(ctx, annaTag, secret); err != nil || res.BackupMeta == nil {
+		t.Fatalf("fetch by anna's tag: %v", err)
 	}
 }

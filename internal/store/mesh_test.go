@@ -219,7 +219,7 @@ func TestExpire(t *testing.T) {
 	}
 }
 
-// D40: a profile update (v2, created late) keeps the clash rank of the first registration.
+// D40/D103: the first version seen fixes the clash rank; a profile update (v2, created late) keeps it.
 func TestClashRankUsesRegisteredMs(t *testing.T) {
 	for _, order := range []string{"x-first", "y-first"} {
 		s, _ := open(t)

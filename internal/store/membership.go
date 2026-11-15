@@ -1,9 +1,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"strings"
 
 	pb "ottermsg/server/internal/proto/otterv1"
 )
@@ -127,14 +130,23 @@ func (s *Store) MembershipRecords(ctx context.Context) ([][]byte, error) {
 	return out, rows.Err()
 }
 
-// insertUser creates the account row with the state the network-signed records give it (D99, D101): revoked if a
-// REVOCATION arrived first, invite rights from INVITE_RIGHTS or the default, never from DirectoryEntry.can_invite (C6).
+// insertUser creates the account row with the state the network-signed records give it (D99, D101, D102): revoked if a
+// REVOCATION arrived first or the account lost a double redemption of its invite, invite rights from INVITE_RIGHTS or
+// the default, never from DirectoryEntry.can_invite (C6).
 func insertUser(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, name string, conflict int, rank, now int64) error {
-	revoked, reason := false, ""
-	err := tx.QueryRowContext(ctx, `SELECT reason FROM revocations WHERE user_id=?`, e.UserId).Scan(&reason)
+	lost, err := redeem(ctx, tx, it, e.UserId)
+	if err != nil {
+		return err
+	}
+	revoked, reason := lost, ""
+	if lost {
+		reason = ReasonDuplicateInvite
+	}
+	var rr string
+	err = tx.QueryRowContext(ctx, `SELECT reason FROM revocations WHERE user_id=?`, e.UserId).Scan(&rr)
 	switch {
 	case err == nil:
-		revoked = true
+		revoked, reason = true, rr
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
@@ -148,4 +160,103 @@ func insertUser(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, 
 		return revokeUser(ctx, tx, e.UserId, reason)
 	}
 	return nil
+}
+
+// redeem records the account's redemption and applies the network-wide single-use rule (D102): of all accounts that
+// redeemed one invite, the lowest rank (SHA-256(invite_proof), then user_id) stays and every other one is disabled.
+// A redemption on this node of an invite already redeemed by someone else is refused instead. Returns whether the new
+// account lost.
+func redeem(ctx context.Context, tx *sql.Tx, it item, user []byte) (bool, error) {
+	a := it.adm
+	if a == nil || a.InviteID == nil {
+		return false, nil
+	}
+	if !it.fromPeer {
+		var x int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM redemptions WHERE invite_id=? AND user_id<>?`, a.InviteID, user).Scan(&x)
+		if err == nil {
+			return false, ErrInviteUnavailable
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO redemptions(invite_id,user_id,rank) VALUES(?,?,?)`, a.InviteID, user, a.Rank); err != nil {
+		return false, err
+	}
+	var best []byte
+	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM redemptions WHERE invite_id=? ORDER BY rank, user_id LIMIT 1`,
+		a.InviteID).Scan(&best); err != nil {
+		return false, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM redemptions WHERE invite_id=? AND user_id<>? AND user_id<>?`, a.InviteID, best, user)
+	if err != nil {
+		return false, err
+	}
+	var losers [][]byte
+	for rows.Next() {
+		var id []byte
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return false, err
+		}
+		losers = append(losers, id)
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	for _, id := range losers {
+		if err := revokeUser(ctx, tx, id, ReasonDuplicateInvite); err != nil {
+			return false, err
+		}
+	}
+	return !bytes.Equal(best, user), nil
+}
+
+// ResolveUsername maps a name typed for a restore to the stored username (D103): a name that never clashed as is;
+// "name#<8 hex>" to either side of a clash (the winner is stored as plain "name", the loser literally as "name#tag").
+// A clashed plain name returns the candidates ("name#tag" of every account sharing it) instead of guessing.
+func (s *Store) ResolveUsername(ctx context.Context, typed string) (string, []string, error) {
+	base, tag, tagged := strings.Cut(typed, "#")
+	if !tagged {
+		var x int
+		err := s.r.QueryRowContext(ctx, `SELECT 1 FROM username_clashes WHERE username=?`, base).Scan(&x)
+		if errors.Is(err, sql.ErrNoRows) {
+			return typed, nil, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		rows, err := s.r.QueryContext(ctx, `SELECT user_id FROM users WHERE username=?1 OR substr(username,1,length(?1)+1)=?1||'#'
+			ORDER BY username`, base)
+		if err != nil {
+			return "", nil, err
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var id []byte
+			if err := rows.Scan(&id); err != nil {
+				return "", nil, err
+			}
+			out = append(out, conflictName(base, id))
+		}
+		if err := rows.Err(); err != nil {
+			return "", nil, err
+		}
+		if len(out) == 0 { // remembered clash, but no account here holds the name any more
+			return typed, nil, nil
+		}
+		return "", out, nil
+	}
+	tag = strings.ToLower(tag)
+	var id []byte
+	err := s.r.QueryRowContext(ctx, `SELECT user_id FROM users WHERE username=?`, base).Scan(&id)
+	if err == nil && hex.EncodeToString(id[:4]) == tag {
+		return base, nil, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", nil, err
+	}
+	return base + "#" + tag, nil, nil // the loser's row is literally "name#tag"; anything else finds nothing
 }

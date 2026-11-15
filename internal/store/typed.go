@@ -410,24 +410,34 @@ func wins(createdA int64, idA []byte, createdB int64, idB []byte) bool {
 }
 
 // applyDirectoryEntry upserts the users row. A username clash fails for local submissions; for replicated
-// entries (and local updates of a user who already lost that clash) the lower (registration time, user_id) keeps the
-// name and the other becomes name#<hex>. Registration time = registered_ms, or the entry's created_ms when 0 (D40).
+// entries (and local updates of a user who already lost that clash) the lower (rank, user_id) keeps the name and the
+// other becomes name#<hex>. The rank is fixed when the account is admitted and never changes afterwards (D103): the
+// INVITE's created_ms (signed by the inviter), or for an account without a chain (founding member) registered_ms, or
+// the entry's created_ms when 0 (D40). Every username that ever clashed is remembered for restores.
 func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, created, now int64) error {
-	rank := created
-	if e.RegisteredMs > 0 {
-		rank = e.RegisteredMs
-	}
 	var cur uint64
 	var curName string
 	var curConflict int
-	err := tx.QueryRowContext(ctx, `SELECT version, username, username_conflict FROM users WHERE user_id=?`, e.UserId).
-		Scan(&cur, &curName, &curConflict)
+	var curRank int64
+	err := tx.QueryRowContext(ctx, `SELECT version, username, username_conflict, entry_created_ms FROM users WHERE user_id=?`, e.UserId).
+		Scan(&cur, &curName, &curConflict, &curRank)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if exists && e.Version <= cur {
 		return nil // older or same version: stored as a record, users row unchanged
+	}
+	// D103: later versions cannot move the rank, whatever registered_ms they claim.
+	rank := curRank
+	if !exists {
+		rank = created
+		if e.RegisteredMs > 0 {
+			rank = e.RegisteredMs
+		}
+		if it.adm != nil && it.adm.InviteID != nil {
+			rank = it.adm.RankMs
+		}
 	}
 	// an update by a user who already lost this clash is ranked like a replicated entry
 	lostBefore := exists && curConflict != 0 && strings.HasPrefix(curName, e.Username+"#")
@@ -441,18 +451,23 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 		return err
 	case !it.fromPeer && !lostBefore:
 		return ErrUsernameTaken
-	case wins(rank, e.UserId, ownerCreated, owner):
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
-			conflictName(e.Username, owner), owner); err != nil {
+	default:
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO username_clashes(username) VALUES(?)`, e.Username); err != nil {
 			return err
 		}
-	default:
-		name, conflict = conflictName(e.Username, e.UserId), 1
+		if wins(rank, e.UserId, ownerCreated, owner) {
+			if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
+				conflictName(e.Username, owner), owner); err != nil {
+				return err
+			}
+		} else {
+			name, conflict = conflictName(e.Username, e.UserId), 1
+		}
 	}
 	if !exists {
 		return insertUser(ctx, tx, it, e, name, conflict, rank, now)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, entry_created_ms=?, username_conflict=? WHERE user_id=?`,
-		name, it.key, e.Version, rank, conflict, e.UserId)
+	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, username_conflict=? WHERE user_id=?`,
+		name, it.key, e.Version, conflict, e.UserId)
 	return err
 }

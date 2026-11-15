@@ -53,9 +53,17 @@ func (s *Service) currentBackup(ctx context.Context, username string) (*store.Ba
 	return b, &m, nil
 }
 
-// BackupAuth returns the KDF salt and parameters for a username; a stable fake salt when there is no backup.
+// BackupAuth returns the KDF salt and parameters for a username; a stable fake salt when there is no backup. A name
+// shared after a clash returns only the candidates "name#tag" (D103): the phone tries each with the typed password.
 func (s *Service) BackupAuth(ctx context.Context, username string) (*pb.BackupAuthResponse, error) {
-	_, m, err := s.currentBackup(ctx, username)
+	name, cands, err := s.Store.ResolveUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	if cands != nil {
+		return &pb.BackupAuthResponse{Candidates: cands}, nil
+	}
+	_, m, err := s.currentBackup(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return &pb.BackupAuthResponse{Salt: s.fakeSalt(username), KdfMKib: DefaultKdfMKib, KdfT: DefaultKdfT, KdfP: DefaultKdfP}, nil
 	}
@@ -66,8 +74,16 @@ func (s *Service) BackupAuth(ctx context.Context, username string) (*pb.BackupAu
 }
 
 // BackupFetch checks auth_secret against the verifier; on success returns both meta records and the blob key.
-// Failures are rate limited per username and per node (D51).
+// Failures are rate limited per username and per node (D51). A name shared after a clash is refused (D103).
 func (s *Service) BackupFetch(ctx context.Context, username string, secret []byte) (*pb.BackupFetchResponse, []byte, error) {
+	name, cands, err := s.Store.ResolveUsername(ctx, username)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cands != nil {
+		return nil, nil, fmt.Errorf("%w: ambiguous username, use name#tag", ErrConflict)
+	}
+	username = name // one failure counter per account, typed with or without its tag
 	now := s.Now()
 	perName, err := s.Store.AuthFailures(ctx, username, now.Add(-time.Hour).UnixMilli())
 	if err != nil {

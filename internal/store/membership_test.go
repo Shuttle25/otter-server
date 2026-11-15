@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -235,5 +237,95 @@ func TestMembershipMigrationOfOldAccounts(t *testing.T) {
 	var n int
 	if err := s2.r.QueryRow(`SELECT COUNT(*) FROM username_clashes WHERE username='anna'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("clash not remembered: %d %v", n, err)
+	}
+}
+
+// admitted: a version-1 entry claiming registeredMs, admitted with the given invite, rank and rank time.
+func admitted(t *testing.T, user []byte, name string, invite, rank []byte, rankMs, registeredMs int64) Item {
+	e := entry(user, name, 1)
+	e.RegisteredMs = registeredMs
+	it := mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, user, e, max(registeredMs, rankMs))
+	it.Admission = &Admission{InviteID: invite, Rank: rank, RankMs: rankMs}
+	return it
+}
+
+// C5 (D102): of two redemptions of one invite, the lowest rank stays in any arrival order; locally a second one is refused.
+func TestDoubleRedemptionLowestRankStays(t *testing.T) {
+	ctx := context.Background()
+	inv := bytes.Repeat([]byte{1}, 32)
+	x, y := r16(), r16()
+	lo, hi := bytes.Repeat([]byte{0x10}, 32), bytes.Repeat([]byte{0x20}, 32)
+	for _, order := range []string{"x-first", "y-first"} {
+		s, _ := open(t)
+		ix := admitted(t, x, "xenia", inv, hi, 1000, 1000)
+		iy := admitted(t, y, "yuri", inv, lo, 1000, 1000)
+		apply2 := func(it Item) {
+			if _, _, err := s.ApplyReplicatedItem(ctx, it, peer); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if order == "x-first" {
+			apply2(ix)
+			apply2(iy)
+		} else {
+			apply2(iy)
+			apply2(ix)
+		}
+		ux, _ := s.UserByID(ctx, x)
+		uy, _ := s.UserByID(ctx, y)
+		if !ux.Revoked || uy.Revoked {
+			t.Fatalf("%s: x revoked=%v y revoked=%v", order, ux.Revoked, uy.Revoked)
+		}
+		var reason string
+		if err := s.r.QueryRow(`SELECT revoke_reason FROM users WHERE user_id=?`, x).Scan(&reason); err != nil || reason != ReasonDuplicateInvite {
+			t.Fatalf("%s: reason %q %v", order, reason, err)
+		}
+	}
+	// locally a second redemption is refused
+	s, _ := open(t)
+	if _, _, err := s.ApplyReplicatedItem(ctx, admitted(t, x, "xenia", inv, hi, 1000, 1000), peer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyAll(ctx, nil, []Item{admitted(t, y, "yuri", inv, lo, 1000, 1000)}); !errors.Is(err, ErrInviteUnavailable) {
+		t.Fatalf("local second redemption: %v", err)
+	}
+	if u, _ := s.UserByID(ctx, y); u != nil {
+		t.Fatal("refused redemption stored an account")
+	}
+}
+
+// C12 (D103): the clash rank is the invite's created_ms, fixed at admission; a backdated registered_ms changes nothing.
+func TestClashRankFixedAtAdmission(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	victim, attacker := r16(), r16()
+	if _, _, err := s.ApplyReplicatedItem(ctx, admitted(t, victim, "anna", r16(), r16(), 5000, 5000), peer); err != nil {
+		t.Fatal(err)
+	}
+	// the attacker claims registered_ms 1 but was invited later (rank 9000): loses
+	if _, _, err := s.ApplyReplicatedItem(ctx, admitted(t, attacker, "anna", r16(), r16(), 9000, 1), peer); err != nil {
+		t.Fatal(err)
+	}
+	// and a newer version with a backdated registered_ms changes nothing
+	e2 := entry(attacker, "anna", 2)
+	e2.RegisteredMs = 1
+	replicate(t, s, mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, attacker, e2, 9999))
+	uv, _ := s.UserByID(ctx, victim)
+	ua, _ := s.UserByID(ctx, attacker)
+	if uv.Username != "anna" || ua.Username != "anna#"+hex.EncodeToString(attacker[:4]) {
+		t.Fatalf("victim=%s attacker=%s", uv.Username, ua.Username)
+	}
+	name, cands, err := s.ResolveUsername(ctx, "anna")
+	if err != nil || name != "" || len(cands) != 2 {
+		t.Fatalf("ambiguous name: %q %v %v", name, cands, err)
+	}
+	if name, _, _ := s.ResolveUsername(ctx, "anna#"+hex.EncodeToString(victim[:4])); name != "anna" {
+		t.Fatalf("winner's tag resolves to %q", name)
+	}
+	if name, _, _ := s.ResolveUsername(ctx, "anna#"+hex.EncodeToString(attacker[:4])); name != "anna#"+hex.EncodeToString(attacker[:4]) {
+		t.Fatalf("loser's tag resolves to %q", name)
+	}
+	if name, cands, _ := s.ResolveUsername(ctx, "boris"); name != "boris" || cands != nil {
+		t.Fatalf("plain name: %q %v", name, cands)
 	}
 }

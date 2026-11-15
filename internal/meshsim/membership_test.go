@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
@@ -188,4 +189,61 @@ func TestHostilePeerCannotAdmit(t *testing.T) {
 	tk := &ticket{secret: bytes.Repeat([]byte{7}, 32), rec: s.signAs(anna, pb.RecordType_INVITE, inv)}
 	vera := s.registerWith(b, "vera", tk) // b registers it without having seen the INVITE (D100)
 	eventually(t, "vera on a", func() bool { return a.knows(vera) })
+}
+
+// C5: one invite redeemed on both sides of a partition by two accounts converges to one survivor on every node.
+func TestDoubleRedemptionConverges(t *testing.T) {
+	s := newSim(t, "a", "b")
+	a, b := s.node("a"), s.node("b")
+	s.part.Block(a, b)
+	tk := s.invite(a)
+	if _, err := b.svc.ImportRecord(context.Background(), tk.rec); err != nil { // the same network invite on b
+		t.Fatal(err)
+	}
+	x := s.registerWith(a, "xenia", tk)
+	y := s.registerWith(b, "yuri", tk)
+	s.part.Heal(a, b)
+	eventually(t, "both accounts on both nodes", func() bool { return s.all(func(n *simNode) bool { return n.knows(x) && n.knows(y) }) })
+	hx, hy := sha256.Sum256(x.proof), sha256.Sum256(y.proof)
+	winner, loser := x, y
+	if bytes.Compare(hx[:], hy[:]) > 0 {
+		winner, loser = y, x
+	}
+	ctx := context.Background()
+	eventually(t, "same verdict everywhere", func() bool {
+		return s.all(func(n *simNode) bool {
+			w, _ := n.st.UserByID(ctx, winner.id)
+			l, _ := n.st.UserByID(ctx, loser.id)
+			return w != nil && l != nil && !w.Revoked && l.Revoked
+		})
+	})
+	for _, n := range s.nodes {
+		if st := s.tryLogin(n, loser); st != pb.Status_STATUS_REVOKED {
+			t.Fatalf("%s: loser login %v", n.label, st)
+		}
+		if st := s.tryLogin(n, winner); st != pb.Status_STATUS_OK {
+			t.Fatalf("%s: winner login %v", n.label, st)
+		}
+	}
+	// a third redemption of the same invite is refused outright on a node that already saw one
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	e := &pb.DirectoryEntry{UserId: keys.ID16(pub), Username: "zoya", DisplayName: "zoya", AccountPub: pub,
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, tk.rec, tk.secret); err != nil {
+		t.Fatal(err)
+	}
+	z := &account{id: e.UserId, priv: priv, name: "zoya"}
+	sum := sha256.Sum256(tk.secret)
+	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 4,
+		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
+		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
+	c := s.dial(a)
+	defer c.close()
+	st, msg := c.call("register", &pb.RegisterRequest{
+		DirectoryEntry: s.signAs(z, pb.RecordType_DIRECTORY_ENTRY, e),
+		Prekeys:        s.signAs(z, pb.RecordType_PREKEYS, pk),
+		InviteUsed:     s.signAs(z, pb.RecordType_INVITE_USED, &pb.InviteUsed{InviteId: sum[:], UserId: z.id})}, nil)
+	if st != pb.Status_STATUS_CONFLICT {
+		t.Fatalf("third redemption: %v %s", st, msg)
+	}
 }

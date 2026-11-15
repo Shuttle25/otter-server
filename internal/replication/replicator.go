@@ -33,6 +33,32 @@ type Replicator struct {
 	mu      sync.Mutex
 	backoff map[string]time.Duration
 	nextTry map[string]time.Time
+
+	seenMu sync.Mutex
+	seen   map[string]*peerSeen // per peer node id: monitoring state that outlives sessions (D130; M9.4 monitoring reads it)
+}
+
+// peerSeen is what monitoring needs to know about a peer across sessions.
+type peerSeen struct {
+	pingFails int64
+}
+
+func (r *Replicator) peer(id []byte) *peerSeen { // callers hold seenMu
+	if r.seen == nil {
+		r.seen = map[string]*peerSeen{}
+	}
+	p := r.seen[string(id)]
+	if p == nil {
+		p = &peerSeen{}
+		r.seen[string(id)] = p
+	}
+	return p
+}
+
+func (r *Replicator) notePingFail(id []byte) {
+	r.seenMu.Lock()
+	r.peer(id).pingFails++
+	r.seenMu.Unlock()
 }
 
 // Option configures a Replicator.
@@ -160,6 +186,7 @@ func SetTestTimings(dial, backoff time.Duration) {
 	dialEvery, minBackoff, retryLaterDelay = dial, backoff, backoff
 	maxBackoff = 10 * backoff
 	pullRetryMin, pullRetryMax, pullIdle = backoff, 10*backoff, 10*backoff
+	peerPing, peerPingTimeout = 2*dial, 5*dial
 }
 
 func (r *Replicator) baseCtx() context.Context { r.mu.Lock(); defer r.mu.Unlock(); return r.ctx }

@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/blobs"
+	"ottermsg/server/internal/netlog"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/service"
 )
@@ -20,6 +22,13 @@ const (
 	maxBatchBytes   = 4 << 20
 	window          = 4
 	maxFrame        = 8 << 20
+)
+
+// Peer keep-alive (D130): a WebSocket ping every peerPing; no pong within peerPingTimeout ends the session. The pong
+// is read by run()'s read loop, which may be busy with an 8 MiB batch on a throttled link, hence the long timeout.
+var (
+	peerPing        = 25 * time.Second
+	peerPingTimeout = 60 * time.Second
 )
 
 type session struct {
@@ -33,7 +42,8 @@ type session struct {
 	acks   chan struct{} // window slots
 	start  time.Time
 
-	bytesIn atomic.Int64 // payload bytes received (throttling detection, D73)
+	bytesIn    atomic.Int64 // payload bytes received (throttling detection, D73)
+	pingFailed atomic.Bool  // the session ended because the peer stopped answering pings (D130)
 
 	mu       sync.Mutex
 	caughtUp bool // peer's oplog fully received
@@ -64,6 +74,7 @@ func (s *session) run() error {
 	}
 	s.setCursor(cur) // Status() reads it concurrently
 	go s.writeLoop()
+	go s.keepalive()
 	s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Subscribe{Subscribe: &pb.PeerSubscribe{Cursor: cur}}})
 	started := false
 	for {
@@ -125,6 +136,40 @@ func (s *session) run() error {
 		case *pb.PeerFrame_Error:
 			return fmt.Errorf("peer error: %s", k.Error.Message)
 		}
+	}
+}
+
+// keepalive ends the session when the peer stops answering pings, and logs it (netlog endpoint "ping").
+func (s *session) keepalive() {
+	t := time.NewTicker(peerPing)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-t.C:
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, peerPingTimeout)
+		err := s.c.Ping(ctx)
+		cancel()
+		if err == nil {
+			continue
+		}
+		if s.ctx.Err() != nil {
+			return // the session ended anyway
+		}
+		dir := "in"
+		if bytes.Equal(s.dialer, s.r.svc.NodeID) {
+			dir = "out"
+		}
+		class := netlog.Classify(err, 0)
+		s.pingFailed.Store(true)
+		s.r.notePingFail(s.peer)
+		s.r.log.Info("peer ping failed", "peer", fmt.Sprintf("%x", s.peer), "err", err)
+		s.r.nlog.Add(s.r.baseCtx(), netlog.Entry{Peer: s.r.labelOf(s.peer), Endpoint: "ping", Direction: dir,
+			Result: netlog.Result(class), Class: class, Detail: fmt.Sprintf("no pong within %s", peerPingTimeout)})
+		s.close()
+		return
 	}
 }
 

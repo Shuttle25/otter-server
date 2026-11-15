@@ -3,6 +3,9 @@ package gateway
 import (
 	"context"
 	"crypto/ed25519"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +22,8 @@ func revocation(t *testing.T, n *node, user []byte) *pb.Record {
 // C2: a logged-in session of a revoked user is refused for any request, even when the revocation was stored without
 // the session being closed (the close raced the request).
 func TestRevokedSessionRefusedEvenIfCloseRaced(t *testing.T) {
-	n := startNode(t)
+	var logs syncBuf
+	n := startNode(t, withLogs(&logs))
 	as, cs := members(t, n, "anna")
 	rec := revocation(t, n, as[0].id)
 	var body pb.RecordBody
@@ -33,17 +37,47 @@ func TestRevokedSessionRefusedEvenIfCloseRaced(t *testing.T) {
 		t.Fatalf("request of a revoked session: %v answered=%v", st, ok)
 	}
 	waitClosed(t, cs[0])
+	tag := fmt.Sprintf("%x", as[0].id[:4])
+	if c := strings.Count(logs.String(), `msg="request refused" user=`+tag+` method=ping reason=revoked`); c != 1 {
+		t.Fatalf("request refused lines: %d\n%s", c, logs.String())
+	}
+}
+
+// withLogs sends the gateway's and the service's log to logs.
+func withLogs(logs *syncBuf) func(*Gateway) {
+	return func(g *Gateway) {
+		g.log = slog.New(slog.NewTextHandler(logs, nil))
+		g.svc.Log = g.log
+	}
 }
 
 // network.publish closes the revoked user's open sessions at once.
 func TestNetworkPublishClosesSessions(t *testing.T) {
-	n := startNode(t)
+	var logs syncBuf
+	n := startNode(t, withLogs(&logs))
 	as, cs := members(t, n, "anna", "boris")
 	pub := dial(t, n)
 	if st, msg := pub.call("network.publish", &pb.RecordRequest{Record: revocation(t, n, as[0].id)}, nil); st != pb.Status_STATUS_OK {
 		t.Fatalf("publish: %v %s", st, msg)
 	}
 	waitClosed(t, cs[0])
+	tag := fmt.Sprintf("%x", as[0].id[:4])
+	if c := strings.Count(logs.String(), `msg="revocation applied" user=`+tag+` reason=test sessions_closed=1`); c != 1 {
+		t.Fatalf("revocation lines: %d\n%s", c, logs.String())
+	}
+	// the phone retries its login: refused each time, logged once a minute
+	for range 3 {
+		c := dial(t, n)
+		ts := time.Now().UnixMilli()
+		st, _ := c.call("auth.login", &pb.LoginRequest{UserId: as[0].id, DeviceId: 1, TsMs: ts,
+			Signature: ed25519.Sign(as[0].priv, keys.AuthMessage(c.hello.NodeId, c.hello.Nonce, ts))}, nil)
+		if st != pb.Status_STATUS_REVOKED {
+			t.Fatalf("login of the revoked user: %v", st)
+		}
+	}
+	if c := strings.Count(logs.String(), `msg="login refused" user=`+tag+` reason=revoked`); c != 1 {
+		t.Fatalf("login refused lines: %d\n%s", c, logs.String())
+	}
 	if st, msg := cs[1].call("ping", &pb.Empty{}, nil); st != pb.Status_STATUS_OK {
 		t.Fatalf("other member: %v %s", st, msg)
 	}

@@ -305,7 +305,7 @@ func serve(ctx context.Context, a *app) error {
 	if _, err := a.svc.LoadManifest(ctx); err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
-	a.svc.RefreshRevoked(ctx) // TURN refuses revoked accounts from the first request (C2)
+	a.svc.LoadRevoked(ctx) // TURN refuses revoked accounts from the first request (C2)
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)

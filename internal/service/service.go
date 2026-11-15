@@ -34,8 +34,8 @@ type Notifier interface {
 	Online(user []byte, device uint32) bool
 	// News: an announcement was accepted or dropped; sessions re-fetch news.list (D67).
 	News()
-	// Revoked: the account was revoked or disabled; every session of it ends at once (C2).
-	Revoked(user []byte)
+	// Revoked: the account was revoked or disabled; every session of it ends at once (C2). Returns the sessions closed.
+	Revoked(user []byte) int
 }
 
 // Waker sends a push wake-up (internal/push.Pusher). nil = this node never pushes.
@@ -54,7 +54,7 @@ func (nopNotifier) PrekeysLow([]byte, uint32, []byte, int) {}
 func (nopNotifier) Manifest(uint64)                        {}
 func (nopNotifier) Online([]byte, uint32) bool             { return false }
 func (nopNotifier) News()                                  {}
-func (nopNotifier) Revoked([]byte)                         {}
+func (nopNotifier) Revoked([]byte) int                     { return 0 }
 
 // ApkSource serves APK chunks (internal/apk.Dir). A missing file or chunk is an error wrapping os.ErrNotExist.
 type ApkSource interface {
@@ -80,8 +80,9 @@ type Service struct {
 	mu         sync.RWMutex
 	manifest   *pb.Manifest
 	onManifest []func(*pb.Manifest)
-	// TURN user tags of revoked or disabled accounts (RefreshRevoked)
-	revokedTags map[string]bool
+	// TURN user tag → account id of revoked or disabled accounts (RefreshRevoked)
+	revokedTags map[string][]byte
+	refusals    windowCounter // "login refused" / "turn refused" log lines per user (one a minute)
 	submits     windowCounter // local submit rates per author (C8, D107)
 	callWakes   windowCounter // call pushes per (sender, recipient device) (D108)
 }
@@ -210,6 +211,7 @@ func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRe
 		return nil, fmt.Errorf("%w: unknown user", ErrRetryLater) // may not be replicated here yet
 	}
 	if u.Revoked {
+		s.logRefusal("login refused", req.UserId)
 		return nil, ErrRevoked
 	}
 	if !ed25519.Verify(u.AccountPub, keys.AuthMessage(s.NodeID, nonce, req.TsMs), req.Signature) {

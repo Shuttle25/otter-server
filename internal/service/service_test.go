@@ -24,6 +24,7 @@ type rec struct {
 	lowOwner  [][]byte
 	manifests []uint64
 	revoked   [][]byte
+	sessions  int // what Revoked reports as closed
 }
 
 func (r *rec) Envelope([]byte, uint32) { r.env++ }
@@ -35,7 +36,7 @@ func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
 func (r *rec) Manifest(v uint64)          { r.manifests = append(r.manifests, v) }
 func (r *rec) Online([]byte, uint32) bool { return false }
 func (r *rec) News()                      { r.news++ }
-func (r *rec) Revoked(u []byte)           { r.revoked = append(r.revoked, u) }
+func (r *rec) Revoked(u []byte) int       { r.revoked = append(r.revoked, u); return r.sessions }
 
 type fx struct {
 	t       *testing.T

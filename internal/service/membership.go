@@ -46,36 +46,59 @@ func (s *Service) VerifyAdmin(nonce []byte, r *pb.AdminRequest) error {
 	return nil
 }
 
-// RefreshRevoked reloads the revoked accounts (TURN tags) and closes the sessions of newly revoked ones.
-// Called at start and after every record that can revoke or disable an account.
-func (s *Service) RefreshRevoked(ctx context.Context) {
+// LoadRevoked loads the revoked accounts at start (TURN refuses them from the first request, C2) without a log line
+// per old revocation.
+func (s *Service) LoadRevoked(ctx context.Context) { s.refreshRevoked(ctx, false) }
+
+// RefreshRevoked reloads the revoked accounts (TURN tags) and closes the sessions of newly revoked ones, logging
+// each ("revocation applied"). Called after every record that can revoke or disable an account.
+func (s *Service) RefreshRevoked(ctx context.Context) { s.refreshRevoked(ctx, true) }
+
+func (s *Service) refreshRevoked(ctx context.Context, log bool) {
 	ids, err := s.Store.RevokedUsers(ctx)
 	if err != nil {
-		s.Log.Warn("revoked users not loaded", "err", err)
+		s.logger().Warn("revoked users not loaded", "err", err)
 		return
 	}
-	tags := make(map[string]bool, len(ids))
+	tags := make(map[string][]byte, len(ids))
 	var fresh [][]byte
 	s.mu.Lock()
 	for _, id := range ids {
 		t := turnsrv.UserTag(id)
-		tags[t] = true
-		if !s.revokedTags[t] {
+		tags[t] = id
+		if s.revokedTags[t] == nil {
 			fresh = append(fresh, id)
 		}
 	}
 	s.revokedTags = tags
 	s.mu.Unlock()
 	for _, id := range fresh {
-		s.Notify.Revoked(id)
+		closed := s.Notify.Revoked(id)
+		if log {
+			reason, _ := s.Store.RevokeReason(ctx, id)
+			s.logger().Info("revocation applied", "user", userTag(id), "reason", reason, "sessions_closed", closed)
+		}
+	}
+}
+
+// logRefusal logs a refused login or TURN request of a revoked account, at most once a minute per user and kind:
+// a revoked phone keeps retrying with backoff.
+func (s *Service) logRefusal(msg string, user []byte) {
+	tag := userTag(user)
+	if s.refusals.allow(s.Now(), time.Minute, msg+" "+tag, 1) {
+		s.logger().Info(msg, "user", tag, "reason", "revoked")
 	}
 }
 
 // TurnTagRevoked implements turnsrv.Config.Refuse.
 func (s *Service) TurnTagRevoked(tag string) bool {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.revokedTags[tag]
+	id := s.revokedTags[tag]
+	s.mu.RUnlock()
+	if id != nil {
+		s.logRefusal("turn refused", id)
+	}
+	return id != nil
 }
 
 // founding reports whether the current manifest lists the user as admitted without an invite chain (D100).

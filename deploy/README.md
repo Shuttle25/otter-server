@@ -270,6 +270,22 @@ the id from `--list`) removes one from every phone.
 Lost or leaked news key: `otter-admin news revoke --pub HEX` (from `news show`), then `manifest sign` +
 `manifest publish`; nodes and phones drop everything it signed. Then `news init` creates a new key.
 
+## Revoked accounts in the log (M9.2)
+
+After `otter-admin user revoke` (or a duplicate-invite disable, D102) each node logs at Info, with the short user tag
+(first 4 bytes of the user id, as in `push skipped`; never names or IPs):
+
+| Line | When |
+|------|------|
+| `revocation applied user=<tag> reason=<reason> sessions_closed=N` | the REVOCATION / disable took effect on this node (not repeated at restart) |
+| `login refused user=<tag> reason=revoked` | the revoked phone tried `auth.login` (at most one line per user per minute) |
+| `request refused user=<tag> method=<m> reason=revoked` | a request on a session that was still open (the session then ends) |
+| `turn refused user=<tag> reason=revoked` | TURN refused its credentials (at most once per minute; netlog also has `auth revoked user`) |
+
+```bash
+ssh root@ru-1 'journalctl -u otter-node --since "-1h" -o cat | grep -E "revocation applied|(login|request|turn) refused"'
+```
+
 ## Environment
 
 | Variable | Default | Meaning |

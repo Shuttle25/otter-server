@@ -47,6 +47,8 @@ func (s *session) handle(ctx context.Context, req *pb.Request) {
 	resp := &pb.Response{Id: req.Id}
 	body, err := s.dispatch(ctx, req)
 	if errors.Is(err, errSessionRevoked) {
+		// once per session: the session ends here, and a new login of the account is refused (and logged) by the service
+		s.g.log.Info("request refused", "user", fmt.Sprintf("%x", s.userID()[:4]), "method", req.Method, "reason", "revoked")
 		resp.Status, resp.Error = pb.Status_STATUS_REVOKED, err.Error()
 		// written here, not queued: the queue stops with the session
 		if b, err := proto.Marshal(&pb.Frame{Kind: &pb.Frame_Response{Response: resp}}); err == nil {

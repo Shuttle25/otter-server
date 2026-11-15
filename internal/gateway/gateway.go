@@ -104,13 +104,16 @@ func (g *Gateway) News() {
 	}
 }
 
-// Revoked implements service.Notifier: every session of the account ends at once (C2).
-func (g *Gateway) Revoked(user []byte) {
+// Revoked implements service.Notifier: every session of the account ends at once (C2). Returns how many.
+func (g *Gateway) Revoked(user []byte) int {
+	n := 0
 	for _, s := range g.snapshot() {
 		if u := s.userID(); u != nil && bytes.Equal(u, user) {
 			s.endRevoked()
+			n++
 		}
 	}
+	return n
 }
 
 // Manifest broadcasts the new manifest to every connected session (logged in or not).

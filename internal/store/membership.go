@@ -97,6 +97,16 @@ func (s *Store) CanInviteAt(ctx context.Context, user []byte, atMs int64) (bool,
 	return v != 0, err
 }
 
+// RevokeReason returns why the account was revoked or disabled ("" if it is not).
+func (s *Store) RevokeReason(ctx context.Context, user []byte) (string, error) {
+	var r sql.NullString
+	err := s.r.QueryRowContext(ctx, `SELECT revoke_reason FROM users WHERE user_id=? AND revoked=1`, user).Scan(&r)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return r.String, err
+}
+
 // RevokedUsers lists every revoked or disabled account (TURN refusal, session closing).
 func (s *Store) RevokedUsers(ctx context.Context) ([][]byte, error) {
 	rows, err := s.r.QueryContext(ctx, `SELECT user_id FROM users WHERE revoked=1`)

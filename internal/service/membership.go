@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
@@ -30,6 +31,16 @@ func (s *Service) PublishNetworkRecord(ctx context.Context, rec *pb.Record) erro
 	}
 	if applied {
 		s.afterApply(ctx, body, nil)
+	}
+	return nil
+}
+
+// VerifyAdmin checks an admin.users request: the network key over this session's nonce, within the clock skew.
+func (s *Service) VerifyAdmin(nonce []byte, r *pb.AdminRequest) error {
+	skew := s.Now().Sub(time.UnixMilli(r.TsMs))
+	if skew > MaxClockSkew || skew < -MaxClockSkew || len(r.Signature) != ed25519.SignatureSize ||
+		!ed25519.Verify(s.NetworkPub, keys.AdminAuthMessage(s.NodeID, nonce, r.TsMs), r.Signature) {
+		return fmt.Errorf("%w: admin signature", ErrUnauthorized)
 	}
 	return nil
 }

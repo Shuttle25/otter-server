@@ -4,8 +4,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/client"
+	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 )
@@ -36,6 +39,10 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
   invite bootstrap [--ttl 168h]
+  user list [--via LABEL] [--allow-plain]
+  user revoke NAME|NAME#TAG|USER_ID [--reason TEXT] [--yes] [--via LABEL]... [--allow-plain]
+  user invite-rights NAME|NAME#TAG|USER_ID --on|--off [--via LABEL]... [--allow-plain]
+  user found USER_ID...            (then 'manifest sign' and 'manifest publish')
   node set-ip --label L --ip A [--ip B]...
   node rotate-tls --label L
   node drop-old-pins --label L
@@ -439,7 +446,25 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		fmt.Fprintf(out, "Invite for the first member (valid %s):\n%s\n\n", *ttl, res.Link)
 		qrterminal.GenerateHalfBlock(res.Link, qrterminal.L, out)
-		fmt.Fprintf(out, "\nRecord: %s\nCopy it to the node and run:\n  otter-node import --config /etc/otter/node.toml %s\n", res.File, filepath.Base(res.File))
+		fmt.Fprintf(out, "\nRecord: %s\nThe link carries it; optionally copy it to a node and run:\n  otter-node import --config /etc/otter/node.toml %s\n", res.File, filepath.Base(res.File))
+	case "user list", "user revoke", "user invite-rights":
+		return userCmd(out, in, *dir, a[1], a[2:])
+	case "user found":
+		var ids [][]byte
+		for _, h := range a[2:] {
+			id, err := hex.DecodeString(h)
+			if err != nil || len(id) != 16 {
+				return fmt.Errorf("user found: %q is not a 32-hex user id", h)
+			}
+			ids = append(ids, id)
+		}
+		if len(ids) == 0 {
+			return errors.New("user found USER_ID...")
+		}
+		if err := admin.AddFounding(*dir, ids); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "Stored. Run 'manifest sign' and 'manifest publish' so every node and phone accepts these accounts without an invite.")
 	default:
 		return errors.New(usage)
 	}
@@ -549,42 +574,203 @@ func publishTo(n *pb.NodeInfo, method string, rec *pb.Record, allowPlain bool) s
 	return lastErr
 }
 
-// publishNews sends rec to every selected node of the current manifest.bin with news.publish (idempotent);
-// succeeds if at least one node accepted it.
-func publishNews(out io.Writer, dir string, rec *pb.Record, via []string, allowPlain bool) error {
+// manifestNodes returns the nodes of the current manifest.bin, only those named by via if any (each must exist).
+func manifestNodes(dir string, via []string) ([]*pb.NodeInfo, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.bin"))
 	if err != nil {
-		return fmt.Errorf("no signed manifest (run 'manifest sign' first): %w", err)
+		return nil, fmt.Errorf("no signed manifest (run 'manifest sign' first): %w", err)
 	}
 	var mrec pb.Record
 	var body pb.RecordBody
 	var m pb.Manifest
 	if proto.Unmarshal(raw, &mrec) != nil || proto.Unmarshal(mrec.Body, &body) != nil || proto.Unmarshal(body.Payload, &m) != nil {
-		return errors.New("manifest.bin is corrupt")
+		return nil, errors.New("manifest.bin is corrupt")
 	}
 	selected := map[string]bool{}
 	for _, l := range via {
 		selected[l] = true
 	}
-	good := 0
+	var out []*pb.NodeInfo
 	for _, n := range m.Nodes {
 		if len(selected) > 0 && !selected[n.Label] {
 			continue
 		}
 		delete(selected, n.Label)
-		res := publishTo(n, "news.publish", rec, allowPlain)
+		out = append(out, n)
+	}
+	for l := range selected {
+		return nil, fmt.Errorf("%s: not in the manifest", l)
+	}
+	return out, nil
+}
+
+// publishNews sends rec to every selected node of the current manifest.bin with news.publish (idempotent);
+// succeeds if at least one node accepted it.
+func publishNews(out io.Writer, dir string, rec *pb.Record, via []string, allowPlain bool) error {
+	nodes, err := manifestNodes(dir, via)
+	if err != nil {
+		fmt.Fprintf(out, "error: %v\n", err)
+		return fmt.Errorf("not published to any node: %w", err)
+	}
+	return publishAll(out, nodes, "news.publish", rec, allowPlain)
+}
+
+// publishAll sends rec with method to every node; succeeds if at least one accepted it.
+func publishAll(out io.Writer, nodes []*pb.NodeInfo, method string, rec *pb.Record, allowPlain bool) error {
+	good := 0
+	for _, n := range nodes {
+		res := publishTo(n, method, rec, allowPlain)
 		if res == "ok" {
 			good++
 		}
 		fmt.Fprintf(out, "%-12s %s\n", n.Label, res)
 	}
-	for l := range selected {
-		fmt.Fprintf(out, "%-12s error: not in the manifest\n", l)
-	}
 	if good == 0 {
 		return errors.New("not published to any node")
 	}
 	return nil
+}
+
+// userCmd fetches the member list from one node (signed request, verified here), then lists, revokes or sets rights.
+func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error {
+	fs := flag.NewFlagSet("user "+sub, flag.ContinueOnError)
+	var via multi
+	fs.Var(&via, "via", "node label (repeatable; list asks the first that answers)")
+	allowPlain := fs.Bool("allow-plain", false, "allow plain ws:// endpoints (development only)")
+	reason := fs.String("reason", "", "revocation reason (seen by the admin only)")
+	yes := fs.Bool("yes", false, "do not ask")
+	on := fs.Bool("on", false, "allow inviting")
+	off := fs.Bool("off", false, "withdraw the right to invite")
+	who := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		who, args = args[0], args[1:]
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("user %s: unexpected %q", sub, fs.Arg(0))
+	}
+	switch {
+	case sub == "list" && who != "":
+		return fmt.Errorf("user list: unexpected %q", who)
+	case sub != "list" && who == "":
+		return fmt.Errorf("user %s: NAME, NAME#TAG or USER_ID", sub)
+	case sub == "invite-rights" && *on == *off:
+		return errors.New("user invite-rights: exactly one of --on, --off")
+	}
+	st, err := admin.LoadState(dir)
+	if err != nil {
+		return err
+	}
+	nodes, err := manifestNodes(dir, via)
+	if err != nil {
+		return err
+	}
+	founding, err := admin.LoadFounding(dir)
+	if err != nil {
+		return err
+	}
+	// one buffered reader for the passphrase and the confirmation; a terminal keeps its no-echo passphrase prompt
+	br := bufio.NewReader(orEmpty(in))
+	pin := io.Reader(br)
+	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		pin = f
+	}
+	p, err := passphrase(pin, false)
+	if err != nil {
+		return err
+	}
+	priv, err := keys.ReadEncryptedKey(filepath.Join(dir, "network.key.enc"), p)
+	if err != nil {
+		return err
+	}
+	var ms []admin.Member
+	lastErr := errors.New("no node selected")
+	for _, n := range nodes {
+		if ms, lastErr = fetchMembers(n, priv, st.NetworkPub, founding, allowPlain); lastErr == nil {
+			break
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	if sub == "list" {
+		for _, m := range ms {
+			state := "active"
+			if m.Revoked {
+				state = "revoked: " + m.Reason
+			}
+			if !m.Admitted {
+				state += " (not admitted: no invite chain; 'user found' if it predates 0.9.3)"
+			}
+			fmt.Fprintf(out, "%-24s %x  invite=%-5v founding=%-5v v%d  %s  «%s»\n", m.Tag(), m.UserID, m.CanInvite, m.Founding,
+				m.RightsVersion, state, m.Display)
+		}
+		return nil
+	}
+	m, err := admin.Find(ms, who)
+	if err != nil {
+		return err
+	}
+	var rec *pb.Record
+	switch sub {
+	case "revoke":
+		if !*yes && !confirm(br, fmt.Sprintf("Revoke %s «%s» (%x)? This cannot be undone. [y/N] ", m.Tag(), m.Display, m.UserID)) {
+			return errors.New("cancelled")
+		}
+		rec, err = admin.SignRevocation(dir, priv, m.UserID, *reason, time.Now())
+	case "invite-rights":
+		v := max(m.RightsVersion, admin.SavedRightsVersion(dir, m.UserID)) + 1
+		rec, err = admin.SignInviteRights(dir, priv, m.UserID, *on, v, time.Now())
+		if err == nil {
+			fmt.Fprintf(out, "%s: invite=%v (version %d)\n", m.Tag(), *on, v)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if err := publishAll(out, nodes, "network.publish", rec, *allowPlain); err != nil {
+		return fmt.Errorf("%w (the record is saved in %s; retry later)", err, dir)
+	}
+	return nil
+}
+
+func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.PublicKey, founding [][]byte, allowPlain *bool) ([]admin.Member, error) {
+	var lastErr error = errors.New("no usable endpoint")
+	for _, ep := range n.Endpoints {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		c, err := client.Dial(ctx, ep, *allowPlain)
+		if err != nil {
+			cancel()
+			lastErr = err
+			continue
+		}
+		ts := time.Now().UnixMilli()
+		var batch pb.RecordBatch
+		err = c.Call(ctx, "admin.users", &pb.AdminRequest{TsMs: ts,
+			Signature: ed25519.Sign(priv, keys.AdminAuthMessage(c.Hello().NodeId, c.Hello().Nonce, ts))}, &batch)
+		c.Close()
+		cancel()
+		if err == nil {
+			return admin.Members(batch.Records, netPub, founding), nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("%s: %w", n.Label, lastErr)
+}
+
+func confirm(in *bufio.Reader, prompt string) bool {
+	fmt.Fprint(os.Stderr, prompt)
+	line, _ := in.ReadString('\n')
+	return strings.EqualFold(strings.TrimSpace(line), "y")
+}
+
+func orEmpty(in io.Reader) io.Reader {
+	if in == nil {
+		return strings.NewReader("")
+	}
+	return in
 }
 
 func announce(out io.Writer, dir string, args []string) error {

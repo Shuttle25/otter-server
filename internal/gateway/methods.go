@@ -15,7 +15,7 @@ import (
 
 var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true,
 	"auth.login": true, "backup.auth": true, "backup.fetch": true, "news.publish": true,
-	"network.publish": true, "admin.users": true} // admin.users: Task 35
+	"network.publish": true, "admin.users": true}
 
 func status(err error) pb.Status {
 	switch {
@@ -145,6 +145,19 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.PublishNetworkRecord(ctx, r.Record)
+	case "admin.users": // the admin's member list; otter-admin verifies every record itself (D99)
+		var r pb.AdminRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if err := svc.VerifyAdmin(s.nonce, &r); err != nil {
+			return nil, err
+		}
+		recs, err := svc.Directory(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.RecordBatch{Records: recs}, nil
 	case "news.publish":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {

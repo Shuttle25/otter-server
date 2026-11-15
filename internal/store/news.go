@@ -59,9 +59,10 @@ type Target struct {
 	Device uint32
 }
 
-// PushTargets lists every (user, device) with a push token (announcement wake-ups, D67).
+// PushTargets lists every (user, device) with a push token (announcement wake-ups, D67); a withdrawn device (D94)
+// has none. Calls-only devices are listed: Pusher.Wake skips them.
 func (s *Store) PushTargets(ctx context.Context) ([]Target, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT user_id, device_id FROM push_tokens ORDER BY user_id, device_id`)
+	rows, err := s.r.QueryContext(ctx, `SELECT user_id, device_id FROM push_tokens WHERE token != '' ORDER BY user_id, device_id`)
 	if err != nil {
 		return nil, err
 	}

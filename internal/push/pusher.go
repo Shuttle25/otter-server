@@ -17,7 +17,8 @@ type Sender interface {
 
 // Tokens is the store side (internal/store implements it).
 type Tokens interface {
-	PushToken(ctx context.Context, user []byte, device uint32) (string, error)
+	// PushTarget: the device's token ("" = none or withdrawn) and whether it wants call pushes only (D94).
+	PushTarget(ctx context.Context, user []byte, device uint32) (token string, messagesOff bool, err error)
 	DropPushToken(ctx context.Context, user []byte, device uint32, token string) error
 }
 
@@ -77,8 +78,12 @@ func (p *Pusher) wake(ctx context.Context, user []byte, device uint32, call bool
 		defer p.wg.Done()
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancel()
-		tok, err := p.tokens.PushToken(ctx, user, device)
+		tok, off, err := p.tokens.PushTarget(ctx, user, device)
 		if err != nil || tok == "" {
+			return
+		}
+		if off && !call { // notifications off on the phone: calls still ring (D94)
+			p.log.Info("push skipped", "user", tag, "device", device, "kind", kind, "reason", "messages_off")
 			return
 		}
 		switch err := p.sender.Send(ctx, tok); {

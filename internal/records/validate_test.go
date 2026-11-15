@@ -454,12 +454,23 @@ func TestCheckPushToken(t *testing.T) {
 	if err := checkPushToken(pushTokenBody(a, nil)); err != nil {
 		t.Fatalf("valid token rejected: %v", err)
 	}
+	good := map[string]func(*pb.PushToken){
+		"messages off": func(p *pb.PushToken) { p.MessagesOff = true },
+		"withdrawn":    func(p *pb.PushToken) { p.Token = ""; p.Withdrawn = true },
+	}
+	for name, mut := range good {
+		if err := checkPushToken(pushTokenBody(a, mut)); err != nil {
+			t.Errorf("%s: rejected: %v", name, err)
+		}
+	}
 	bad := map[string]func(*pb.PushToken){
-		"device 2":  func(p *pb.PushToken) { p.DeviceId = 2 },
-		"no kind":   func(p *pb.PushToken) { p.Kind = pb.PushToken_KIND_UNSPECIFIED },
-		"empty":     func(p *pb.PushToken) { p.Token = "" },
-		"too long":  func(p *pb.PushToken) { p.Token = strings.Repeat("x", MaxPushToken+1) },
-		"bad utf-8": func(p *pb.PushToken) { p.Token = string([]byte{0xff, 0xfe}) },
+		"withdrawn with a token":     func(p *pb.PushToken) { p.Withdrawn = true },
+		"withdrawn and messages off": func(p *pb.PushToken) { p.Token = ""; p.Withdrawn = true; p.MessagesOff = true },
+		"device 2":                   func(p *pb.PushToken) { p.DeviceId = 2 },
+		"no kind":                    func(p *pb.PushToken) { p.Kind = pb.PushToken_KIND_UNSPECIFIED },
+		"empty":                      func(p *pb.PushToken) { p.Token = "" },
+		"too long":                   func(p *pb.PushToken) { p.Token = strings.Repeat("x", MaxPushToken+1) },
+		"bad utf-8":                  func(p *pb.PushToken) { p.Token = string([]byte{0xff, 0xfe}) },
 	}
 	for name, mut := range bad {
 		if err := checkPushToken(pushTokenBody(a, mut)); err == nil {

@@ -168,11 +168,13 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err == nil && (curCreated > b.CreatedMs || (curCreated == b.CreatedMs && bytes.Compare(curKey, it.key) >= 0)) {
 			return nil // an older (or the same) token: record kept, row unchanged
 		}
+		// A withdrawn record (D94) has an empty token: the row keeps created_ms/record_key so an older token record
+		// replicated later loses the ordering check above and cannot bring the token back.
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO push_tokens(user_id,device_id,kind,token,created_ms,record_key) VALUES(?,?,?,?,?,?)
+			`INSERT INTO push_tokens(user_id,device_id,kind,token,created_ms,record_key,messages_off) VALUES(?,?,?,?,?,?,?)
 			 ON CONFLICT(user_id,device_id) DO UPDATE SET kind=excluded.kind, token=excluded.token,
-			   created_ms=excluded.created_ms, record_key=excluded.record_key`,
-			b.Author, p.DeviceId, int32(p.Kind), p.Token, b.CreatedMs, it.key)
+			   created_ms=excluded.created_ms, record_key=excluded.record_key, messages_off=excluded.messages_off`,
+			b.Author, p.DeviceId, int32(p.Kind), p.Token, b.CreatedMs, it.key, p.MessagesOff)
 		return err
 
 	case pb.RecordType_ENVELOPE:

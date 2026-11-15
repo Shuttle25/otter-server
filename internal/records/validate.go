@@ -268,11 +268,19 @@ func checkEnvelope(b *pb.RecordBody) error {
 	return nil
 }
 
-// checkPushToken: device 1, kind FCM, 1..MaxPushToken bytes of UTF-8 (D60).
+// checkPushToken: device 1, kind FCM; a 1..MaxPushToken-byte UTF-8 token, or withdrawn with no token (D60, D94).
 func checkPushToken(b *pb.RecordBody) error {
 	var p pb.PushToken
-	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM ||
-		len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
+	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM {
+		return ErrBadPayload
+	}
+	if p.Withdrawn {
+		if p.Token != "" || p.MessagesOff {
+			return ErrBadPayload
+		}
+		return nil
+	}
+	if len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
 		return ErrBadPayload
 	}
 	return nil

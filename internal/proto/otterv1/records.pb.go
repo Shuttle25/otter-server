@@ -1018,7 +1018,9 @@ type PushToken struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeviceId      uint32                 `protobuf:"varint,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
 	Kind          PushToken_Kind         `protobuf:"varint,2,opt,name=kind,proto3,enum=otter.v1.PushToken_Kind" json:"kind,omitempty"`
-	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`                                 // 1–4096 bytes of UTF-8; empty exactly when withdrawn
+	MessagesOff   bool                   `protobuf:"varint,4,opt,name=messages_off,json=messagesOff,proto3" json:"messages_off,omitempty"` // M9.1: notifications off on the phone: wake this device for calls only
+	Withdrawn     bool                   `protobuf:"varint,5,opt,name=withdrawn,proto3" json:"withdrawn,omitempty"`                        // M9.1: Google wake-ups off: nodes forget the token, no pushes at all
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1072,6 +1074,20 @@ func (x *PushToken) GetToken() string {
 		return x.Token
 	}
 	return ""
+}
+
+func (x *PushToken) GetMessagesOff() bool {
+	if x != nil {
+		return x.MessagesOff
+	}
+	return false
+}
+
+func (x *PushToken) GetWithdrawn() bool {
+	if x != nil {
+		return x.Withdrawn
+	}
+	return false
 }
 
 // ANNOUNCEMENT payload (D66). Author = ID16(news public key); signed by a news key listed in the manifest (D65).
@@ -1325,11 +1341,13 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\x04size\x18\b \x01(\x04R\x04size\"U\n" +
 	"\aInstall\x12'\n" +
 	"\x0fregistration_id\x18\x01 \x01(\rR\x0eregistrationId\x12!\n" +
-	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\"\x93\x01\n" +
+	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\"\xd4\x01\n" +
 	"\tPushToken\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\rR\bdeviceId\x12,\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x18.otter.v1.PushToken.KindR\x04kind\x12\x14\n" +
-	"\x05token\x18\x03 \x01(\tR\x05token\"%\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\x12!\n" +
+	"\fmessages_off\x18\x04 \x01(\bR\vmessagesOff\x12\x1c\n" +
+	"\twithdrawn\x18\x05 \x01(\bR\twithdrawn\"%\n" +
 	"\x04Kind\x12\x14\n" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\a\n" +
 	"\x03FCM\x10\x01\"m\n" +

@@ -358,9 +358,11 @@ func TestCloseReleasesPorts(t *testing.T) {
 	cfg := testConfig(secret, 4, 41, netlog.Nop{})
 	s, addr := startCfg(t, cfg)
 	u, p := Credentials(secret, []byte("anna-00000000000"), time.Now(), time.Hour)
-	if _, err := client(t, addr, u, p).Allocate(); err != nil {
+	relay, err := client(t, addr, u, p).Allocate()
+	if err != nil {
 		t.Fatal(err)
 	}
+	relayPort := relay.LocalAddr().(*net.UDPAddr).Port
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -372,14 +374,16 @@ func TestCloseReleasesPorts(t *testing.T) {
 	if err := s2.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// every relay port is free again
-	for port := 32100; port <= 32140; port++ {
-		c, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(port))
-		if err != nil {
-			t.Fatalf("relay port %d still in use: %v", port, err)
-		}
-		c.Close()
+	// the relay port this server allocated is free again (checking the whole range would also trip over sockets of
+	// other tests or programs that happen to sit in it)
+	if relayPort < cfg.PortMin || relayPort > cfg.PortMax {
+		t.Fatalf("relay port %d outside %d-%d", relayPort, cfg.PortMin, cfg.PortMax)
 	}
+	c, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(relayPort))
+	if err != nil {
+		t.Fatalf("relay port %d still in use: %v", relayPort, err)
+	}
+	c.Close()
 }
 
 func TestStartErrors(t *testing.T) {

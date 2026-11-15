@@ -185,7 +185,8 @@ func (s *Service) inviterAllowed(ctx context.Context, inviter []byte) error {
 	return nil
 }
 
-// VerifyLogin checks a login signature and returns the newest install this node knows for the device (D52).
+// VerifyLogin checks a login signature and returns the newest install this node knows for the device (D52) and the
+// newest account-signed INSTALL record of the user (C14).
 func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRequest) (*pb.LoginResponse, error) {
 	if req.DeviceId != 1 {
 		return nil, fmt.Errorf("%w: device %d", ErrInvalid, req.DeviceId)
@@ -211,7 +212,18 @@ func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRe
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	return &pb.LoginResponse{RegistrationId: rid, InstalledMs: inst}, nil
+	resp := &pb.LoginResponse{RegistrationId: rid, InstalledMs: inst} // unsigned: for 0.8.x phones only (C14)
+	raw, err := s.Store.InstallRecord(ctx, req.UserId)
+	switch {
+	case err == nil:
+		resp.Install = &pb.Record{}
+		if err := proto.Unmarshal(raw, resp.Install); err != nil {
+			return nil, err
+		}
+	case !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {

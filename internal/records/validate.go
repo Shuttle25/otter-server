@@ -25,8 +25,10 @@ const (
 	BlobChunkSize      = 256 << 10
 	MaxBlobReaders     = 100
 	MaxBlobTTL         = 31 * 24 * time.Hour
-	MaxPushToken       = 4096 // bytes of an FCM token (D60)
-	MaxNewsText        = 4000 // runes per language of an announcement (D66)
+	MaxPushToken       = 4096             // bytes of an FCM token (D60)
+	MaxNewsText        = 4000             // runes per language of an announcement (D66)
+	MaxInstallSkew     = 10 * time.Minute // INSTALL.installed_ms may be at most this far ahead of the node clock (C14)
+	MaxRegistrationID  = 16380            // Signal registration ids are 1..16380
 )
 
 var (
@@ -229,6 +231,12 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		return checkEnvelope(b)
 	case pb.RecordType_PREKEYS:
 		return checkPrekeys(b)
+	case pb.RecordType_INSTALL:
+		var in pb.Install
+		if err := proto.Unmarshal(b.Payload, &in); err != nil || in.RegistrationId < 1 || in.RegistrationId > MaxRegistrationID ||
+			in.InstalledMs < 0 || in.InstalledMs > v.Now().Add(MaxInstallSkew).UnixMilli() || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
 	}
 	return nil
 }

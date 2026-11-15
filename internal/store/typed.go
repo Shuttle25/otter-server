@@ -27,6 +27,30 @@ func boolInt(b bool) int {
 	return 0
 }
 
+// raiseInstall applies an install time to a (user, device) (D52): a newer install deletes the device's prekeys and
+// stores its registration id; an equal one updates the row; an older one changes nothing and returns false.
+func raiseInstall(ctx context.Context, tx *sql.Tx, user []byte, device, rid uint32, inst int64) (bool, error) {
+	var cur int64
+	err := tx.QueryRowContext(ctx, `SELECT installed_ms FROM devices WHERE user_id=? AND device_id=?`, user, device).Scan(&cur)
+	exists := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	switch {
+	case exists && inst < cur:
+		return false, nil // an older install (a phone that was replaced): its keys must not be handed out
+	case exists && inst > cur:
+		if _, err := tx.ExecContext(ctx, `DELETE FROM prekeys WHERE user_id=? AND device_id=?`, user, device); err != nil {
+			return false, err
+		}
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO devices(user_id,device_id,registration_id,installed_ms) VALUES(?,?,?,?)
+		 ON CONFLICT(user_id,device_id) DO UPDATE SET registration_id=excluded.registration_id, installed_ms=excluded.installed_ms`,
+		user, device, rid, inst)
+	return err == nil, err
+}
+
 // applyTyped maintains derived tables. Runs inside the request savepoint.
 // NOTE (M2): replicated records must apply leniently (e.g. INVITE_USED for an invite already used
 // elsewhere); M2 introduces conflict rules — M1 has a single node.
@@ -69,26 +93,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := proto.Unmarshal(b.Payload, &p); err != nil {
 			return err
 		}
-		var curInstalled int64
-		var curRid uint32
-		err := tx.QueryRowContext(ctx, `SELECT registration_id, installed_ms FROM devices WHERE user_id=? AND device_id=?`,
-			b.Author, p.DeviceId).Scan(&curRid, &curInstalled)
-		exists := err == nil
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		switch {
-		case exists && p.InstalledMs < curInstalled:
-			return nil // an older install (a phone that was replaced): its keys must not be handed out (D52)
-		case exists && p.InstalledMs > curInstalled:
-			if _, err := tx.ExecContext(ctx, `DELETE FROM prekeys WHERE user_id=? AND device_id=?`, b.Author, p.DeviceId); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO devices(user_id,device_id,registration_id,installed_ms) VALUES(?,?,?,?)
-			 ON CONFLICT(user_id,device_id) DO UPDATE SET registration_id=excluded.registration_id, installed_ms=excluded.installed_ms`,
-			b.Author, p.DeviceId, p.RegistrationId, p.InstalledMs); err != nil {
+		if ok, err := raiseInstall(ctx, tx, b.Author, p.DeviceId, p.RegistrationId, p.InstalledMs); err != nil || !ok {
 			return err
 		}
 		put := func(kind int, k *pb.SignedPreKey) error {
@@ -117,6 +122,36 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 			}
 		}
 		return nil
+
+	case pb.RecordType_INSTALL: // C14: newest (installed_ms, registration_id) per user; raises device 1 like PREKEYS
+		var in pb.Install
+		if err := proto.Unmarshal(b.Payload, &in); err != nil {
+			return err
+		}
+		var curKey []byte
+		var curInst int64
+		var curRid uint32
+		err := tx.QueryRowContext(ctx, `SELECT record_key, installed_ms, registration_id FROM installs WHERE user_id=?`,
+			b.Author).Scan(&curKey, &curInst, &curRid)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && (in.InstalledMs < curInst || (in.InstalledMs == curInst && in.RegistrationId <= curRid)) {
+			_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key) // older or the same install
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR REPLACE INTO installs(user_id,record_key,installed_ms,registration_id) VALUES(?,?,?,?)`,
+			b.Author, it.key, in.InstalledMs, in.RegistrationId); err != nil {
+			return err
+		}
+		if curKey != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, curKey); err != nil {
+				return err
+			}
+		}
+		_, err = raiseInstall(ctx, tx, b.Author, 1, in.RegistrationId, in.InstalledMs)
+		return err
 
 	case pb.RecordType_PUSH_TOKEN: // D60: newest created_ms per (user, device) wins, ties by record key
 		var p pb.PushToken

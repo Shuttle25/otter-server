@@ -35,12 +35,17 @@ func SignManifest(dir string, pass []byte, now time.Time) (*pb.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	founding, err := LoadFounding(dir) // accounts from before M9.2, admitted without an invite chain (D100)
+	if err != nil {
+		return nil, err
+	}
 	priv, err := keys.ReadEncryptedKey(filepath.Join(dir, "network.key.enc"), pass)
 	if err != nil {
 		return nil, err
 	}
 	version := readVersion(dir) + 1
-	m := &pb.Manifest{Version: version, IssuedMs: now.UnixMilli(), NetworkPub: st.NetworkPub, Nodes: st.Nodes, NewsKeys: newsKeys}
+	m := &pb.Manifest{Version: version, IssuedMs: now.UnixMilli(), NetworkPub: st.NetworkPub, Nodes: st.Nodes, NewsKeys: newsKeys,
+		FoundingMembers: founding}
 	payload, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
 	if err != nil {
 		return nil, err

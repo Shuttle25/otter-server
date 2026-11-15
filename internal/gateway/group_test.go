@@ -2,10 +2,7 @@ package gateway
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
@@ -17,13 +14,7 @@ func TestGroupEnvelopeFanOut(t *testing.T) {
 	n := startNode(t)
 	ctx := context.Background()
 	register := func(name string) (*acct, *client) {
-		secret := make([]byte, 32)
-		rand.Read(secret)
-		sum := sha256.Sum256(secret)
-		inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-		if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-			t.Fatal(err)
-		}
+		secret := netInvite(t, n)
 		c := dial(t, n)
 		a, req := registerReq(t, n, secret, name)
 		if st, msg := c.call("register", req, nil); st != pb.Status_STATUS_OK {

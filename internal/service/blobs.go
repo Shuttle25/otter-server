@@ -75,26 +75,15 @@ func (s *Service) CreateBlob(ctx context.Context, user []byte, rec *pb.Record) (
 	if err := proto.Unmarshal(body.Payload, &m); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	if m.Persistent {
-		n, err := s.Store.PersistentBlobs(ctx, user)
-		if err != nil {
-			return nil, err
-		}
-		if n >= MaxPersistentBlobs {
-			return nil, fmt.Errorf("%w: too many backup blobs in flight", ErrQuota)
-		}
-	}
 	if int64(m.Size) > s.Limits.MaxBlob {
 		return nil, fmt.Errorf("%w: blob of %d bytes exceeds %d", ErrQuota, m.Size, s.Limits.MaxBlob)
 	}
-	used, err := s.Store.UserBlobBytes(ctx, user)
-	if err != nil {
-		return nil, err
+	// Quota and backup-blob limit are counted in the insert's write transaction (D106).
+	applied, err := s.Store.ApplyBlobMeta(ctx, rec, body, s.NodeID, int64(m.Size), m.Persistent,
+		store.BlobLimits{UserQuota: s.Limits.UserQuota, MaxPersistent: MaxPersistentBlobs})
+	if errors.Is(err, store.ErrOverLimit) {
+		return nil, fmt.Errorf("%w: %v", ErrQuota, err)
 	}
-	if used+int64(m.Size) > s.Limits.UserQuota {
-		return nil, fmt.Errorf("%w: %d of %d bytes in use", ErrQuota, used, s.Limits.UserQuota)
-	}
-	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
 	if err != nil {
 		return nil, err
 	}

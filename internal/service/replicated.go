@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/store"
 )
 
 // ApplyReplicated validates and applies a record received from peer `from`.
@@ -29,10 +30,20 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 		return false, fmt.Errorf("%w: %v", ErrRetryLater, err)
 	case errors.Is(err, records.ErrExpired):
 		return false, nil
+	case errors.Is(err, records.ErrRevoked):
+		// the author was revoked after writing it; refusing with a retry would stall this peer forever (D99)
+		s.Log.Debug("skipping record of a revoked author")
+		return false, nil
 	case err != nil:
 		return false, invalid(err)
 	}
-	_, applied, err := s.Store.ApplyReplicated(ctx, rec, body, from)
+	var adm *store.Admission
+	if body.Type == pb.RecordType_DIRECTORY_ENTRY {
+		if adm, err = s.admitIfNew(ctx, body); err != nil {
+			return false, err // INVALID: skipped by the peer session; RETRY_LATER: the inviter's entry comes first
+		}
+	}
+	_, applied, err := s.Store.ApplyReplicatedItem(ctx, store.Item{Record: rec, Body: body, Admission: adm}, from)
 	if err != nil || !applied {
 		return applied, err
 	}
@@ -48,6 +59,9 @@ func isPrekeyConsumed(rec *pb.Record) bool {
 // afterApply runs the side effects of a newly applied record. from is the peer a replicated record came from,
 // nil for one accepted locally (client submit, local import).
 func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []byte) {
+	// the record is committed: its side effects must not depend on the caller's context (a peer session can end
+	// between the commit and here; a lost manifest load would leave this node on the old manifest until restart)
+	ctx = context.WithoutCancel(ctx)
 	switch body.Type {
 	case pb.RecordType_ENVELOPE:
 		var e pb.Envelope
@@ -58,7 +72,11 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []by
 			s.maybePush(ctx, body, &e, from)
 		}
 	case pb.RecordType_DIRECTORY_ENTRY:
+		s.RefreshRevoked(ctx) // an entry may arrive after its revocation, or a double redemption may disable one (D102)
 		s.Notify.Directory()
+	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
+		s.RefreshRevoked(ctx)
+		s.Notify.Directory() // phones re-sync and verify the record themselves (D104)
 	case pb.RecordType_BLOB_FETCHED:
 		s.kickSweep() // the blob may be gone now: remove its files soon
 	case pb.RecordType_MANIFEST:

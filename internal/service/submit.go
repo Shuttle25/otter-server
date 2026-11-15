@@ -3,12 +3,19 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/store"
 )
+
+// submitRates: records per author per hour accepted from clients (C8, D107); replication is bounded by the budgets.
+var submitRates = map[pb.RecordType]int{pb.RecordType_PREKEYS: 20, pb.RecordType_PUSH_TOKEN: 30}
 
 // Submit validates and applies a client-authored record of one of the allowed types.
 func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allowed ...pb.RecordType) (*pb.RecordBody, error) {
@@ -21,6 +28,13 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 	}
 	if !slices.Contains(allowed, body.Type) {
 		return nil, fmt.Errorf("%w: record type %v not allowed here", ErrInvalid, body.Type)
+	}
+	now := s.Now()
+	if body.CreatedMs > now.Add(MaxClockSkew).UnixMilli() { // C8: a future date would outrank every later record
+		return nil, fmt.Errorf("%w: created_ms is in the future", ErrInvalid)
+	}
+	if lim, ok := submitRates[body.Type]; ok && !s.submits.allow(now, time.Hour, fmt.Sprintf("%d/%x", body.Type, user), lim) {
+		return nil, fmt.Errorf("%w: more than %d %v records this hour", ErrQuota, lim, body.Type)
 	}
 	var env *pb.Envelope
 	switch body.Type {
@@ -42,11 +56,18 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 			}
 		}
 	case pb.RecordType_INVITE:
+		var inv pb.Invite
+		if err := proto.Unmarshal(body.Payload, &inv); err != nil || len(inv.RedeemPub) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("%w: invite without a redeem key (update the app)", ErrInvalid)
+		}
 		if err := s.inviterAllowed(ctx, user); err != nil {
 			return nil, err
 		}
 	}
 	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
+	if errors.Is(err, store.ErrOverLimit) {
+		return nil, fmt.Errorf("%w: %v", ErrQuota, err)
+	}
 	if err != nil {
 		return nil, err
 	}

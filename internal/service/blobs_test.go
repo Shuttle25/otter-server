@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,5 +72,83 @@ func TestGetChunkProxies(t *testing.T) {
 	}
 	if _, err := f.svc.GetChunk(ctx, boris.id, key, 0); err != nil || good.calls != 1 {
 		t.Fatalf("second get should be local: %v calls=%d", err, good.calls)
+	}
+}
+
+// blobMeta signs a one-chunk blob of size bytes for u (persistent: a backup blob).
+func blobMeta(t *testing.T, u *user, size uint64, persistent bool) *pb.Record {
+	h := sha256.Sum256([]byte("x"))
+	m := &pb.BlobMeta{Size: size, ChunkSize: records.BlobChunkSize, ChunkSha256: [][]byte{h[:]}, Persistent: persistent}
+	body := &pb.RecordBody{Id: r16(), Type: pb.RecordType_BLOB_META, Author: u.id, CreatedMs: time.Now().UnixMilli()}
+	if !persistent {
+		m.Readers = [][]byte{r16()} // any other member
+		body.ExpiresMs = time.Now().Add(24 * time.Hour).UnixMilli()
+	}
+	body.Payload, _ = proto.Marshal(m)
+	rec, err := records.Sign(body, u.priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// A client racing blob.create calls cannot overshoot its limits (C9, D106).
+func TestCreateBlobLimitsHoldUnderParallelCreates(t *testing.T) {
+	f := newFx(t)
+	withBlobs(t, f)
+	f.svc.Limits = Limits{UserQuota: 1000, MaxBlob: 1000}
+	ctx := context.Background()
+	u := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	race := func(persistent bool) (ok, quota int) {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for i := 0; i < 10; i++ {
+			rec := blobMeta(t, u, 300, persistent)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := f.svc.CreateBlob(ctx, u.id, rec)
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					ok++
+				case errors.Is(err, ErrQuota):
+					quota++
+				default:
+					t.Errorf("unexpected: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+		return ok, quota
+	}
+	if ok, quota := race(false); ok != 3 || quota != 7 {
+		t.Fatalf("bytes: %d created, %d refused", ok, quota)
+	}
+	if used, _ := f.svc.Store.UserBlobBytes(ctx, u.id); used > 1000 {
+		t.Fatalf("quota overshot: %d", used)
+	}
+	f.svc.Limits.UserQuota = 1 << 30
+	if ok, _ := race(true); ok != MaxPersistentBlobs {
+		t.Fatalf("persistent: %d created", ok)
+	}
+	again := blobMeta(t, u, 300, true)
+	if _, err := f.svc.CreateBlob(ctx, u.id, again); !errors.Is(err, ErrQuota) {
+		t.Fatalf("4th backup blob: %v", err)
+	}
+}
+
+// Re-creating a blob already stored answers its status even when the author is at the quota.
+func TestCreateBlobIdempotentAtTheLimit(t *testing.T) {
+	f := newFx(t)
+	withBlobs(t, f)
+	f.svc.Limits = Limits{UserQuota: 300, MaxBlob: 1000}
+	u := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	rec := blobMeta(t, u, 300, false)
+	for i := 0; i < 2; i++ {
+		if _, err := f.svc.CreateBlob(context.Background(), u.id, rec); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
 	}
 }

@@ -127,6 +127,13 @@ message BackupAuthResponse {
   uint32 kdf_m_kib = 2;
   uint32 kdf_t = 3;
   uint32 kdf_p = 4;
+  repeated string candidates = 10; // M9.2 (D103): the name is shared after a clash; retry with each "name#tag"
+}
+
+// admin.users: Ed25519 by the network key over AdminAuthMessage(node_id, hello nonce, ts_ms).
+message AdminRequest {
+  int64 ts_ms = 1;
+  bytes signature = 2;
 }
 
 message BackupFetchRequest {

@@ -165,6 +165,14 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 	}
 }
 
+// MaxInviteTTL: an invite lives at most this long, created_ms to expires_ms (C8, D107).
+const MaxInviteTTL = 30 * 24 * time.Hour
+
+// InviteLifetimeOK: an invite expires after its creation and lives at most MaxInviteTTL (C8, D107).
+func InviteLifetimeOK(createdMs, expiresMs int64) bool {
+	return expiresMs > createdMs && expiresMs-createdMs <= MaxInviteTTL.Milliseconds()
+}
+
 func (v *Validator) checkPayload(b *pb.RecordBody) error {
 	switch b.Type {
 	case pb.RecordType_BLOB_META:
@@ -190,6 +198,17 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		if err := proto.Unmarshal(b.Payload, &m); err != nil || !bytes.Equal(m.NetworkPub, v.NetworkPub) || m.Version == 0 {
 			return ErrBadPayload
 		}
+	case pb.RecordType_REVOCATION: // D99: permanent, so no expiry
+		var r pb.Revocation
+		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || !utf8.ValidString(r.Reason) ||
+			utf8.RuneCountInString(r.Reason) > 200 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
+	case pb.RecordType_INVITE_RIGHTS:
+		var r pb.InviteRights
+		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || r.Version == 0 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
 	case pb.RecordType_DIRECTORY_ENTRY:
 		var e pb.DirectoryEntry
 		_ = proto.Unmarshal(b.Payload, &e) // already parsed in signerKey
@@ -213,7 +232,7 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		}
 	case pb.RecordType_INVITE:
 		var i pb.Invite
-		if err := proto.Unmarshal(b.Payload, &i); err != nil || len(i.InviteId) != 32 || i.ExpiresMs <= 0 {
+		if err := proto.Unmarshal(b.Payload, &i); err != nil || len(i.InviteId) != 32 || !InviteLifetimeOK(b.CreatedMs, i.ExpiresMs) {
 			return ErrBadPayload
 		}
 	case pb.RecordType_INVITE_USED:

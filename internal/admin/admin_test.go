@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/keys"
 	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
@@ -104,6 +106,11 @@ func TestBootstrapInvite(t *testing.T) {
 		t.Fatal("wrong passphrase accepted")
 	}
 	now := time.Now()
+	for _, ttl := range []time.Duration{0, 800 * time.Hour} { // C8: an invite lives at most 30 days
+		if _, err := BootstrapInvite(dir, pass, now, ttl); err == nil {
+			t.Fatalf("ttl %s accepted", ttl)
+		}
+	}
 	res, err := BootstrapInvite(dir, pass, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +134,14 @@ func TestBootstrapInvite(t *testing.T) {
 	exp := now.Add(time.Hour).UnixMilli()
 	if inv.ExpiresMs != exp || body.ExpiresMs != exp {
 		t.Fatalf("expiry: payload %d body %d want %d", inv.ExpiresMs, body.ExpiresMs, exp)
+	}
+	// M9.2 (D100): the INVITE carries the redeem key of the secret and travels in the link
+	k, _ := keys.InviteRedeemKey(b.Secret)
+	if !bytes.Equal(inv.RedeemPub, k.Public().(ed25519.PublicKey)) {
+		t.Fatal("redeem_pub does not match the secret")
+	}
+	if b.Invite == nil || !proto.Equal(b.Invite, res.Record) {
+		t.Fatal("link does not carry the INVITE")
 	}
 	if fi, err := os.Stat(res.File); err != nil || filepath.Base(res.File) != fmt.Sprintf("%x.bin", sum[:8]) {
 		t.Fatalf("invite file %s: %v %v", res.File, fi, err)

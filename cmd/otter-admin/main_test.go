@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 	"google.golang.org/protobuf/proto"
@@ -19,6 +24,7 @@ import (
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/store"
 )
@@ -393,5 +399,154 @@ func TestAddWSSCLI(t *testing.T) {
 	}
 	if err := run([]string{"--dir", dir, "node", "remove-endpoint", "--label", "fi-1", "--host", "chat.example.org", "--port", "27443"}, &out, nil); err == nil {
 		t.Fatal("removed the node's own endpoint")
+	}
+}
+
+func signRec(t *testing.T, typ pb.RecordType, author []byte, m proto.Message, k ed25519.PrivateKey) *pb.Record {
+	t.Helper()
+	p, _ := proto.Marshal(m)
+	id := make([]byte, 16)
+	rand.Read(id)
+	r, err := records.Sign(&pb.RecordBody{Id: id, Type: typ, Author: author, CreatedMs: time.Now().UnixMilli(), Payload: p}, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// joinWithLink registers an account on svc the way the app does with a link from 'invite bootstrap' (D100): the
+// INVITE comes from the link, nothing was imported on the node.
+func joinWithLink(t *testing.T, svc *service.Service, link, name string) []byte {
+	t.Helper()
+	b, err := admin.DecodeInviteLink(link)
+	if err != nil || b.Invite == nil {
+		t.Fatalf("link without INVITE: %v", err)
+	}
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	id := keys.ID16(pub)
+	e := &pb.DirectoryEntry{UserId: id, Username: name, DisplayName: name, AccountPub: pub, IdentityPub: make([]byte, 33),
+		IdentitySig: make([]byte, 64), Version: 1, RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, b.Invite, b.Secret); err != nil {
+		t.Fatal(err)
+	}
+	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 9,
+		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
+		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
+	sum := sha256.Sum256(b.Secret)
+	if _, err := svc.Register(context.Background(), &pb.RegisterRequest{
+		DirectoryEntry: signRec(t, pb.RecordType_DIRECTORY_ENTRY, id, e, priv),
+		Prekeys:        signRec(t, pb.RecordType_PREKEYS, id, pk, priv),
+		InviteUsed:     signRec(t, pb.RecordType_INVITE_USED, id, &pb.InviteUsed{InviteId: sum[:], UserId: id}, priv)}); err != nil {
+		t.Fatalf("register %s: %v", name, err)
+	}
+	return id
+}
+
+func TestUserCommands(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	var out bytes.Buffer
+	runIn := func(in string, args ...string) (string, error) {
+		out.Reset()
+		err := run(append([]string{"--dir", dir}, args...), &out, strings.NewReader(in))
+		return out.String(), err
+	}
+	runOK := func(args ...string) string {
+		t.Helper()
+		o, err := runIn("", args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, o)
+		}
+		return o
+	}
+	runOK("network", "init")
+	runOK("node", "add", "--label", "dev", "--plain", "--wss-host", "127.0.0.1", "--wss-port", strconv.Itoa(port), "--wss-path", "/devpath")
+	runOK("manifest", "sign")
+	link := func() string {
+		for _, l := range strings.Split(runOK("invite", "bootstrap", "--ttl", "1h"), "\n") {
+			if strings.HasPrefix(l, admin.InvitePrefix) {
+				return l
+			}
+		}
+		t.Fatal("no link")
+		return ""
+	}
+	svc := devNode(t, dir, ln)
+	ctx := context.Background()
+	anna := joinWithLink(t, svc, link(), "anna")
+	boris := joinWithLink(t, svc, link(), "boris")
+
+	if _, err := runIn("", "user", "list"); err == nil {
+		t.Fatal("plain endpoint used without --allow-plain")
+	}
+	o := runOK("user", "list", "--allow-plain")
+	if !strings.Contains(o, fmt.Sprintf("anna#%x", anna[:4])) || !strings.Contains(o, fmt.Sprintf("%x", boris)) ||
+		strings.Count(o, "invite=true") != 2 || strings.Contains(o, "not admitted") {
+		t.Fatalf("list: %s", o)
+	}
+
+	// revoke: asks first; "n" cancels
+	if _, err := runIn("n\n", "user", "revoke", "anna", "--allow-plain"); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("revoke without confirmation: %v", err)
+	}
+	if u, _ := svc.Store.UserByID(ctx, anna); u.Revoked {
+		t.Fatal("revoked without confirmation")
+	}
+	if _, err := runIn("", "user", "revoke", "nobody", "--yes", "--allow-plain"); err == nil {
+		t.Fatal("unknown member revoked")
+	}
+	if o, err := runIn("y\n", "user", "revoke", "anna", "--reason", "lost phone", "--allow-plain"); err != nil || !strings.Contains(o, "dev          ok") {
+		t.Fatalf("revoke: %v\n%s", err, o)
+	}
+	if u, _ := svc.Store.UserByID(ctx, anna); !u.Revoked {
+		t.Fatal("anna not revoked on the node")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "revocations", fmt.Sprintf("%x.bin", anna))); err != nil {
+		t.Fatal(err)
+	}
+	if o := runOK("user", "list", "--allow-plain"); !strings.Contains(o, "revoked: lost phone") {
+		t.Fatalf("list after revoke: %s", o)
+	}
+
+	// invite rights: version = highest known + 1
+	if _, err := runIn("", "user", "invite-rights", "boris", "--allow-plain"); err == nil {
+		t.Fatal("invite-rights without --on/--off")
+	}
+	runOK("user", "invite-rights", fmt.Sprintf("boris#%x", boris[:4]), "--off", "--allow-plain")
+	if ok, _ := svc.Store.CanInviteAt(ctx, boris, time.Now().Add(time.Minute).UnixMilli()); ok {
+		t.Fatal("boris still may invite")
+	}
+	runOK("user", "invite-rights", fmt.Sprintf("%x", boris), "--on", "--allow-plain")
+	if ok, _ := svc.Store.CanInviteAt(ctx, boris, time.Now().Add(time.Minute).UnixMilli()); !ok {
+		t.Fatal("boris's rights not restored (version 2 must beat version 1)")
+	}
+	if o := runOK("user", "list", "--allow-plain"); !strings.Contains(o, "invite=true  founding=false v2") {
+		t.Fatalf("list after rights: %s", o)
+	}
+
+	// founding members end up in the next signed manifest
+	if _, err := runIn("", "user", "found", "zz"); err == nil {
+		t.Fatal("bad user id accepted")
+	}
+	if _, err := runIn("", "user", "found"); err == nil {
+		t.Fatal("no user id accepted")
+	}
+	runOK("user", "found", fmt.Sprintf("%x", boris))
+	if o := runOK("manifest", "sign"); !strings.Contains(o, `"foundingMembers"`) || !strings.Contains(o, base64.StdEncoding.EncodeToString(boris)) {
+		t.Fatalf("manifest: %s", o)
+	}
+
+	// typed passphrase and confirmation share one input
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "")
+	if o, err := runIn("a very long passphrase\ny\n", "user", "revoke", "boris", "--allow-plain"); err != nil {
+		t.Fatalf("interactive revoke: %v\n%s", err, o)
+	}
+	if u, _ := svc.Store.UserByID(ctx, boris); !u.Revoked {
+		t.Fatal("boris not revoked")
 	}
 }

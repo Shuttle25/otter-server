@@ -20,6 +20,9 @@ const (
 type Item struct {
 	Record *pb.Record
 	Body   *pb.RecordBody
+	// Admission: for a DIRECTORY_ENTRY of a user this node does not know yet, what the service derived from its
+	// invite chain (D100). nil for everything else (and in store tests: legacy rank).
+	Admission *Admission
 }
 
 type item struct {
@@ -27,11 +30,13 @@ type item struct {
 	body     *pb.RecordBody
 	origin   []byte
 	fromPeer bool // replicated: business conflicts never fail
+	adm      *Admission
 }
 
 type applyReq struct {
 	items []item
 	fn    func(context.Context, *sql.Tx) error
+	check func(context.Context, *sql.Tx) error // runs before items, same savepoint (limits, D106)
 	res   chan applyRes
 }
 
@@ -55,7 +60,7 @@ func toItem(it Item, origin []byte) (item, error) {
 	if err != nil {
 		return item{}, err
 	}
-	return item{key: key, raw: raw, body: it.Body, origin: origin}, nil
+	return item{key: key, raw: raw, body: it.Body, origin: origin, adm: it.Admission}, nil
 }
 
 // Apply stores a validated record. Idempotent by author||id.
@@ -65,7 +70,7 @@ func (s *Store) Apply(ctx context.Context, rec *pb.Record, body *pb.RecordBody) 
 
 // ApplyFrom is Apply with the node that first accepted the record (mailbox origin).
 func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBody, origin []byte) (int64, bool, error) {
-	it, err := toItem(Item{rec, body}, origin)
+	it, err := toItem(Item{Record: rec, Body: body}, origin)
 	if err != nil {
 		return 0, false, err
 	}
@@ -78,7 +83,12 @@ func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBo
 
 // ApplyReplicated applies a record received from peer `from`. Business conflicts never fail here.
 func (s *Store) ApplyReplicated(ctx context.Context, rec *pb.Record, body *pb.RecordBody, from []byte) (int64, bool, error) {
-	it, err := toItem(Item{rec, body}, from)
+	return s.ApplyReplicatedItem(ctx, Item{Record: rec, Body: body}, from)
+}
+
+// ApplyReplicatedItem is ApplyReplicated for an item that may carry an Admission.
+func (s *Store) ApplyReplicatedItem(ctx context.Context, in Item, from []byte) (int64, bool, error) {
+	it, err := toItem(in, from)
 	if err != nil {
 		return 0, false, err
 	}
@@ -218,7 +228,13 @@ func runReq(ctx context.Context, tx *sql.Tx, r *applyReq, now int64) applyRes {
 	if r.fn != nil {
 		err = r.fn(ctx, tx)
 	} else {
+		if r.check != nil {
+			err = r.check(ctx, tx)
+		}
 		for _, it := range r.items {
+			if err != nil {
+				break
+			}
 			seq, applied, e := applyOne(ctx, tx, it, now)
 			if e != nil {
 				err = e
@@ -246,6 +262,12 @@ func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool,
 		return seq, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, err
+	}
+	var gone int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM compacted WHERE record_key=?`, it.key).Scan(&gone); err == nil {
+		return 0, false, nil // deleted here as superseded (C8, D107): a re-send changes nothing
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
 	if it.fromPeer && expiring(it.body) && it.body.CreatedMs < now-RetentionMs {

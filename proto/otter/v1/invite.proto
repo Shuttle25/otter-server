@@ -17,4 +17,5 @@ message InviteBundle {
   bytes inviter_account_pub = 5;
   bytes inviter_identity_pub = 6;
   string inviter_name = 7;
+  Record invite = 8;              // M9.2: the signed INVITE (its redeem_pub matches secret)
 }

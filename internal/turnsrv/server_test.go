@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -357,9 +358,11 @@ func TestCloseReleasesPorts(t *testing.T) {
 	cfg := testConfig(secret, 4, 41, netlog.Nop{})
 	s, addr := startCfg(t, cfg)
 	u, p := Credentials(secret, []byte("anna-00000000000"), time.Now(), time.Hour)
-	if _, err := client(t, addr, u, p).Allocate(); err != nil {
+	relay, err := client(t, addr, u, p).Allocate()
+	if err != nil {
 		t.Fatal(err)
 	}
+	relayPort := relay.LocalAddr().(*net.UDPAddr).Port
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -371,14 +374,16 @@ func TestCloseReleasesPorts(t *testing.T) {
 	if err := s2.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// every relay port is free again
-	for port := 32100; port <= 32140; port++ {
-		c, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(port))
-		if err != nil {
-			t.Fatalf("relay port %d still in use: %v", port, err)
-		}
-		c.Close()
+	// the relay port this server allocated is free again (checking the whole range would also trip over sockets of
+	// other tests or programs that happen to sit in it)
+	if relayPort < cfg.PortMin || relayPort > cfg.PortMax {
+		t.Fatalf("relay port %d outside %d-%d", relayPort, cfg.PortMin, cfg.PortMax)
 	}
+	c, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(relayPort))
+	if err != nil {
+		t.Fatalf("relay port %d still in use: %v", relayPort, err)
+	}
+	c.Close()
 }
 
 func TestStartErrors(t *testing.T) {
@@ -410,4 +415,49 @@ func TestStartErrors(t *testing.T) {
 			t.Errorf("%s: started", name)
 		}
 	}
+}
+
+func TestRefusedUserCannotAllocate(t *testing.T) {
+	secret := bytes.Repeat([]byte{6}, SecretLen)
+	nl := &memLog{}
+	cfg := testConfig(secret, 4, 41, nl)
+	revoked := UserTag([]byte("boris-0000000000"))
+	cfg.Refuse = func(tag string) bool { return tag == revoked }
+	_, addr := startCfg(t, cfg)
+	u, p := Credentials(secret, []byte("boris-0000000000"), time.Now(), time.Hour)
+	if _, err := client(t, addr, u, p).Allocate(); err == nil {
+		t.Fatal("revoked user allocated")
+	}
+	waitFor(t, "auth netlog line", func() bool { return nl.count(netlog.Auth) == 1 })
+	ua, pa := Credentials(secret, []byte("anna-00000000000"), time.Now(), time.Hour)
+	if _, err := client(t, addr, ua, pa).Allocate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// D108: credentials issued before the revocation stop working on the next request of a live allocation.
+func TestRevokedUserRefusedOnEveryRequest(t *testing.T) {
+	secret := bytes.Repeat([]byte{7}, SecretLen)
+	nl := &memLog{}
+	var revoked atomic.Bool
+	anna := []byte("anna-00000000000")
+	cfg := testConfig(secret, 4, 41, nl)
+	cfg.Refuse = func(tag string) bool { return revoked.Load() && tag == UserTag(anna) }
+	_, addr := startCfg(t, cfg)
+	u, p := Credentials(secret, anna, time.Now(), TTL)
+	c := client(t, addr, u, p)
+	if _, err := c.Allocate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreatePermission(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}); err != nil {
+		t.Fatal(err)
+	}
+	revoked.Store(true)
+	if err := c.CreatePermission(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10}); err == nil {
+		t.Fatal("revoked user kept the relay")
+	}
+	if _, err := client(t, addr, u, p).Allocate(); err == nil {
+		t.Fatal("revoked user allocated")
+	}
+	waitFor(t, "revoked netlog line", func() bool { return strings.Contains(nl.String(), "revoked user") })
 }

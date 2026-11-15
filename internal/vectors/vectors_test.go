@@ -40,6 +40,9 @@ type V1 struct {
 	InviteLink              string `json:"invite_link"`
 	TLSCertDERHex           string `json:"tls_cert_der_hex"`
 	TLSSPKIPinHex           string `json:"tls_spki_pin_hex"`
+	InviteSecretHex         string `json:"invite_secret_hex"`
+	InviteRedeemPubHex      string `json:"invite_redeem_pub_hex"`
+	InviteProofHex          string `json:"invite_proof_hex"`
 }
 
 func seq(n int, start byte) []byte {
@@ -103,6 +106,15 @@ func generate(t *testing.T) []byte {
 	}
 	v.TLSCertDERHex = hex.EncodeToString(der)
 	v.TLSSPKIPinHex = hex.EncodeToString(pinning.SPKIPin(cert))
+	isec := seq(32, 9) // the secret already used in v.InviteLink
+	rk, err := keys.InviteRedeemKey(isec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isum := sha256.Sum256(isec)
+	v.InviteSecretHex = hex.EncodeToString(isec)
+	v.InviteRedeemPubHex = hex.EncodeToString(rk.Public().(ed25519.PublicKey))
+	v.InviteProofHex = hex.EncodeToString(ed25519.Sign(rk, keys.RedeemMessage(isum[:], keys.ID16(accPub), accPub)))
 	out, _ := json.MarshalIndent(v, "", "  ")
 	return append(out, '\n')
 }

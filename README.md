@@ -48,8 +48,10 @@ expires) and are not backed up. Tuning in `node.toml`: `[limits] user_quota`, `m
 A member's backup is a persistent blob (`BlobMeta.persistent`, at most 3 live per member, counted in `user_quota`) plus a
 signed `BACKUP_META` (`backup.publish`); both replicate to every node and the newest version wins. A phone with only
 a username and password restores through the public methods `backup.auth` (salt and KDF parameters; a stable fake salt
-for unknown names) and `backup.fetch` (checks `SHA-256(auth_secret)`, grants `blob.get` on that one blob). Wrong guesses
-are limited to 5 per username per hour and 20 per day per node. A newer install of a device (`PreKeys.installed_ms`)
+for unknown names) and `backup.fetch` (checks `SHA-256(auth_secret)`, grants `blob.get` on that one blob). Each attempt is
+counted before the secret is compared and removed again when it was right (D105): 5 failures per username and source
+(IPv4 address, IPv6 /64) per hour; after 10 failures of a username, or 30 of a source, in 24 h every further attempt
+waits 30 s doubling up to 15 min after the last failure. A stranger can slow a name down on one node, never lock it. A newer install of a device (`PreKeys.installed_ms`)
 cuts the old one off. Nothing to configure.
 
 ## Push

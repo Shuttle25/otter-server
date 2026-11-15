@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type Config struct {
 	Netlog                          netlog.Logger
 	StatsFile                       string // "" = do not publish
 	Log                             *slog.Logger
+	Refuse                          func(userTag string) bool // revoked accounts (C2); nil = nobody
 
 	// tests only
 	now       func() time.Time // clock for the credential expiry check (pion keeps its own real-clock check)
@@ -224,6 +226,10 @@ func Start(cfg Config) (*Server, error) {
 	auth := func(ra *turn.RequestAttributes) (string, []byte, bool) {
 		if expired(ra.Username, cfg.now()) {
 			nl(ra.SrcAddr, netlog.Auth, "expired or malformed credentials")
+			return "", nil, false
+		}
+		if _, tag, _ := strings.Cut(ra.Username, ":"); cfg.Refuse != nil && cfg.Refuse(tag) {
+			nl(ra.SrcAddr, netlog.Auth, "revoked user") // also on Refresh: a running relay stops at the next refresh
 			return "", nil, false
 		}
 		return rest(ra)

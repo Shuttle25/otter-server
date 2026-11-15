@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -103,6 +104,18 @@ func (g *Gateway) News() {
 	}
 }
 
+// Revoked implements service.Notifier: every session of the account ends at once (C2). Returns how many.
+func (g *Gateway) Revoked(user []byte) int {
+	n := 0
+	for _, s := range g.snapshot() {
+		if u := s.userID(); u != nil && bytes.Equal(u, user) {
+			s.endRevoked()
+			n++
+		}
+	}
+	return n
+}
+
 // Manifest broadcasts the new manifest to every connected session (logged in or not).
 func (g *Gateway) Manifest(version uint64) {
 	rec, v, err := g.svc.Manifest(context.Background())
@@ -124,6 +137,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
 	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel,
+		source:  service.SourceOf(r.RemoteAddr),
 		blobSem: make(chan struct{}, 4)}
 	defer func() {
 		cancel()

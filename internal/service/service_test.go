@@ -23,6 +23,8 @@ type rec struct {
 	low       []int
 	lowOwner  [][]byte
 	manifests []uint64
+	revoked   [][]byte
+	sessions  int // what Revoked reports as closed
 }
 
 func (r *rec) Envelope([]byte, uint32) { r.env++ }
@@ -34,6 +36,7 @@ func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
 func (r *rec) Manifest(v uint64)          { r.manifests = append(r.manifests, v) }
 func (r *rec) Online([]byte, uint32) bool { return false }
 func (r *rec) News()                      { r.news++ }
+func (r *rec) Revoked(u []byte) int       { r.revoked = append(r.revoked, u); return r.sessions }
 
 type fx struct {
 	t       *testing.T
@@ -85,53 +88,72 @@ type user struct {
 	priv ed25519.PrivateKey
 }
 
-// invite publishes an invite signed by the network (inviter == nil) or by a user; returns the secret.
-func (f *fx) invite(inviter *user, ttl time.Duration) []byte {
+// ticket is an invite as the inviter's app hands it over: the signed INVITE and the secret from the link.
+type ticket struct {
+	secret []byte
+	rec    *pb.Record
+}
+
+// newTicket signs an invite by the network (inviter == nil) or by a user without publishing it.
+func (f *fx) newTicket(inviter *user, ttl time.Duration) *ticket {
 	secret := make([]byte, 32)
 	rand.Read(secret)
-	id := sha256.Sum256(secret)
-	inv := &pb.Invite{InviteId: id[:], ExpiresMs: time.Now().Add(ttl).UnixMilli()}
-	if inviter == nil {
-		if _, err := f.svc.ImportRecord(context.Background(), sign(f.t, pb.RecordType_INVITE, keys.ID16(f.svc.NetworkPub), inv, f.netPriv)); err != nil {
-			f.t.Fatal(err)
-		}
-	} else {
-		if _, err := f.svc.Submit(context.Background(), inviter.id, sign(f.t, pb.RecordType_INVITE, inviter.id, inv, inviter.priv), pb.RecordType_INVITE); err != nil {
-			f.t.Fatal(err)
-		}
+	inv, err := records.InvitePayload(secret, time.Now().Add(ttl).UnixMilli())
+	if err != nil {
+		f.t.Fatal(err)
 	}
-	return secret
+	if inviter == nil {
+		return &ticket{secret: secret, rec: sign(f.t, pb.RecordType_INVITE, keys.ID16(f.svc.NetworkPub), inv, f.netPriv)}
+	}
+	return &ticket{secret: secret, rec: sign(f.t, pb.RecordType_INVITE, inviter.id, inv, inviter.priv)}
 }
 
-func (f *fx) registerReq(secret []byte, username string) (*user, *pb.RegisterRequest) {
-	return f.registerReqWith(secret, username, nil)
+// invite publishes an invite signed by the network (inviter == nil, imported) or by a user (invite.create).
+func (f *fx) invite(inviter *user, ttl time.Duration) *ticket {
+	tk := f.newTicket(inviter, ttl)
+	if inviter == nil {
+		if _, err := f.svc.ImportRecord(context.Background(), tk.rec); err != nil {
+			f.t.Fatal(err)
+		}
+	} else if _, err := f.svc.Submit(context.Background(), inviter.id, tk.rec, pb.RecordType_INVITE); err != nil {
+		f.t.Fatal(err)
+	}
+	return tk
 }
 
-func (f *fx) registerReqWith(secret []byte, username string, mod func(*pb.DirectoryEntry, *pb.PreKeys, *pb.InviteUsed)) (*user, *pb.RegisterRequest) {
+func (f *fx) registerReq(tk *ticket, username string) (*user, *pb.RegisterRequest) {
+	return f.registerReqWith(tk, username, nil)
+}
+
+func (f *fx) registerReqWith(tk *ticket, username string, mod func(*pb.DirectoryEntry, *pb.PreKeys, *pb.InviteUsed)) (*user, *pb.RegisterRequest) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	id := keys.ID16(pub)
 	u := &user{id: id, priv: priv}
 	entry := &pb.DirectoryEntry{UserId: id, Username: username, DisplayName: username, AccountPub: pub,
-		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true}
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true,
+		RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(entry, tk.rec, tk.secret); err != nil {
+		f.t.Fatal(err)
+	}
 	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 5,
 		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
 		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
 	for i := 0; i < 12; i++ {
 		pk.OneTime = append(pk.OneTime, &pb.OneTimePreKey{Id: uint32(100 + i), PublicKey: make([]byte, 33), OwnerNode: f.svc.NodeID})
 	}
-	sum := sha256.Sum256(secret)
+	sum := sha256.Sum256(tk.secret)
 	used := &pb.InviteUsed{InviteId: sum[:], UserId: id}
 	if mod != nil {
 		mod(entry, pk, used)
 	}
-	return u, &pb.RegisterRequest{InviteSecret: secret,
+	return u, &pb.RegisterRequest{
 		DirectoryEntry: sign(f.t, pb.RecordType_DIRECTORY_ENTRY, id, entry, priv),
 		Prekeys:        sign(f.t, pb.RecordType_PREKEYS, id, pk, priv),
 		InviteUsed:     sign(f.t, pb.RecordType_INVITE_USED, id, used, priv)}
 }
 
-func (f *fx) mustRegister(secret []byte, name string) *user {
-	u, req := f.registerReq(secret, name)
+func (f *fx) mustRegister(tk *ticket, name string) *user {
+	u, req := f.registerReq(tk, name)
 	if _, err := f.svc.Register(context.Background(), req); err != nil {
 		f.t.Fatal(err)
 	}
@@ -146,9 +168,9 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatal("directory notification")
 	}
 
-	secret := f.invite(anna, time.Hour)
-	f.mustRegister(secret, "boris")
-	_, again := f.registerReq(secret, "vera")
+	tk := f.invite(anna, time.Hour)
+	f.mustRegister(tk, "boris")
+	_, again := f.registerReq(tk, "vera")
 	if _, err := f.svc.Register(ctx, again); !errors.Is(err, ErrConflict) {
 		t.Fatalf("reused invite: %v", err)
 	}
@@ -158,12 +180,17 @@ func TestRegisterFlow(t *testing.T) {
 		t.Fatalf("taken username: %v", err)
 	}
 
-	_, unknown := f.registerReq(make([]byte, 32), "gleb")
-	if _, err := f.svc.Register(ctx, unknown); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unknown invite: %v", err)
+	pubX, privX, _ := ed25519.GenerateKey(nil)
+	stranger := &user{id: keys.ID16(pubX), priv: privX}
+	_, unknown := f.registerReq(f.newTicket(stranger, time.Hour), "gleb")
+	if _, err := f.svc.Register(ctx, unknown); !errors.Is(err, ErrRetryLater) {
+		t.Fatalf("invite by an unknown inviter: %v", err)
 	}
 
-	_, expired := f.registerReq(f.invite(anna, -time.Minute+time.Second), "dina")
+	// the INVITE travels in the entry: a node that never saw it registers the account (D100)
+	f.mustRegister(f.newTicket(anna, time.Hour), "zoya")
+
+	_, expired := f.registerReq(f.invite(anna, time.Minute), "dina")
 	f.svc.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	if _, err := f.svc.Register(ctx, expired); err == nil {
 		t.Fatal("expired invite accepted")
@@ -177,7 +204,7 @@ func TestRegisterFlow(t *testing.T) {
 	}
 
 	dir, _ := f.svc.Directory(ctx)
-	if len(dir) != 2 {
+	if len(dir) != 3 {
 		t.Fatalf("directory has %d entries", len(dir))
 	}
 }
@@ -272,7 +299,7 @@ func TestRegisterErrors(t *testing.T) {
 	if _, err := f.svc.Register(ctx, incomplete); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("incomplete: %v", err)
 	}
-	short := &pb.RegisterRequest{InviteSecret: []byte{1}}
+	short := &pb.RegisterRequest{InviteSecret: []byte{1}} // an old app: only the secret
 	if _, err := f.svc.Register(ctx, short); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("short secret: %v", err)
 	}
@@ -287,9 +314,8 @@ func TestRegisterErrors(t *testing.T) {
 	if _, err := f.svc.Register(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	secret := f.invite(anna, time.Hour)
-	sum := sha256.Sum256(secret)
-	again := &pb.RegisterRequest{InviteSecret: secret, DirectoryEntry: first.DirectoryEntry, Prekeys: first.Prekeys,
+	sum := sha256.Sum256(f.invite(anna, time.Hour).secret)
+	again := &pb.RegisterRequest{DirectoryEntry: first.DirectoryEntry, Prekeys: first.Prekeys,
 		InviteUsed: sign(t, pb.RecordType_INVITE_USED, u.id, &pb.InviteUsed{InviteId: sum[:], UserId: u.id}, u.priv)}
 	if _, err := f.svc.Register(ctx, again); !errors.Is(err, ErrConflict) {
 		t.Fatalf("already registered: %v", err)
@@ -309,21 +335,22 @@ func TestRegisterErrors(t *testing.T) {
 		t.Fatalf("invite_used for another invite: %v", err)
 	}
 
-	// an inviter without invite rights cannot create invites
-	noRights, req := f.registerReqWith(f.invite(anna, time.Hour), "gleb", func(e *pb.DirectoryEntry, _ *pb.PreKeys, _ *pb.InviteUsed) {
-		e.CanInvite = false
-	})
+	// an inviter whose invite rights the admin withdrew cannot create invites (D101); the entry's own claim is ignored (C6)
+	noRights, req := f.registerReqWith(f.invite(anna, time.Hour), "gleb", nil)
 	if _, err := f.svc.Register(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	inv := &pb.Invite{InviteId: make([]byte, 32), ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}
-	if _, err := f.svc.Submit(ctx, noRights.id, sign(t, pb.RecordType_INVITE, noRights.id, inv, noRights.priv), pb.RecordType_INVITE); !errors.Is(err, ErrUnauthorized) {
+	withdraw := sign(t, pb.RecordType_INVITE_RIGHTS, keys.ID16(f.svc.NetworkPub), &pb.InviteRights{UserId: noRights.id, Version: 1}, f.netPriv)
+	if _, err := f.svc.ImportRecord(ctx, withdraw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Submit(ctx, noRights.id, f.newTicket(noRights, time.Hour).rec, pb.RecordType_INVITE); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("invite without rights: %v", err)
 	}
 	// nothing from the failed attempts leaked into the directory
 	dir, _ := f.svc.Directory(ctx)
-	if len(dir) != 3 {
-		t.Fatalf("directory has %d entries", len(dir))
+	if len(dir) != 4 { // 3 entries + the INVITE_RIGHTS record (D99)
+		t.Fatalf("directory has %d records", len(dir))
 	}
 }
 

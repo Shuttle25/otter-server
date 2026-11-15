@@ -204,18 +204,15 @@ func TestAuthFailures(t *testing.T) {
 	s, _ := open(t)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		if err := s.AddAuthFailure(ctx, "anna", 1000+int64(i)); err != nil {
+		if err := s.AddAuthFailure(ctx, "anna", "203.0.113.1", 1000+int64(i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.AddAuthFailure(ctx, "boris", 1005); err != nil {
+	if err := s.AddAuthFailure(ctx, "boris", "203.0.113.1", 1005); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := s.AuthFailures(ctx, "anna", 1001); n != 2 {
 		t.Fatalf("anna since 1001: %d", n)
-	}
-	if n, _ := s.AuthFailuresTotal(ctx, 0); n != 4 {
-		t.Fatalf("total: %d", n)
 	}
 	if n, _ := s.PersistentBlobs(ctx, r16()); n != 0 {
 		t.Fatalf("persistent blobs of nobody: %d", n)

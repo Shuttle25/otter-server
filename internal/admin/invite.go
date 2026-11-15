@@ -46,8 +46,12 @@ type BootstrapResult struct {
 	File   string
 }
 
-// BootstrapInvite creates a network-signed invite for the first member.
+// BootstrapInvite creates a network-signed invite for the first member. The link carries the signed INVITE, so any
+// node registers it; importing the record file on a node is optional.
 func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) (*BootstrapResult, error) {
+	if ttl <= 0 || ttl > records.MaxInviteTTL { // C8: every node refuses a longer-lived invite
+		return nil, fmt.Errorf("invite ttl must be between 1s and %s", records.MaxInviteTTL)
+	}
 	st, err := LoadState(dir)
 	if err != nil {
 		return nil, err
@@ -68,7 +72,14 @@ func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) 
 	rand.Read(secret)
 	sum := sha256.Sum256(secret)
 	exp := now.Add(ttl).UnixMilli()
-	payload, _ := proto.Marshal(&pb.Invite{InviteId: sum[:], ExpiresMs: exp})
+	inv, err := records.InvitePayload(secret, exp) // redeem_pub: the app proves the secret without sending it (D100)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := proto.Marshal(inv)
+	if err != nil {
+		return nil, err
+	}
 	id := make([]byte, 16)
 	rand.Read(id)
 	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: pb.RecordType_INVITE, Author: keys.ID16(st.NetworkPub),
@@ -76,7 +87,7 @@ func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	link, err := EncodeInviteLink(&pb.InviteBundle{NetworkPub: st.NetworkPub, Manifest: &manifest, Secret: secret})
+	link, err := EncodeInviteLink(&pb.InviteBundle{NetworkPub: st.NetworkPub, Manifest: &manifest, Secret: secret, Invite: rec})
 	if err != nil {
 		return nil, err
 	}

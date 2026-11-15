@@ -19,6 +19,7 @@ type session struct {
 	out    chan *pb.Frame
 	wake   chan struct{}
 	nonce  []byte
+	source string // restore rate-limit source of this connection (service.SourceOf, D105)
 	ctx    context.Context
 	cancel context.CancelFunc
 	// blob.get may wait on a peer (proxy): run up to 4 off the read loop
@@ -77,6 +78,12 @@ func (s *session) dropReplaced() bool {
 	s.cancel() // ends the read loop at once; the close handshake must not keep it serving requests
 	go s.conn.Close(websocket.StatusPolicyViolation, "install replaced")
 	return true
+}
+
+// endRevoked closes the connection of a revoked account (C2).
+func (s *session) endRevoked() {
+	s.cancel() // ends the read loop at once
+	go s.conn.Close(websocket.StatusPolicyViolation, "revoked")
 }
 
 // keepalive pings the client every interval; a ping without a pong within timeout ends the session

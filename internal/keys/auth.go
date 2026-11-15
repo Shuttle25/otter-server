@@ -23,3 +23,15 @@ func PeerAuthMessage(nodeID, nonce []byte, tsMs int64) []byte {
 	m = append(m, nonce...)
 	return binary.BigEndian.AppendUint64(m, uint64(tsMs))
 }
+
+const adminContext = "otter-admin-v1"
+
+// AdminAuthMessage is what the network key signs for admin.users (M9.2): bound to the node and this connection's
+// nonce, so a node cannot replay it elsewhere.
+func AdminAuthMessage(nodeID, nonce []byte, tsMs int64) []byte {
+	m := make([]byte, 0, len(adminContext)+len(nodeID)+len(nonce)+8)
+	m = append(m, adminContext...)
+	m = append(m, nodeID...)
+	m = append(m, nonce...)
+	return binary.BigEndian.AppendUint64(m, uint64(tsMs))
+}

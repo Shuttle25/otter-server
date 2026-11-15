@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -156,4 +157,21 @@ func TestKeepaliveKeepsHealthySession(t *testing.T) {
 	if sessionOf(m.nodes[0], m.nodes[1].id) != s {
 		t.Fatal("a healthy session was replaced")
 	}
+}
+
+// A catch-up batch that takes longer to apply than the ping timeout (a node that was away, a slow disk) must not end
+// the session: the pong is read while the batch is applied, so the cursor advances and the peer converges.
+func TestSlowCatchUpOutlastsPingTimeout(t *testing.T) {
+	m := newMesh(t, 2, true)
+	a, b := m.nodes[0], m.nodes[1]
+	anna := m.register(0, "anna")
+	for i := 0; i < 120; i++ { // ~10 ms per record through the writer: well over peerPingTimeout (500 ms)
+		if _, err := a.svc.Submit(context.Background(), anna.id, m.envelope(anna, anna), pb.RecordType_ENVELOPE); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.link(0, 1, true)
+	m.start()
+	keys := func(nd *tnode) string { k, _ := nd.st.RecordKeys(context.Background()); return fmt.Sprintf("%x", k) }
+	eventually(t, "B caught up with A", func() bool { return keys(a) == keys(b) })
 }

@@ -96,6 +96,13 @@ func (s *Store) DirectoryEntries(ctx context.Context) ([][]byte, error) {
 	return out, rows.Err()
 }
 
+// LiveInvites counts the author's invites that expire after nowMs (C8 budget).
+func (s *Store) LiveInvites(ctx context.Context, inviter []byte, nowMs int64) (int, error) {
+	var n int
+	err := s.r.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites WHERE inviter=? AND expires_ms>?`, inviter, nowMs).Scan(&n)
+	return n, err
+}
+
 func (s *Store) Invite(ctx context.Context, id []byte) (*InviteState, error) {
 	var st InviteState
 	err := s.r.QueryRowContext(ctx, `SELECT inviter, expires_ms, used_by FROM invites WHERE invite_id=?`, id).

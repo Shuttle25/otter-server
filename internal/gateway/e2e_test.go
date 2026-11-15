@@ -32,19 +32,49 @@ type acct struct {
 	priv ed25519.PrivateKey
 }
 
-func registerReq(t *testing.T, n *node, secret []byte, name string) (*acct, *pb.RegisterRequest) {
+// ticket is an invite as the inviter's app hands it over: the signed INVITE and the secret from the link.
+type ticket struct {
+	secret []byte
+	rec    *pb.Record
+}
+
+// newTicket signs a fresh invite by author (not published).
+func newTicket(t *testing.T, author []byte, k ed25519.PrivateKey) *ticket {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	inv, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &ticket{secret: secret, rec: sign(t, pb.RecordType_INVITE, author, inv, k)}
+}
+
+// netInvite imports a network-signed bootstrap invite on n, as the operator does.
+func netInvite(t *testing.T, n *node) *ticket {
+	tk := newTicket(t, keys.ID16(n.svc.NetworkPub), n.netPriv)
+	if _, err := n.svc.ImportRecord(context.Background(), tk.rec); err != nil {
+		t.Fatal(err)
+	}
+	return tk
+}
+
+func registerReq(t *testing.T, n *node, tk *ticket, name string) (*acct, *pb.RegisterRequest) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	id := keys.ID16(pub)
 	entry := &pb.DirectoryEntry{UserId: id, Username: name, DisplayName: name, AccountPub: pub,
-		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true}
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true,
+		RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(entry, tk.rec, tk.secret); err != nil {
+		t.Fatal(err)
+	}
 	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 9,
 		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
 		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
 	for i := 0; i < 11; i++ {
 		pk.OneTime = append(pk.OneTime, &pb.OneTimePreKey{Id: uint32(i + 1), PublicKey: make([]byte, 33), OwnerNode: n.svc.NodeID})
 	}
-	sum := sha256.Sum256(secret)
-	return &acct{id, priv}, &pb.RegisterRequest{InviteSecret: secret,
+	sum := sha256.Sum256(tk.secret)
+	return &acct{id, priv}, &pb.RegisterRequest{
 		DirectoryEntry: sign(t, pb.RecordType_DIRECTORY_ENTRY, id, entry, priv),
 		Prekeys:        sign(t, pb.RecordType_PREKEYS, id, pk, priv),
 		InviteUsed:     sign(t, pb.RecordType_INVITE_USED, id, &pb.InviteUsed{InviteId: sum[:], UserId: id}, priv)}
@@ -64,13 +94,7 @@ func TestEndToEnd(t *testing.T) {
 	ctx := context.Background()
 
 	// bootstrap invite imported by the operator
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	sum := sha256.Sum256(secret)
-	inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-	if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-		t.Fatal(err)
-	}
+	secret := netInvite(t, n)
 
 	ca := dial(t, n)
 	if st, _ := ca.call("directory.sync", &pb.Empty{}, nil); st != pb.Status_STATUS_UNAUTHORIZED {
@@ -86,10 +110,8 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// anna invites boris
-	s2 := make([]byte, 32)
-	rand.Read(s2)
-	sum2 := sha256.Sum256(s2)
-	invRec := sign(t, pb.RecordType_INVITE, anna.id, &pb.Invite{InviteId: sum2[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, anna.priv)
+	s2 := newTicket(t, anna.id, anna.priv)
+	invRec := s2.rec
 	if st, msg := ca.call("invite.create", &pb.RecordRequest{Record: invRec}, nil); st != pb.Status_STATUS_OK {
 		t.Fatalf("invite: %v %s", st, msg)
 	}
@@ -175,14 +197,7 @@ func TestOversizedFrameClosesConnection(t *testing.T) {
 
 func TestUnknownMethodAfterLogin(t *testing.T) {
 	n := startNode(t)
-	ctx := context.Background()
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	sum := sha256.Sum256(secret)
-	inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-	if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-		t.Fatal(err)
-	}
+	secret := netInvite(t, n)
 	c := dial(t, n)
 	a, req := registerReq(t, n, secret, "anna")
 	if st, msg := c.call("register", req, nil); st != pb.Status_STATUS_OK {

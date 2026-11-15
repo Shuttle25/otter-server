@@ -1,0 +1,322 @@
+package meshsim
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"errors"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/keys"
+	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/service"
+	"ottermsg/server/internal/turnsrv"
+)
+
+var turnTag = turnsrv.UserTag
+
+// tryLogin dials n and returns the status of a login as a.
+func (s *sim) tryLogin(n *simNode, a *account) pb.Status {
+	c := s.dial(n)
+	defer c.close()
+	ts := time.Now().UnixMilli()
+	st, _ := c.call("auth.login", &pb.LoginRequest{UserId: a.id, DeviceId: 1, TsMs: ts,
+		Signature: ed25519.Sign(a.priv, keys.AuthMessage(c.hello.NodeId, c.hello.Nonce, ts))}, nil)
+	return st
+}
+
+// closed waits until the node closes c's connection.
+func closed(t *testing.T, c *client) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-c.events:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("session of a revoked user still open")
+		}
+	}
+}
+
+func (s *sim) revoke(a *account) *pb.Record {
+	return s.sign(pb.RecordType_REVOCATION, keys.ID16(s.netPub), &pb.Revocation{UserId: a.id, Reason: "left the family"}, s.netPriv)
+}
+
+// C2: an admin-signed revocation published on one node reaches all; the account loses login, mail, sessions and TURN.
+func TestRevocationReplicatesAndBlocks(t *testing.T) {
+	s := newSimWith(t, map[string]nodeOpts{"c": {turn: true}}, "a", "b", "c")
+	a, b, c := s.node("a"), s.node("b"), s.node("c")
+	anna := s.register(a, "anna")
+	boris := s.register(a, "boris")
+	eventually(t, "users everywhere", func() bool { return s.all(func(n *simNode) bool { return n.knows(anna) && n.knows(boris) }) })
+	borisC := s.login(c, boris)
+	var creds pb.TurnCredentials
+	borisC.mustCall("turn.credentials", &pb.Empty{}, &creds)
+
+	pub := s.dial(a)
+	pub.mustCall("network.publish", &pb.RecordRequest{Record: s.revoke(boris)}, nil)
+	pub.mustCall("network.publish", &pb.RecordRequest{Record: s.revoke(boris)}, nil) // another record, same effect: still OK
+	ctx := context.Background()
+	eventually(t, "revoked everywhere", func() bool {
+		return s.all(func(n *simNode) bool { u, _ := n.st.UserByID(ctx, boris.id); return u != nil && u.Revoked })
+	})
+	closed(t, borisC)
+	for _, n := range s.nodes {
+		if st := s.tryLogin(n, boris); st != pb.Status_STATUS_REVOKED {
+			t.Fatalf("%s: login of a revoked user: %v", n.label, st)
+		}
+	}
+	annaB := s.login(b, anna)
+	r := s.signAs(anna, pb.RecordType_ENVELOPE, &pb.Envelope{SenderUser: anna.id, SenderDevice: 1, Kind: pb.Envelope_SIGNAL,
+		Recipients: []*pb.Recipient{{User: boris.id, Device: 1, Content: []byte("x")}}})
+	if st, _ := annaB.call("msg.send", &pb.RecordRequest{Record: r}, nil); st != pb.Status_STATUS_NOT_FOUND {
+		t.Fatalf("send to revoked: %v", st)
+	}
+	if !c.svc.TurnTagRevoked(turnTag(boris.id)) {
+		t.Fatal("TURN still accepts the revoked user's tag")
+	}
+	if _, err := turnClient(t, "udp", c.turnAddr, &creds); err == nil {
+		t.Fatal("TURN allocated with the revoked user's earlier credentials")
+	}
+	// the second revocation may still be on its way to b ("revoked everywhere" waits for the first)
+	eventually(t, "directory.sync carries the entries and both revocations", func() bool {
+		var batch pb.RecordBatch
+		annaB.mustCall("directory.sync", &pb.Empty{}, &batch)
+		return countType(&batch, pb.RecordType_REVOCATION) == 2 && countType(&batch, pb.RecordType_DIRECTORY_ENTRY) == 2
+	})
+}
+
+// Threat model: a hostile node cannot revoke (or un-revoke) a member; its records are refused everywhere.
+func TestForgedRevocationRefused(t *testing.T) {
+	s := newSim(t, "a", "b")
+	a, b := s.node("a"), s.node("b")
+	anna := s.register(a, "anna")
+	boris := s.register(a, "boris")
+	eventually(t, "users on b", func() bool { return b.knows(anna) && b.knows(boris) })
+	ctx := context.Background()
+	forged := []*pb.Record{
+		s.sign(pb.RecordType_REVOCATION, keys.ID16(s.netPub), &pb.Revocation{UserId: anna.id}, a.key), // network author, node key
+		s.sign(pb.RecordType_REVOCATION, a.id, &pb.Revocation{UserId: anna.id}, a.key),                // node-authored
+		s.signAs(boris, pb.RecordType_REVOCATION, &pb.Revocation{UserId: anna.id}),                    // member-authored
+		s.sign(pb.RecordType_INVITE_RIGHTS, keys.ID16(s.netPub), &pb.InviteRights{UserId: boris.id, CanInvite: true, Version: 9}, a.key),
+	}
+	for i, r := range forged {
+		if _, err := b.svc.ApplyReplicated(ctx, a.id, r); !errors.Is(err, service.ErrInvalid) {
+			t.Fatalf("forged #%d replicated: %v", i, err)
+		}
+		cl := s.dial(b)
+		if st, _ := cl.call("network.publish", &pb.RecordRequest{Record: r}, nil); st != pb.Status_STATUS_INVALID {
+			t.Fatalf("forged #%d published: %v", i, st)
+		}
+		cl.close()
+	}
+	// a genuine record of another type is not published through network.publish
+	cl := s.dial(b)
+	if st, _ := cl.call("network.publish", &pb.RecordRequest{Record: s.signManifest(99, s.nodeInfos())}, nil); st != pb.Status_STATUS_INVALID {
+		t.Fatalf("manifest through network.publish: %v", st)
+	}
+	cl.close()
+	if st := s.tryLogin(b, anna); st != pb.Status_STATUS_OK {
+		t.Fatalf("anna locked out by a forgery: %v", st)
+	}
+	// once really revoked, a newer entry by the account cannot bring it back
+	pub := s.dial(b)
+	pub.mustCall("network.publish", &pb.RecordRequest{Record: s.revoke(anna)}, nil)
+	newer := s.signAs(anna, pb.RecordType_DIRECTORY_ENTRY, &pb.DirectoryEntry{UserId: anna.id, Username: "anna", DisplayName: "A",
+		AccountPub: anna.priv.Public().(ed25519.PublicKey), IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 2})
+	if applied, err := b.svc.ApplyReplicated(ctx, a.id, newer); err != nil || applied {
+		t.Fatalf("revoked author's record: applied=%v err=%v (must be skipped without error)", applied, err)
+	}
+	if st := s.tryLogin(b, anna); st != pb.Status_STATUS_REVOKED {
+		t.Fatalf("revocation undone: %v", st)
+	}
+}
+
+func countType(b *pb.RecordBatch, t pb.RecordType) int {
+	n := 0
+	for _, r := range b.Records {
+		var body pb.RecordBody
+		if proto.Unmarshal(r.Body, &body) == nil && body.Type == t {
+			n++
+		}
+	}
+	return n
+}
+
+// Limit 3: a hostile peer cannot introduce an account: neither self-signed nor with a chain copied from a real one.
+func TestHostilePeerCannotAdmit(t *testing.T) {
+	s := newSim(t, "a", "b")
+	a, b := s.node("a"), s.node("b")
+	anna := s.register(a, "anna")
+	eventually(t, "anna on b", func() bool { return b.knows(anna) })
+	ctx := context.Background()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	mal := &account{id: keys.ID16(pub), priv: priv, name: "mallory"}
+	e := &pb.DirectoryEntry{UserId: mal.id, Username: "mallory", DisplayName: "Мама", AccountPub: pub, IdentityPub: make([]byte, 33),
+		IdentitySig: make([]byte, 64), Version: 1, RegisteredMs: time.Now().UnixMilli()}
+	if _, err := b.svc.ApplyReplicated(ctx, a.id, s.signAs(mal, pb.RecordType_DIRECTORY_ENTRY, e)); !errors.Is(err, service.ErrInvalid) {
+		t.Fatalf("self-signed account: %v", err)
+	}
+	ua, _ := a.st.UserByID(ctx, anna.id)
+	var r pb.Record
+	var body pb.RecordBody
+	var ae pb.DirectoryEntry
+	if proto.Unmarshal(ua.EntryRaw, &r) != nil || proto.Unmarshal(r.Body, &body) != nil || proto.Unmarshal(body.Payload, &ae) != nil {
+		t.Fatal("anna's entry")
+	}
+	if len(ae.InviteProof) == 0 || !bytes.Equal(ae.InviteProof, anna.proof) {
+		t.Fatal("anna's entry carries no chain")
+	}
+	e.InviteRecord, e.InviteProof = ae.InviteRecord, ae.InviteProof
+	if _, err := b.svc.ApplyReplicated(ctx, a.id, s.signAs(mal, pb.RecordType_DIRECTORY_ENTRY, e)); !errors.Is(err, service.ErrInvalid) {
+		t.Fatalf("stolen chain: %v", err)
+	}
+	if b.knows(mal) || s.tryLogin(b, mal) == pb.Status_STATUS_OK {
+		t.Fatal("hostile account admitted")
+	}
+	// a legitimate account registered on b with anna's invite still reaches a
+	inv, err := records.InvitePayload(bytes.Repeat([]byte{7}, 32), time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := &ticket{secret: bytes.Repeat([]byte{7}, 32), rec: s.signAs(anna, pb.RecordType_INVITE, inv)}
+	vera := s.registerWith(b, "vera", tk) // b registers it without having seen the INVITE (D100)
+	eventually(t, "vera on a", func() bool { return a.knows(vera) })
+}
+
+// C5: one invite redeemed on both sides of a partition by two accounts converges to one survivor on every node.
+func TestDoubleRedemptionConverges(t *testing.T) {
+	s := newSim(t, "a", "b")
+	a, b := s.node("a"), s.node("b")
+	s.part.Block(a, b)
+	tk := s.invite(a)
+	if _, err := b.svc.ImportRecord(context.Background(), tk.rec); err != nil { // the same network invite on b
+		t.Fatal(err)
+	}
+	x := s.registerWith(a, "xenia", tk)
+	y := s.registerWith(b, "yuri", tk)
+	s.part.Heal(a, b)
+	eventually(t, "both accounts on both nodes", func() bool { return s.all(func(n *simNode) bool { return n.knows(x) && n.knows(y) }) })
+	hx, hy := sha256.Sum256(x.proof), sha256.Sum256(y.proof)
+	winner, loser := x, y
+	if bytes.Compare(hx[:], hy[:]) > 0 {
+		winner, loser = y, x
+	}
+	ctx := context.Background()
+	eventually(t, "same verdict everywhere", func() bool {
+		return s.all(func(n *simNode) bool {
+			w, _ := n.st.UserByID(ctx, winner.id)
+			l, _ := n.st.UserByID(ctx, loser.id)
+			return w != nil && l != nil && !w.Revoked && l.Revoked
+		})
+	})
+	for _, n := range s.nodes {
+		if st := s.tryLogin(n, loser); st != pb.Status_STATUS_REVOKED {
+			t.Fatalf("%s: loser login %v", n.label, st)
+		}
+		if st := s.tryLogin(n, winner); st != pb.Status_STATUS_OK {
+			t.Fatalf("%s: winner login %v", n.label, st)
+		}
+	}
+	// a third redemption of the same invite is refused outright on a node that already saw one
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	e := &pb.DirectoryEntry{UserId: keys.ID16(pub), Username: "zoya", DisplayName: "zoya", AccountPub: pub,
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, tk.rec, tk.secret); err != nil {
+		t.Fatal(err)
+	}
+	z := &account{id: e.UserId, priv: priv, name: "zoya"}
+	sum := sha256.Sum256(tk.secret)
+	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 4,
+		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
+		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
+	c := s.dial(a)
+	defer c.close()
+	st, msg := c.call("register", &pb.RegisterRequest{
+		DirectoryEntry: s.signAs(z, pb.RecordType_DIRECTORY_ENTRY, e),
+		Prekeys:        s.signAs(z, pb.RecordType_PREKEYS, pk),
+		InviteUsed:     s.signAs(z, pb.RecordType_INVITE_USED, &pb.InviteUsed{InviteId: sum[:], UserId: z.id})}, nil)
+	if st != pb.Status_STATUS_CONFLICT {
+		t.Fatalf("third redemption: %v %s", st, msg)
+	}
+}
+
+// memberInvite is an INVITE signed by member a (a member-made link).
+func (s *sim) memberInvite(a *account) *ticket {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		s.t.Fatal(err)
+	}
+	inv, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return &ticket{secret: secret, rec: s.signAs(a, pb.RecordType_INVITE, inv)}
+}
+
+// D102/D104: an account disabled as a duplicate never admits anyone. The loser of a double redemption invites zed
+// (and zed invites wen) on its own side of a partition before it learns it lost; once the partitions heal, in a
+// different arrival order on every node, every node disables zed and wen like the phone drops them.
+func TestDuplicateLoserNeverAdmits(t *testing.T) {
+	s := newSim(t, "a", "b", "c")
+	a, b, c := s.node("a"), s.node("b"), s.node("c")
+	s.part.Block(a, b)
+	s.part.Block(a, c)
+	s.part.Block(b, c)
+	tk := s.invite(a)
+	if _, err := b.svc.ImportRecord(context.Background(), tk.rec); err != nil {
+		t.Fatal(err)
+	}
+	x := s.registerWith(a, "xenia", tk)
+	y := s.registerWith(b, "yuri", tk)
+	hx, hy := sha256.Sum256(x.proof), sha256.Sum256(y.proof)
+	winner, loser, ln := x, y, b
+	if bytes.Compare(hx[:], hy[:]) > 0 {
+		winner, loser, ln = y, x, a
+	}
+	zed := s.registerWith(ln, "zed", s.memberInvite(loser)) // the loser's node does not know yet that it lost
+	wen := s.registerWith(ln, "wen", s.memberInvite(zed))
+	s.part.Heal(a, c) // c learns one side first
+	time.Sleep(300 * time.Millisecond)
+	s.part.Heal(b, c)
+	time.Sleep(300 * time.Millisecond)
+	s.part.Heal(a, b)
+	ctx := context.Background()
+	disabledOrAbsent := func(n *simNode, u *account) bool {
+		x, _ := n.st.UserByID(ctx, u.id)
+		return x == nil || x.Revoked
+	}
+	eventually(t, "loser, its invitee and theirs disabled everywhere", func() bool {
+		return s.all(func(n *simNode) bool {
+			w, _ := n.st.UserByID(ctx, winner.id)
+			l, _ := n.st.UserByID(ctx, loser.id)
+			z, _ := n.st.UserByID(ctx, zed.id)
+			v, _ := n.st.UserByID(ctx, wen.id)
+			return w != nil && !w.Revoked && l != nil && l.Revoked && z != nil && z.Revoked && v != nil && v.Revoked
+		})
+	})
+	for _, n := range s.nodes {
+		for _, u := range []*account{zed, wen} {
+			if st := s.tryLogin(n, u); st != pb.Status_STATUS_REVOKED {
+				t.Fatalf("%s: login of %s invited through the loser: %v", n.label, u.name, st)
+			}
+		}
+	}
+	// the loser's (and its invitees') new invites are refused at registration on every node
+	for _, n := range s.nodes {
+		for _, inviter := range []*account{loser, zed} {
+			u, st, _ := s.tryRegister(n, "late", s.memberInvite(inviter))
+			if st == pb.Status_STATUS_OK || !disabledOrAbsent(n, u) || s.tryLogin(n, u) == pb.Status_STATUS_OK {
+				t.Fatalf("%s: a fresh invite of %s admitted an account: %v", n.label, inviter.name, st)
+			}
+		}
+	}
+}

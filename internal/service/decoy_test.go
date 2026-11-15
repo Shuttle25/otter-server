@@ -53,7 +53,7 @@ func TestBackupDecoy(t *testing.T) {
 	}
 
 	// any secret fails like a wrong password and is counted
-	if _, _, err := f1.svc.BackupFetch(ctx, "anna", make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := f1.svc.BackupFetch(ctx, "anna", "203.0.113.5", make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("fetch against a decoy: %v", err)
 	}
 	if n, _ := f1.svc.Store.AuthFailures(ctx, "anna", 0); n != 1 {

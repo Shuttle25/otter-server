@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
 	"testing"
 	"time"
 
@@ -54,13 +52,7 @@ func TestLoginReportsLowPrekeysWithOwner(t *testing.T) {
 	if _, err := n.svc.ImportRecord(ctx, manifestRec(t, n, 1)); err != nil {
 		t.Fatal(err)
 	}
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	sum := sha256.Sum256(secret)
-	inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-	if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-		t.Fatal(err)
-	}
+	secret := netInvite(t, n)
 	c := dial(t, n)
 	anna, req := registerReq(t, n, secret, "anna") // 11 one-time keys owned by this node
 	if st, msg := c.call("register", req, nil); st != pb.Status_STATUS_OK {

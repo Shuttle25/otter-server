@@ -40,6 +40,7 @@ type session struct {
 	cancel context.CancelFunc
 	out    chan *pb.PeerFrame
 	acks   chan struct{} // window slots
+	in     chan *pb.PeerBatch
 	start  time.Time
 
 	bytesIn    atomic.Int64 // payload bytes received (throttling detection, D73)
@@ -48,6 +49,7 @@ type session struct {
 	mu       sync.Mutex
 	caughtUp bool // peer's oplog fully received
 	cursor   int64
+	applyErr error // why applying the peer's batches stopped (ends the session)
 
 	// blob chunk RPC (D45)
 	reqID    atomic.Uint64
@@ -59,7 +61,7 @@ type session struct {
 func newSession(r *Replicator, c *websocket.Conn, peer, dialer []byte) *session {
 	ctx, cancel := context.WithCancel(r.baseCtx())
 	return &session{r: r, c: c, peer: peer, dialer: dialer, ctx: ctx, cancel: cancel,
-		out: make(chan *pb.PeerFrame, 16), acks: make(chan struct{}, window), start: time.Now(),
+		out: make(chan *pb.PeerFrame, 16), acks: make(chan struct{}, window), in: make(chan *pb.PeerBatch, window), start: time.Now(),
 		pending: map[uint64]chan *pb.PeerBlobChunk{}, serveSem: make(chan struct{}, 4)}
 }
 
@@ -75,12 +77,16 @@ func (s *session) run() error {
 	s.setCursor(cur) // Status() reads it concurrently
 	go s.writeLoop()
 	go s.keepalive()
+	go s.applyLoop()
 	s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Subscribe{Subscribe: &pb.PeerSubscribe{Cursor: cur}}})
 	started := false
 	for {
 		f, n, err := readFrame(s.ctx, s.c)
 		s.bytesIn.Add(int64(n))
 		if err != nil {
+			if aerr := s.applyError(); aerr != nil {
+				return aerr
+			}
 			return err
 		}
 		switch k := f.Kind.(type) {
@@ -90,8 +96,15 @@ func (s *session) run() error {
 				go s.serve(k.Subscribe.Cursor)
 			}
 		case *pb.PeerFrame_Batch:
-			if err := s.receive(k.Batch); err != nil {
-				return err
+			// Applied by applyLoop so this loop keeps reading: a catch-up batch may take longer to apply than
+			// peerPingTimeout, and the pong is only read here. An honest peer has at most `window` batches unacked.
+			select {
+			case s.in <- k.Batch:
+			case <-s.ctx.Done():
+				if aerr := s.applyError(); aerr != nil {
+					return aerr
+				}
+				return s.ctx.Err()
 			}
 		case *pb.PeerFrame_BatchAck:
 			select {
@@ -242,6 +255,26 @@ func (s *session) serve(from int64) {
 		idleSent = false
 	}
 }
+
+// applyLoop applies the peer's batches in arrival order; an error ends the session without advancing the cursor.
+func (s *session) applyLoop() {
+	for {
+		select {
+		case b := <-s.in:
+			if err := s.receive(b); err != nil {
+				s.mu.Lock()
+				s.applyErr = err
+				s.mu.Unlock()
+				s.close()
+				return
+			}
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *session) applyError() error { s.mu.Lock(); defer s.mu.Unlock(); return s.applyErr }
 
 func (s *session) receive(b *pb.PeerBatch) error {
 	for _, raw := range b.Records {

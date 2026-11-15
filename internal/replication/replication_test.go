@@ -158,30 +158,60 @@ type user struct {
 	priv ed25519.PrivateKey
 }
 
+// entry builds a version-1 directory entry of a fresh account invited by the network key (D100 chain in the entry).
 func (m *mesh) entry(name string) (*user, *pb.Record) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	id := keys.ID16(pub)
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	payload, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	inv := m.sign(pb.RecordType_INVITE, keys.ID16(m.netPub), payload, m.netPriv)
 	e := &pb.DirectoryEntry{UserId: id, Username: name, DisplayName: name, AccountPub: pub,
-		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true}
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true,
+		RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, inv, secret); err != nil {
+		m.t.Fatal(err)
+	}
 	return &user{id, priv}, m.sign(pb.RecordType_DIRECTORY_ENTRY, id, e, priv)
 }
 
-// register creates an account on node i through the service (bootstrap invite → Register).
+// inject stores an entry on one node as if it had arrived there (accounts cannot be imported, D100).
+func inject(t *testing.T, nd *tnode, rec *pb.Record) {
+	if _, err := nd.svc.ApplyReplicated(context.Background(), make([]byte, 16), rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// register creates an account on node i through the service (bootstrap invite → Register, D100 chain).
 func (m *mesh) register(i int, name string) *user {
 	ctx := context.Background()
 	nd := m.nodes[i]
 	secret := make([]byte, 32)
 	rand.Read(secret)
 	sum := sha256.Sum256(secret)
-	inv := m.sign(pb.RecordType_INVITE, keys.ID16(m.netPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, m.netPriv)
+	payload, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		m.t.Fatal(err)
+	}
+	inv := m.sign(pb.RecordType_INVITE, keys.ID16(m.netPub), payload, m.netPriv)
 	if _, err := nd.svc.ImportRecord(ctx, inv); err != nil {
 		m.t.Fatal(err)
 	}
-	u, dir := m.entry(name)
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	u := &user{keys.ID16(pub), priv}
+	e := &pb.DirectoryEntry{UserId: u.id, Username: name, DisplayName: name, AccountPub: pub,
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true,
+		RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, inv, secret); err != nil {
+		m.t.Fatal(err)
+	}
 	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 3,
 		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
 		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
-	req := &pb.RegisterRequest{InviteSecret: secret, DirectoryEntry: dir,
+	req := &pb.RegisterRequest{DirectoryEntry: m.sign(pb.RecordType_DIRECTORY_ENTRY, u.id, e, u.priv),
 		Prekeys:    m.sign(pb.RecordType_PREKEYS, u.id, pk, u.priv),
 		InviteUsed: m.sign(pb.RecordType_INVITE_USED, u.id, &pb.InviteUsed{InviteId: sum[:], UserId: u.id}, u.priv)}
 	if _, err := nd.svc.Register(ctx, req); err != nil {
@@ -325,12 +355,10 @@ func TestRetryLaterDoesNotLoseRecords(t *testing.T) {
 	a, b, c := m.nodes[0], m.nodes[1], m.nodes[2]
 	ctx := context.Background()
 	x, xEntry := m.entry("xenia")
-	if _, err := c.svc.ImportRecord(ctx, xEntry); err != nil { // X's entry exists only on C
-		t.Fatal(err)
-	}
+	inject(t, c, xEntry) // X's entry exists only on C
 	y, yEntry := m.entry("yuri")
 	for _, nd := range m.nodes {
-		nd.svc.ImportRecord(ctx, yEntry)
+		inject(t, nd, yEntry)
 	}
 	env := m.envelope(x, y)
 	var body pb.RecordBody

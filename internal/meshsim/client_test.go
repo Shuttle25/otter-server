@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
 )
 
 // client speaks the client protocol to one node (copy of the gateway test client).
@@ -137,9 +138,10 @@ func (c *client) envelopes() [][]byte {
 }
 
 type account struct {
-	id   []byte
-	priv ed25519.PrivateKey
-	name string
+	id    []byte
+	priv  ed25519.PrivateKey
+	name  string
+	proof []byte // invite_proof of the entry (D100)
 }
 
 func (s *sim) signAs(a *account, typ pb.RecordType, payload proto.Message) *pb.Record {
@@ -148,14 +150,32 @@ func (s *sim) signAs(a *account, typ pb.RecordType, payload proto.Message) *pb.R
 
 // register creates an account through node n's client API with a fresh bootstrap invite; owners get 11 one-time keys each.
 func (s *sim) register(n *simNode, name string, owners ...*simNode) *account {
+	return s.registerWith(n, name, s.invite(n), owners...)
+}
+
+// registerWith is register with a given invite.
+func (s *sim) registerWith(n *simNode, name string, tk *ticket, owners ...*simNode) *account {
+	a, st, msg := s.tryRegister(n, name, tk, owners...)
+	if st != pb.Status_STATUS_OK {
+		s.t.Fatalf("register %s: %v %s", name, st, msg)
+	}
+	return a
+}
+
+// tryRegister is registerWith returning the node's answer.
+func (s *sim) tryRegister(n *simNode, name string, tk *ticket, owners ...*simNode) (*account, pb.Status, string) {
 	if len(owners) == 0 {
 		owners = []*simNode{n}
 	}
-	secret := s.invite(n)
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	a := &account{id: keys.ID16(pub), priv: priv, name: name}
 	e := &pb.DirectoryEntry{UserId: a.id, Username: name, DisplayName: name, AccountPub: pub,
-		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true}
+		IdentityPub: make([]byte, 33), IdentitySig: make([]byte, 64), Version: 1, CanInvite: true,
+		RegisteredMs: time.Now().UnixMilli()}
+	if err := records.Redeem(e, tk.rec, tk.secret); err != nil {
+		s.t.Fatal(err)
+	}
+	a.proof = e.InviteProof
 	pk := &pb.PreKeys{DeviceId: 1, RegistrationId: 4,
 		SignedPrekey: &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 33), Signature: make([]byte, 64)},
 		KyberPrekey:  &pb.SignedPreKey{Id: 1, PublicKey: make([]byte, 1569), Signature: make([]byte, 64)}}
@@ -166,14 +186,14 @@ func (s *sim) register(n *simNode, name string, owners ...*simNode) *account {
 			id++
 		}
 	}
-	sum := sha256.Sum256(secret)
+	sum := sha256.Sum256(tk.secret)
 	c := s.dial(n)
 	defer c.close()
-	c.mustCall("register", &pb.RegisterRequest{InviteSecret: secret,
+	st, msg := c.call("register", &pb.RegisterRequest{
 		DirectoryEntry: s.signAs(a, pb.RecordType_DIRECTORY_ENTRY, e),
 		Prekeys:        s.signAs(a, pb.RecordType_PREKEYS, pk),
 		InviteUsed:     s.signAs(a, pb.RecordType_INVITE_USED, &pb.InviteUsed{InviteId: sum[:], UserId: a.id})}, nil)
-	return a
+	return a, st, msg
 }
 
 // login dials n and logs a in.

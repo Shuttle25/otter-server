@@ -309,6 +309,8 @@ type DirectoryEntry struct {
 	Version       uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
 	CanInvite     bool                   `protobuf:"varint,8,opt,name=can_invite,json=canInvite,proto3" json:"can_invite,omitempty"`
 	RegisteredMs  int64                  `protobuf:"varint,9,opt,name=registered_ms,json=registeredMs,proto3" json:"registered_ms,omitempty"` // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
+	InviteRecord  []byte                 `protobuf:"bytes,10,opt,name=invite_record,json=inviteRecord,proto3" json:"invite_record,omitempty"` // M9.2 (D100): the inviter's signed INVITE Record (serialized); copied into later versions
+	InviteProof   []byte                 `protobuf:"bytes,11,opt,name=invite_proof,json=inviteProof,proto3" json:"invite_proof,omitempty"`    // M9.2 (D100): Ed25519 by the invite's redeem key over RedeemMessage(invite_id, user_id, account_pub)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -404,6 +406,20 @@ func (x *DirectoryEntry) GetRegisteredMs() int64 {
 		return x.RegisteredMs
 	}
 	return 0
+}
+
+func (x *DirectoryEntry) GetInviteRecord() []byte {
+	if x != nil {
+		return x.InviteRecord
+	}
+	return nil
+}
+
+func (x *DirectoryEntry) GetInviteProof() []byte {
+	if x != nil {
+		return x.InviteProof
+	}
+	return nil
 }
 
 type Revocation struct {
@@ -522,6 +538,7 @@ type Invite struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InviteId      []byte                 `protobuf:"bytes,1,opt,name=invite_id,json=inviteId,proto3" json:"invite_id,omitempty"` // SHA-256(secret)
 	ExpiresMs     int64                  `protobuf:"varint,2,opt,name=expires_ms,json=expiresMs,proto3" json:"expires_ms,omitempty"`
+	RedeemPub     []byte                 `protobuf:"bytes,3,opt,name=redeem_pub,json=redeemPub,proto3" json:"redeem_pub,omitempty"` // M9.2 (D100): Ed25519 public key of HKDF-SHA256(secret, "otter/invite-redeem/v1")
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -568,6 +585,13 @@ func (x *Invite) GetExpiresMs() int64 {
 		return x.ExpiresMs
 	}
 	return 0
+}
+
+func (x *Invite) GetRedeemPub() []byte {
+	if x != nil {
+		return x.RedeemPub
+	}
+	return nil
 }
 
 type InviteUsed struct {
@@ -1281,7 +1305,7 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"created_ms\x18\x04 \x01(\x03R\tcreatedMs\x12\x1d\n" +
 	"\n" +
 	"expires_ms\x18\x05 \x01(\x03R\texpiresMs\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\xad\x02\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\"\xf5\x02\n" +
 	"\x0eDirectoryEntry\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +
@@ -1293,7 +1317,10 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\aversion\x18\a \x01(\x04R\aversion\x12\x1d\n" +
 	"\n" +
 	"can_invite\x18\b \x01(\bR\tcanInvite\x12#\n" +
-	"\rregistered_ms\x18\t \x01(\x03R\fregisteredMs\"=\n" +
+	"\rregistered_ms\x18\t \x01(\x03R\fregisteredMs\x12#\n" +
+	"\rinvite_record\x18\n" +
+	" \x01(\fR\finviteRecord\x12!\n" +
+	"\finvite_proof\x18\v \x01(\fR\vinviteProof\"=\n" +
 	"\n" +
 	"Revocation\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x16\n" +
@@ -1302,11 +1329,13 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1d\n" +
 	"\n" +
 	"can_invite\x18\x02 \x01(\bR\tcanInvite\x12\x18\n" +
-	"\aversion\x18\x03 \x01(\x04R\aversion\"D\n" +
+	"\aversion\x18\x03 \x01(\x04R\aversion\"c\n" +
 	"\x06Invite\x12\x1b\n" +
 	"\tinvite_id\x18\x01 \x01(\fR\binviteId\x12\x1d\n" +
 	"\n" +
-	"expires_ms\x18\x02 \x01(\x03R\texpiresMs\"B\n" +
+	"expires_ms\x18\x02 \x01(\x03R\texpiresMs\x12\x1d\n" +
+	"\n" +
+	"redeem_pub\x18\x03 \x01(\fR\tredeemPub\"B\n" +
 	"\n" +
 	"InviteUsed\x12\x1b\n" +
 	"\tinvite_id\x18\x01 \x01(\fR\binviteId\x12\x17\n" +

@@ -126,3 +126,60 @@ func TestMaybePushCall(t *testing.T) {
 		t.Fatalf("online skip not logged: %s", logs.String())
 	}
 }
+
+// D108: a member flooding "calls" gets 8 high-priority wake-ups per recipient device and minute; the rest are
+// ordinary coalesced wake-ups. Other callers are not affected, and the budget recovers.
+func TestCallPushBudget(t *testing.T) {
+	self := []byte("bbbbbbbbbbbbbbbb")
+	now := time.UnixMilli(1_800_000_000_000)
+	w := &wakeRec{}
+	s := &Service{NodeID: self, Waker: w, Now: func() time.Time { return now }, Notify: nopNotifier{},
+		manifest: &pb.Manifest{Nodes: []*pb.NodeInfo{{NodeId: self, PushCapable: true}}}}
+	call := func(from string) {
+		body := &pb.RecordBody{Author: []byte(from), CreatedMs: now.UnixMilli(), ExpiresMs: now.Add(2 * time.Minute).UnixMilli()}
+		s.maybePush(context.Background(), body, &pb.Envelope{Urgent: true, Recipients: []*pb.Recipient{{User: []byte("bob"), Device: 1}}}, nil)
+	}
+	for i := 0; i < 30; i++ {
+		call("mallory")
+	}
+	if len(w.calls) != maxCallWakesPerPair || len(w.woke) != 30-maxCallWakesPerPair {
+		t.Fatalf("call wakes %d, message wakes %d", len(w.calls), len(w.woke))
+	}
+	call("anna")
+	if len(w.calls) != maxCallWakesPerPair+1 {
+		t.Fatal("another caller was throttled by mallory")
+	}
+	now = now.Add(callWakeWindow)
+	call("mallory")
+	if len(w.calls) != maxCallWakesPerPair+2 {
+		t.Fatal("budget did not recover")
+	}
+}
+
+// D108: an envelope dated more than MaxClockSkew ahead (only a replicated one can be: local submits refuse it)
+// never pushes, so a future date cannot keep a phone ringing.
+func TestNoPushForFutureEnvelopes(t *testing.T) {
+	self := []byte("bbbbbbbbbbbbbbbb")
+	now := time.UnixMilli(1_800_000_000_000)
+	w := &wakeRec{}
+	s := &Service{NodeID: self, Waker: w, Now: func() time.Time { return now }, Notify: nopNotifier{},
+		manifest: &pb.Manifest{Nodes: []*pb.NodeInfo{{NodeId: self, PushCapable: true}}}}
+	for _, ttl := range []int64{120_000, 0} { // a call and an ordinary urgent message
+		ahead := now.Add(10 * time.Minute).UnixMilli()
+		exp := int64(0)
+		if ttl > 0 {
+			exp = ahead + ttl
+		}
+		s.maybePush(context.Background(), &pb.RecordBody{Author: []byte("mallory"), CreatedMs: ahead, ExpiresMs: exp},
+			&pb.Envelope{Urgent: true, Recipients: []*pb.Recipient{{User: []byte("bob"), Device: 1}}}, nil)
+	}
+	if len(w.calls)+len(w.woke) != 0 {
+		t.Fatal("future-dated envelope pushed")
+	}
+	near := now.Add(MaxClockSkew).UnixMilli() // within the allowed skew: still rings
+	s.maybePush(context.Background(), &pb.RecordBody{Author: []byte("anna"), CreatedMs: near, ExpiresMs: near + 120_000},
+		&pb.Envelope{Urgent: true, Recipients: []*pb.Recipient{{User: []byte("bob"), Device: 1}}}, nil)
+	if len(w.calls) != 1 {
+		t.Fatal("a call within the clock skew did not ring")
+	}
+}

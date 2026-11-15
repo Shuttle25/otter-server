@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -18,7 +19,17 @@ const (
 	PrekeyKyber   = 2
 	PrekeyOneTime = 3
 	tombstoneTTL  = 30 * 24 * time.Hour
+	// MaxLiveOneTime: unconsumed one-time prekeys kept per (user, device, owner node); the newest ids win (C8, D107).
+	MaxLiveOneTime = 200
+	// MaxLiveInvites: unexpired invites per author kept on a node (C8, D107). Ranked by (created_ms, record_key), so
+	// every node keeps the same ones whatever order they arrive in.
+	MaxLiveInvites = 50
+	// inviteGraceMs: an invite record is deleted this long after its expiry (janitor); one arriving later is dropped.
+	inviteGraceMs = int64(24 * 60 * 60 * 1000)
 )
+
+// ErrInviteBudget: the author already has MaxLiveInvites unexpired invites ranked before this one (local submit).
+var ErrInviteBudget = fmt.Errorf("%w: %d unexpired invites", ErrOverLimit, MaxLiveInvites)
 
 func boolInt(b bool) int {
 	if b {
@@ -39,9 +50,12 @@ func raiseInstall(ctx context.Context, tx *sql.Tx, user []byte, device, rid uint
 	switch {
 	case exists && inst < cur:
 		return false, nil // an older install (a phone that was replaced): its keys must not be handed out
-	case exists && inst > cur:
-		if _, err := tx.ExecContext(ctx, `DELETE FROM prekeys WHERE user_id=? AND device_id=?`, user, device); err != nil {
-			return false, err
+	case exists && inst > cur: // the new install restarts its key ids: the old floors go with the old keys (D107)
+		for _, q := range []string{`DELETE FROM prekeys WHERE user_id=? AND device_id=?`,
+			`DELETE FROM prekey_floor WHERE user_id=? AND device_id=?`} {
+			if _, err := tx.ExecContext(ctx, q, user, device); err != nil {
+				return false, err
+			}
 		}
 	}
 	_, err = tx.ExecContext(ctx,
@@ -69,9 +83,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := proto.Unmarshal(b.Payload, &i); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO invites(invite_id,inviter,expires_ms) VALUES(?,?,?)`,
-			i.InviteId, b.Author, i.ExpiresMs)
-		return err
+		return applyInvite(ctx, tx, it, &i, now)
 
 	case pb.RecordType_INVITE_USED:
 		var u pb.InviteUsed
@@ -114,14 +126,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := put(PrekeyKyber, p.KyberPrekey); err != nil {
 			return err
 		}
-		for _, k := range p.OneTime {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO prekeys(user_id,device_id,key_id,kind,owner_node,public) VALUES(?,?,?,?,?,?)`,
-				b.Author, p.DeviceId, k.Id, PrekeyOneTime, k.OwnerNode, k.PublicKey); err != nil {
-				return err
-			}
-		}
-		return nil
+		return putOneTime(ctx, tx, b.Author, &p)
 
 	case pb.RecordType_INSTALL: // C14: newest (installed_ms, registration_id) per user; raises device 1 like PREKEYS
 		var in pb.Install
@@ -156,6 +161,23 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 	case pb.RecordType_PUSH_TOKEN: // D60: newest created_ms per (user, device) wins, ties by record key
 		var p pb.PushToken
 		if err := proto.Unmarshal(b.Payload, &p); err != nil {
+			return err
+		}
+		// C8, D107: only the newest record per author is stored (device is always 1). The newest record is never
+		// deleted here, so an older one (lagging peer, hostile replay) is always recognised, also after the row was
+		// dropped (FCM UNREGISTERED) or holds a withdrawn token (D94).
+		var newer bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM records WHERE type=? AND author=? AND record_key<>?
+			AND (created_ms>? OR (created_ms=? AND record_key>?)))`,
+			int32(pb.RecordType_PUSH_TOKEN), b.Author, it.key, b.CreatedMs, b.CreatedMs, it.key).Scan(&newer); err != nil {
+			return err
+		}
+		if newer {
+			_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE type=? AND author=? AND record_key<>?`,
+			int32(pb.RecordType_PUSH_TOKEN), b.Author, it.key); err != nil {
 			return err
 		}
 		var curCreated int64
@@ -332,6 +354,20 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=? AND type=?`, d.Target, int32(pb.RecordType_ANNOUNCEMENT))
 		return err
 
+	case pb.RecordType_REVOCATION: // network-signed (D99)
+		var r pb.Revocation
+		if err := proto.Unmarshal(b.Payload, &r); err != nil {
+			return err
+		}
+		return applyRevocation(ctx, tx, b, &r)
+
+	case pb.RecordType_INVITE_RIGHTS: // network-signed (D99, D101)
+		var r pb.InviteRights
+		if err := proto.Unmarshal(b.Payload, &r); err != nil {
+			return err
+		}
+		return applyInviteRights(ctx, tx, b, &r)
+
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil {
@@ -339,6 +375,74 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO manifest(version,raw) VALUES(?,?)`, m.Version, it.raw)
 		return err
+	}
+	return nil
+}
+
+// applyInvite stores an INVITE under the per-author budget (C8, D107), for local and replicated records alike. Of an
+// author's unexpired invites the first MaxLiveInvites by (created_ms, record_key) are kept: a local one past the rank
+// is refused, a replicated one dropped, and an unused one pushed past the rank by a new arrival is evicted (used ones
+// stay for the single-use check). An invite that expired more than a day ago (a replay after the janitor) is dropped.
+func applyInvite(ctx context.Context, tx *sql.Tx, it item, i *pb.Invite, now int64) error {
+	b := it.body
+	if i.ExpiresMs < now-inviteGraceMs {
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+		return err
+	}
+	var ahead int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites WHERE inviter=? AND expires_ms>?
+		AND (created_ms<? OR (created_ms=? AND COALESCE(record_key, x'')<?))`,
+		b.Author, now, b.CreatedMs, b.CreatedMs, it.key).Scan(&ahead); err != nil {
+		return err
+	}
+	if ahead >= MaxLiveInvites {
+		if !it.fromPeer {
+			return ErrInviteBudget
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key) // past the rank: dropped
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO invites(invite_id,inviter,expires_ms,created_ms,record_key) VALUES(?,?,?,?,?)`,
+		i.InviteId, b.Author, i.ExpiresMs, b.CreatedMs, it.key)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 { // the id is taken: a second record for it would escape the budget
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+		return err
+	}
+	// legacy rows (no record_key) rank first and are never evicted; the OFFSET counts every unexpired row
+	rows, err := tx.QueryContext(ctx, `SELECT invite_id, record_key, used_by IS NOT NULL FROM invites WHERE inviter=? AND expires_ms>?
+		ORDER BY created_ms, COALESCE(record_key, x'') LIMIT -1 OFFSET ?`, b.Author, now, MaxLiveInvites)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id, key []byte
+		used    bool
+	}
+	var past []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.key, &r.used); err != nil {
+			rows.Close()
+			return err
+		}
+		past = append(past, r)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range past {
+		if r.used || r.key == nil {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM invites WHERE invite_id=?`, r.id); err != nil {
+			return err
+		}
+		if err := compact(ctx, tx, r.key, now); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -396,24 +500,34 @@ func wins(createdA int64, idA []byte, createdB int64, idB []byte) bool {
 }
 
 // applyDirectoryEntry upserts the users row. A username clash fails for local submissions; for replicated
-// entries (and local updates of a user who already lost that clash) the lower (registration time, user_id) keeps the
-// name and the other becomes name#<hex>. Registration time = registered_ms, or the entry's created_ms when 0 (D40).
+// entries (and local updates of a user who already lost that clash) the lower (rank, user_id) keeps the name and the
+// other becomes name#<hex>. The rank is fixed when the account is admitted and never changes afterwards (D103): the
+// INVITE's created_ms (signed by the inviter), or for an account without a chain (founding member) registered_ms, or
+// the entry's created_ms when 0 (D40). Every username that ever clashed is remembered for restores.
 func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, created, now int64) error {
-	rank := created
-	if e.RegisteredMs > 0 {
-		rank = e.RegisteredMs
-	}
 	var cur uint64
 	var curName string
 	var curConflict int
-	err := tx.QueryRowContext(ctx, `SELECT version, username, username_conflict FROM users WHERE user_id=?`, e.UserId).
-		Scan(&cur, &curName, &curConflict)
+	var curRank int64
+	err := tx.QueryRowContext(ctx, `SELECT version, username, username_conflict, entry_created_ms FROM users WHERE user_id=?`, e.UserId).
+		Scan(&cur, &curName, &curConflict, &curRank)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if exists && e.Version <= cur {
 		return nil // older or same version: stored as a record, users row unchanged
+	}
+	// D103: later versions cannot move the rank, whatever registered_ms they claim.
+	rank := curRank
+	if !exists {
+		rank = created
+		if e.RegisteredMs > 0 {
+			rank = e.RegisteredMs
+		}
+		if it.adm != nil && it.adm.InviteID != nil {
+			rank = it.adm.RankMs
+		}
 	}
 	// an update by a user who already lost this clash is ranked like a replicated entry
 	lostBefore := exists && curConflict != 0 && strings.HasPrefix(curName, e.Username+"#")
@@ -427,22 +541,62 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 		return err
 	case !it.fromPeer && !lostBefore:
 		return ErrUsernameTaken
-	case wins(rank, e.UserId, ownerCreated, owner):
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
-			conflictName(e.Username, owner), owner); err != nil {
+	default:
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO username_clashes(username) VALUES(?)`, e.Username); err != nil {
 			return err
 		}
-	default:
-		name, conflict = conflictName(e.Username, e.UserId), 1
+		if wins(rank, e.UserId, ownerCreated, owner) {
+			if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, username_conflict=1 WHERE user_id=?`,
+				conflictName(e.Username, owner), owner); err != nil {
+				return err
+			}
+		} else {
+			name, conflict = conflictName(e.Username, e.UserId), 1
+		}
 	}
 	if !exists {
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO users(user_id,username,account_pub,entry_key,version,can_invite,created_ms,entry_created_ms,username_conflict)
-			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			e.UserId, name, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now, rank, conflict)
-		return err
+		return insertUser(ctx, tx, it, e, name, conflict, rank, now)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, entry_created_ms=?, username_conflict=? WHERE user_id=?`,
-		name, it.key, e.Version, rank, conflict, e.UserId)
+	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, username_conflict=? WHERE user_id=?`,
+		name, it.key, e.Version, conflict, e.UserId)
 	return err
+}
+
+// putOneTime stores a PREKEYS record's one-time keys under the budget (C8, D107), for local and replicated records
+// alike: ids below the (user, device, owner) floor were consumed and forgotten here and are never stored again, and
+// only the newest MaxLiveOneTime unconsumed ids per owner stay live (older ones are marked consumed).
+func putOneTime(ctx context.Context, tx *sql.Tx, author []byte, p *pb.PreKeys) error {
+	floors := map[string]int64{}
+	touched := map[string][]byte{}
+	for _, k := range p.OneTime {
+		o := string(k.OwnerNode)
+		floor, ok := floors[o]
+		if !ok {
+			err := tx.QueryRowContext(ctx, `SELECT floor_id FROM prekey_floor WHERE user_id=? AND device_id=? AND owner_node=?`,
+				author, p.DeviceId, k.OwnerNode).Scan(&floor)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			floors[o] = floor
+		}
+		if int64(k.Id) < floor {
+			continue // consumed and forgotten here: a replayed record must not hand it out again
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO prekeys(user_id,device_id,key_id,kind,owner_node,public) VALUES(?,?,?,?,?,?)`,
+			author, p.DeviceId, k.Id, PrekeyOneTime, k.OwnerNode, k.PublicKey); err != nil {
+			return err
+		}
+		touched[o] = k.OwnerNode
+	}
+	for _, owner := range touched {
+		if _, err := tx.ExecContext(ctx, `UPDATE prekeys SET consumed=1
+			WHERE user_id=? AND device_id=? AND kind=? AND owner_node=? AND consumed=0 AND key_id NOT IN
+			(SELECT key_id FROM prekeys WHERE user_id=? AND device_id=? AND kind=? AND owner_node=? AND consumed=0
+			 ORDER BY key_id DESC LIMIT ?)`,
+			author, p.DeviceId, PrekeyOneTime, owner, author, p.DeviceId, PrekeyOneTime, owner, MaxLiveOneTime); err != nil {
+			return err
+		}
+	}
+	return nil
 }

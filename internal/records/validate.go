@@ -360,16 +360,23 @@ func checkBlobMeta(b *pb.RecordBody) error {
 	return nil
 }
 
-// checkBackupMeta: a user's password backup pointer (D50).
+// checkBackupMeta: a user's password backup pointer (D50), or a decoy (version 0, C20): no blob, size 0 and blob key
+// author ‖ 16 zero bytes, so backup.auth answers alike for members with and without a backup.
 func checkBackupMeta(b *pb.RecordBody) error {
 	var m pb.BackupMeta
 	if err := proto.Unmarshal(b.Payload, &m); err != nil {
 		return ErrBadPayload
 	}
 	switch {
-	case b.ExpiresMs != 0, m.Version == 0, len(m.Salt) != 16, len(m.AuthVerifier) != 32,
+	case b.ExpiresMs != 0, len(m.Salt) != 16, len(m.AuthVerifier) != 32,
 		m.KdfMKib < 19456 || m.KdfMKib > 262144, m.KdfT < 1 || m.KdfT > 10, m.KdfP < 1 || m.KdfP > 4,
-		len(m.BlobKey) != 32 || !bytes.Equal(m.BlobKey[:16], b.Author), m.Size == 0 || m.Size > MaxBlobSize:
+		len(m.BlobKey) != 32 || !bytes.Equal(m.BlobKey[:16], b.Author):
+		return ErrBadPayload
+	case m.Version == 0:
+		if m.Size != 0 || !bytes.Equal(m.BlobKey[16:], make([]byte, 16)) {
+			return ErrBadPayload
+		}
+	case m.Size == 0 || m.Size > MaxBlobSize:
 		return ErrBadPayload
 	}
 	return nil

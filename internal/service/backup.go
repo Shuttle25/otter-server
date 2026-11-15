@@ -25,7 +25,7 @@ const (
 	MaxPersistentBlobs = 3  // live backup blobs per user (D50)
 )
 
-// fakeSalt is a stable per-node answer for usernames without a backup, so backup.auth does not reveal which exist.
+// fakeSalt answers backup.auth for unknown usernames (node-local; members publish a decoy BACKUP_META instead, C20).
 func (s *Service) fakeSalt(username string) []byte {
 	k := sha256.Sum256(append([]byte("otter/fake-salt/v1"), s.NodeKeyPriv...))
 	m := hmac.New(sha256.New, k[:])
@@ -93,6 +93,9 @@ func (s *Service) BackupFetch(ctx context.Context, username string, secret []byt
 	if err != nil {
 		return nil, nil, err
 	}
+	if m.Version == 0 { // a decoy (C20): no secret opens it; counted like a wrong password
+		return nil, nil, fail()
+	}
 	v := sha256.Sum256(secret)
 	if len(secret) != 32 || subtle.ConstantTimeCompare(v[:], m.AuthVerifier) != 1 {
 		return nil, nil, fail()
@@ -126,6 +129,10 @@ func (s *Service) PublishBackup(ctx context.Context, user []byte, rec *pb.Record
 	var m pb.BackupMeta
 	if err := proto.Unmarshal(body.Payload, &m); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	if m.Version == 0 { // a decoy has no blob (C20)
+		_, err = s.Submit(ctx, user, rec, pb.RecordType_BACKUP_META)
+		return err
 	}
 	blob, err := s.Store.Blob(ctx, m.BlobKey)
 	if errors.Is(err, store.ErrNotFound) {

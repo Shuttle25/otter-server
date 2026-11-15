@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -59,6 +60,56 @@ func (s *Store) Blob(ctx context.Context, key []byte) (*Blob, error) {
 		b.Readers = append(b.Readers, u)
 	}
 	return b, rows.Err()
+}
+
+// ErrOverLimit: a per-author limit would be exceeded (blob quota, backup blobs).
+var ErrOverLimit = errors.New("over the limit")
+
+// BlobLimits are checked when a client creates a blob (D44, D50).
+type BlobLimits struct {
+	UserQuota     int64 // live blob bytes per author
+	MaxPersistent int   // live persistent (backup) blobs per author
+}
+
+// ApplyBlobMeta stores a client's BLOB_META only if its author stays within lim, counted in the same write
+// transaction as the insert, so parallel creates cannot overshoot (C9, D106). A meta already stored passes unchecked.
+// Replicated metas do not come here: they are signed by the author and were checked by their origin node.
+func (s *Store) ApplyBlobMeta(ctx context.Context, rec *pb.Record, body *pb.RecordBody, origin []byte,
+	size int64, persistent bool, lim BlobLimits) (bool, error) {
+	it, err := toItem(Item{Record: rec, Body: body}, origin)
+	if err != nil {
+		return false, err
+	}
+	check := func(ctx context.Context, tx *sql.Tx) error {
+		var x int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM oplog WHERE record_key=?`, it.key).Scan(&x); err == nil {
+			return nil // idempotent re-create
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if persistent {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM blobs WHERE owner=? AND persistent=1`, body.Author).Scan(&n); err != nil {
+				return err
+			}
+			if n >= lim.MaxPersistent {
+				return fmt.Errorf("%w: %d backup blobs in flight", ErrOverLimit, n)
+			}
+		}
+		var used int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(size),0) FROM blobs WHERE owner=?`, body.Author).Scan(&used); err != nil {
+			return err
+		}
+		if used+size > lim.UserQuota {
+			return fmt.Errorf("%w: %d of %d bytes in use", ErrOverLimit, used, lim.UserQuota)
+		}
+		return nil
+	}
+	r, err := s.submit(ctx, &applyReq{items: []item{it}, check: check})
+	if err != nil {
+		return false, err
+	}
+	return r.applied[0], nil
 }
 
 // BlobGone reports whether the blob was deleted (fetched by every reader or expired) and is tombstoned.

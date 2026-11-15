@@ -36,6 +36,7 @@ type item struct {
 type applyReq struct {
 	items []item
 	fn    func(context.Context, *sql.Tx) error
+	check func(context.Context, *sql.Tx) error // runs before items, same savepoint (limits, D106)
 	res   chan applyRes
 }
 
@@ -227,7 +228,13 @@ func runReq(ctx context.Context, tx *sql.Tx, r *applyReq, now int64) applyRes {
 	if r.fn != nil {
 		err = r.fn(ctx, tx)
 	} else {
+		if r.check != nil {
+			err = r.check(ctx, tx)
+		}
 		for _, it := range r.items {
+			if err != nil {
+				break
+			}
 			seq, applied, e := applyOne(ctx, tx, it, now)
 			if e != nil {
 				err = e

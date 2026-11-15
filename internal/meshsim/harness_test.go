@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -381,16 +380,25 @@ func freeTCPPort(t *testing.T) int {
 
 func (s *sim) url(n *simNode) string { return "ws://" + n.addr + path }
 
-// invite imports a network-signed bootstrap invite on node n and returns its secret.
-func (s *sim) invite(n *simNode) []byte {
+// ticket is an invite as the inviter's app hands it over: the signed INVITE and the secret from the link.
+type ticket struct {
+	secret []byte
+	rec    *pb.Record
+}
+
+// invite imports a network-signed bootstrap invite on node n and returns it.
+func (s *sim) invite(n *simNode) *ticket {
 	secret := make([]byte, 32)
 	rand.Read(secret)
-	sum := sha256.Sum256(secret)
-	inv := s.sign(pb.RecordType_INVITE, keys.ID16(s.netPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, s.netPriv)
-	if _, err := n.svc.ImportRecord(context.Background(), inv); err != nil {
+	inv, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
 		s.t.Fatal(err)
 	}
-	return secret
+	tk := &ticket{secret: secret, rec: s.sign(pb.RecordType_INVITE, keys.ID16(s.netPub), inv, s.netPriv)}
+	if _, err := n.svc.ImportRecord(context.Background(), tk.rec); err != nil {
+		s.t.Fatal(err)
+	}
+	return tk
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {

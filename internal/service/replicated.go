@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/store"
 )
 
 // ApplyReplicated validates and applies a record received from peer `from`.
@@ -36,7 +37,13 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 	case err != nil:
 		return false, invalid(err)
 	}
-	_, applied, err := s.Store.ApplyReplicated(ctx, rec, body, from)
+	var adm *store.Admission
+	if body.Type == pb.RecordType_DIRECTORY_ENTRY {
+		if adm, err = s.admitIfNew(ctx, body); err != nil {
+			return false, err // INVALID: skipped by the peer session; RETRY_LATER: the inviter's entry comes first
+		}
+	}
+	_, applied, err := s.Store.ApplyReplicatedItem(ctx, store.Item{Record: rec, Body: body, Admission: adm}, from)
 	if err != nil || !applied {
 		return applied, err
 	}

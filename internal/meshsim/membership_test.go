@@ -1,6 +1,7 @@
 package meshsim
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/service"
 	"ottermsg/server/internal/turnsrv"
 )
@@ -82,11 +84,12 @@ func TestRevocationReplicatesAndBlocks(t *testing.T) {
 	if _, err := turnClient(t, "udp", c.turnAddr, &creds); err == nil {
 		t.Fatal("TURN allocated with the revoked user's earlier credentials")
 	}
-	var batch pb.RecordBatch
-	annaB.mustCall("directory.sync", &pb.Empty{}, &batch)
-	if countType(&batch, pb.RecordType_REVOCATION) != 2 || countType(&batch, pb.RecordType_DIRECTORY_ENTRY) != 2 {
-		t.Fatal("directory.sync must carry the entries and the revocations")
-	}
+	// the second revocation may still be on its way to b ("revoked everywhere" waits for the first)
+	eventually(t, "directory.sync carries the entries and both revocations", func() bool {
+		var batch pb.RecordBatch
+		annaB.mustCall("directory.sync", &pb.Empty{}, &batch)
+		return countType(&batch, pb.RecordType_REVOCATION) == 2 && countType(&batch, pb.RecordType_DIRECTORY_ENTRY) == 2
+	})
 }
 
 // Threat model: a hostile node cannot revoke (or un-revoke) a member; its records are refused everywhere.
@@ -144,4 +147,45 @@ func countType(b *pb.RecordBatch, t pb.RecordType) int {
 		}
 	}
 	return n
+}
+
+// Limit 3: a hostile peer cannot introduce an account: neither self-signed nor with a chain copied from a real one.
+func TestHostilePeerCannotAdmit(t *testing.T) {
+	s := newSim(t, "a", "b")
+	a, b := s.node("a"), s.node("b")
+	anna := s.register(a, "anna")
+	eventually(t, "anna on b", func() bool { return b.knows(anna) })
+	ctx := context.Background()
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	mal := &account{id: keys.ID16(pub), priv: priv, name: "mallory"}
+	e := &pb.DirectoryEntry{UserId: mal.id, Username: "mallory", DisplayName: "Мама", AccountPub: pub, IdentityPub: make([]byte, 33),
+		IdentitySig: make([]byte, 64), Version: 1, RegisteredMs: time.Now().UnixMilli()}
+	if _, err := b.svc.ApplyReplicated(ctx, a.id, s.signAs(mal, pb.RecordType_DIRECTORY_ENTRY, e)); !errors.Is(err, service.ErrInvalid) {
+		t.Fatalf("self-signed account: %v", err)
+	}
+	ua, _ := a.st.UserByID(ctx, anna.id)
+	var r pb.Record
+	var body pb.RecordBody
+	var ae pb.DirectoryEntry
+	if proto.Unmarshal(ua.EntryRaw, &r) != nil || proto.Unmarshal(r.Body, &body) != nil || proto.Unmarshal(body.Payload, &ae) != nil {
+		t.Fatal("anna's entry")
+	}
+	if len(ae.InviteProof) == 0 || !bytes.Equal(ae.InviteProof, anna.proof) {
+		t.Fatal("anna's entry carries no chain")
+	}
+	e.InviteRecord, e.InviteProof = ae.InviteRecord, ae.InviteProof
+	if _, err := b.svc.ApplyReplicated(ctx, a.id, s.signAs(mal, pb.RecordType_DIRECTORY_ENTRY, e)); !errors.Is(err, service.ErrInvalid) {
+		t.Fatalf("stolen chain: %v", err)
+	}
+	if b.knows(mal) || s.tryLogin(b, mal) == pb.Status_STATUS_OK {
+		t.Fatal("hostile account admitted")
+	}
+	// a legitimate account registered on b with anna's invite still reaches a
+	inv, err := records.InvitePayload(bytes.Repeat([]byte{7}, 32), time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := &ticket{secret: bytes.Repeat([]byte{7}, 32), rec: s.signAs(anna, pb.RecordType_INVITE, inv)}
+	vera := s.registerWith(b, "vera", tk) // b registers it without having seen the INVITE (D100)
+	eventually(t, "vera on a", func() bool { return a.knows(vera) })
 }

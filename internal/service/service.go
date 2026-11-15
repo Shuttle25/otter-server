@@ -322,6 +322,9 @@ func (s *Service) ImportRecord(ctx context.Context, rec *pb.Record) (bool, error
 	if err != nil {
 		return false, invalid(err)
 	}
+	if body.Type == pb.RecordType_DIRECTORY_ENTRY {
+		return false, fmt.Errorf("%w: accounts arrive by registration or replication", ErrInvalid)
+	}
 	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
 	if err == nil && applied {
 		s.afterApply(ctx, body, nil)

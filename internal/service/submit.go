@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"slices"
 
@@ -42,6 +43,10 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 			}
 		}
 	case pb.RecordType_INVITE:
+		var inv pb.Invite
+		if err := proto.Unmarshal(body.Payload, &inv); err != nil || len(inv.RedeemPub) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("%w: invite without a redeem key (update the app)", ErrInvalid)
+		}
 		if err := s.inviterAllowed(ctx, user); err != nil {
 			return nil, err
 		}

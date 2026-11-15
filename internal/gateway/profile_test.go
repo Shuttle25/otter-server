@@ -2,27 +2,15 @@ package gateway
 
 import (
 	"bytes"
-	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
-	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 )
 
 func TestDirectoryUpdate(t *testing.T) {
 	n := startNode(t)
-	ctx := context.Background()
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	sum := sha256.Sum256(secret)
-	inv := sign(t, pb.RecordType_INVITE, keys.ID16(n.svc.NetworkPub), &pb.Invite{InviteId: sum[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, n.netPriv)
-	if _, err := n.svc.ImportRecord(ctx, inv); err != nil {
-		t.Fatal(err)
-	}
+	secret := netInvite(t, n)
 	ca := dial(t, n)
 	anna, req := registerReq(t, n, secret, "anna")
 	if st, msg := ca.call("register", req, nil); st != pb.Status_STATUS_OK {
@@ -61,10 +49,8 @@ func TestDirectoryUpdate(t *testing.T) {
 	}
 
 	// someone else's entry: boris (invited by anna) re-signs his own v2; anna's session submits it
-	s2 := make([]byte, 32)
-	rand.Read(s2)
-	sum2 := sha256.Sum256(s2)
-	invRec := sign(t, pb.RecordType_INVITE, anna.id, &pb.Invite{InviteId: sum2[:], ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}, anna.priv)
+	s2 := newTicket(t, anna.id, anna.priv)
+	invRec := s2.rec
 	if st, msg := ca.call("invite.create", &pb.RecordRequest{Record: invRec}, nil); st != pb.Status_STATUS_OK {
 		t.Fatalf("invite: %v %s", st, msg)
 	}

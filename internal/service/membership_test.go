@@ -12,6 +12,7 @@ import (
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/turnsrv"
 )
 
 type stubTurn struct{}
@@ -241,4 +242,33 @@ func chainOf(t *testing.T, raw []byte) *pb.DirectoryEntry {
 		t.Fatal("bad entry")
 	}
 	return &e
+}
+
+// D108: TURN refuses a revoked account's earlier credentials as soon as the REVOCATION is applied, whether it
+// came from a peer or through network.publish (no polling delay).
+func TestTurnTagFollowsRevocation(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	anna := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	boris := f.mustRegister(f.invite(nil, time.Hour), "boris")
+	f.svc.RefreshRevoked(ctx)
+	if f.svc.TurnTagRevoked(turnsrv.UserTag(anna.id)) || f.svc.TurnTagRevoked(turnsrv.UserTag(boris.id)) {
+		t.Fatal("revoked before the revocation")
+	}
+	rev := sign(t, pb.RecordType_REVOCATION, keys.ID16(f.svc.NetworkPub), &pb.Revocation{UserId: anna.id, Reason: "test"}, f.netPriv)
+	if applied, err := f.svc.ApplyReplicated(ctx, r16(), rev); err != nil || !applied {
+		t.Fatalf("replicated revocation: applied=%v err=%v", applied, err)
+	}
+	if !f.svc.TurnTagRevoked(turnsrv.UserTag(anna.id)) {
+		t.Fatal("replicated revocation not seen by TURN")
+	}
+	if f.svc.TurnTagRevoked(turnsrv.UserTag(boris.id)) {
+		t.Fatal("another user refused")
+	}
+	if err := f.svc.PublishNetworkRecord(ctx, sign(t, pb.RecordType_REVOCATION, keys.ID16(f.svc.NetworkPub), &pb.Revocation{UserId: boris.id}, f.netPriv)); err != nil {
+		t.Fatal(err)
+	}
+	if !f.svc.TurnTagRevoked(turnsrv.UserTag(boris.id)) {
+		t.Fatal("published revocation not seen by TURN")
+	}
 }

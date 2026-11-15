@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -428,4 +429,31 @@ func TestRefusedUserCannotAllocate(t *testing.T) {
 	if _, err := client(t, addr, ua, pa).Allocate(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// D108: credentials issued before the revocation stop working on the next request of a live allocation.
+func TestRevokedUserRefusedOnEveryRequest(t *testing.T) {
+	secret := bytes.Repeat([]byte{7}, SecretLen)
+	nl := &memLog{}
+	var revoked atomic.Bool
+	anna := []byte("anna-00000000000")
+	cfg := testConfig(secret, 4, 41, nl)
+	cfg.Refuse = func(tag string) bool { return revoked.Load() && tag == UserTag(anna) }
+	_, addr := startCfg(t, cfg)
+	u, p := Credentials(secret, anna, time.Now(), TTL)
+	c := client(t, addr, u, p)
+	if _, err := c.Allocate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreatePermission(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}); err != nil {
+		t.Fatal(err)
+	}
+	revoked.Store(true)
+	if err := c.CreatePermission(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 10}); err == nil {
+		t.Fatal("revoked user kept the relay")
+	}
+	if _, err := client(t, addr, u, p).Allocate(); err == nil {
+		t.Fatal("revoked user allocated")
+	}
+	waitFor(t, "revoked netlog line", func() bool { return strings.Contains(nl.String(), "revoked user") })
 }

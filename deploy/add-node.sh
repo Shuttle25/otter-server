@@ -39,7 +39,9 @@ else
   if [[ -z "$dial_out" ]]; then
     dial_out=0
     if [[ -t 0 ]]; then
-      read -r -p "Is $label inside a censored network (e.g. Russia)? It will dial out to the other nodes and is never dialed by them. [y/N] " ans
+      # dial_out_only only for a node that cannot accept inbound connections (e.g. behind NAT).
+      # A node in Russia must NOT be dial-out-only: it is dialed from abroad (D132).
+      read -r -p "Make $label dial-out-only? Only for a node that cannot accept inbound connections (e.g. behind NAT); it then dials the other nodes and is never dialed. Not for a node in Russia: it must be dialed from abroad (D132). [y/N] " ans
       [[ "$ans" =~ ^[yYдД] ]] && dial_out=1
     fi
   fi

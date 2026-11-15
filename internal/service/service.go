@@ -83,6 +83,7 @@ type Service struct {
 	// TURN user tags of revoked or disabled accounts (RefreshRevoked)
 	revokedTags map[string]bool
 	submits     windowCounter // local submit rates per author (C8, D107)
+	callWakes   windowCounter // call pushes per (sender, recipient device) (D108)
 }
 
 func New(st *store.Store, nodeKey ed25519.PrivateKey, networkPub ed25519.PublicKey) *Service {

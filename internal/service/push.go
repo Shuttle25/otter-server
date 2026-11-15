@@ -56,18 +56,31 @@ func isCall(body *pb.RecordBody, e *pb.Envelope) bool {
 	return e.Urgent && body.ExpiresMs > 0 && ttl > 0 && ttl <= callMaxTTL.Milliseconds()
 }
 
+// Call push budget (D108): beyond it a call envelope wakes like a message (coalesced, ≤ 1 per 10 s), so a flood of
+// fake "calls" cannot keep a phone on high-priority pushes; a real call still rings after that wake-up.
+const (
+	callWakeWindow      = time.Minute
+	maxCallWakesPerPair = 8 // offer, candidate batches, hangup of a couple of redials
+)
+
 // maybePush wakes recipients of a fresh urgent envelope this node is responsible for (D58).
 // Ordinary messages wake only recipients without a live session here; call messages wake every recipient
-// (a phone's socket may be half-open and still count as online) and bypass coalescing.
+// (a phone's socket may be half-open and still count as online) and bypass coalescing, within a budget per
+// (sender, recipient device) (D108). An envelope dated more than MaxClockSkew ahead never pushes (D108).
 func (s *Service) maybePush(ctx context.Context, body *pb.RecordBody, e *pb.Envelope, from []byte) {
-	if !e.Urgent || body.CreatedMs < s.Now().Add(-pushMaxAge).UnixMilli() || !s.pushDuty(from) {
+	now := s.Now()
+	if !e.Urgent || body.CreatedMs < now.Add(-pushMaxAge).UnixMilli() || body.CreatedMs > now.Add(MaxClockSkew).UnixMilli() ||
+		!s.pushDuty(from) {
 		return
 	}
 	call := isCall(body, e)
 	for _, r := range e.Recipients {
 		switch {
-		case call:
+		case call && s.callWakes.allow(now, callWakeWindow, fmt.Sprintf("%x>%x/%d", body.Author, r.User, r.Device), maxCallWakesPerPair):
 			s.Waker.WakeCall(ctx, r.User, r.Device)
+		case call:
+			s.logger().Info("call push over budget", "from", userTag(body.Author), "user", userTag(r.User), "device", r.Device)
+			s.Waker.Wake(ctx, r.User, r.Device)
 		case s.Notify.Online(r.User, r.Device):
 			s.logger().Info("push skipped", "user", userTag(r.User), "device", r.Device, "kind", "message", "reason", "online")
 		default:

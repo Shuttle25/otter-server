@@ -42,6 +42,8 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node set-push --label L [--off]
   node set-dial-out-only --label L [--off]
   node add-reality --label L --host H --port 443 --pub B64URL --server-name S [--short-id HEX] [--uuid UUID]
+  node add-wss --label L --host H [--port 443] [--cdn] [--priority 10]
+  node remove-endpoint --label L --host H --port P
   node env --label L
   dns records
   dns check [--label L]
@@ -260,6 +262,43 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		fmt.Fprintf(out, "node %s: REALITY %s:%d server_name=%s\n[reality] for its node.toml:\n  vless_uuid = %q\n  short_ids = [%q]\n  server_names = [%q]\nRun 'manifest sign' and 'manifest publish'.\n",
 			s.Label, ep.Host, ep.Port, s.ServerName, ep.VlessUuid, ep.ShortIds[0], s.ServerName)
+	case "node add-wss":
+		fs := flag.NewFlagSet("node add-wss", flag.ContinueOnError)
+		var s admin.WSSSpec
+		var port, prio uint
+		fs.StringVar(&s.Label, "label", "", "node label")
+		fs.StringVar(&s.Host, "host", "", "name clients dial (the CDN-proxied name with --cdn)")
+		fs.UintVar(&port, "port", 443, "port clients dial")
+		fs.BoolVar(&s.CDN, "cdn", false, "behind a CDN: no pins, CA-checked certificate (D131)")
+		fs.UintVar(&prio, "priority", 10, "higher = tried later; the node's own endpoint has 0")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if port > 65535 || prio > 1000 {
+			return errors.New("--port must be 1-65535 and --priority 0-1000")
+		}
+		s.Port, s.Priority = uint32(port), uint32(prio)
+		ep, err := admin.AddWSS(*dir, s)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: WSS %s:%d cdn=%v priority=%d pins=%d\nRun 'manifest sign' and 'manifest publish'.\n",
+			s.Label, ep.Host, ep.Port, ep.ViaCdn, ep.Priority, len(ep.TlsSpkiPins))
+	case "node remove-endpoint":
+		fs := flag.NewFlagSet("node remove-endpoint", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		host := fs.String("host", "", "endpoint host")
+		port := fs.Uint("port", 0, "endpoint port")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if *port == 0 || *port > 65535 {
+			return errors.New("--port must be 1-65535")
+		}
+		if err := admin.RemoveEndpoint(*dir, *label, *host, uint32(*port)); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: endpoint %s:%d removed. Run 'manifest sign' and 'manifest publish'.\n", *label, *host, *port)
 	case "node env":
 		fs := flag.NewFlagSet("node env", flag.ContinueOnError)
 		label := fs.String("label", "", "node label")

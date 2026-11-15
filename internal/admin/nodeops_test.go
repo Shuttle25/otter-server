@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/pinning"
 	pb "ottermsg/server/internal/proto/otterv1"
 )
@@ -252,5 +253,70 @@ func TestAddRealityOnPlainDevNode(t *testing.T) {
 	n := st.Nodes[0]
 	if len(n.Endpoints) != 2 || n.Endpoints[0].Kind != pb.Endpoint_WS_PLAIN || ep.Path == "" || ep.Path != n.Endpoints[0].Path {
 		t.Fatalf("endpoints: %+v", n.Endpoints)
+	}
+}
+
+func TestAddWSSCDN(t *testing.T) {
+	dir := newNet(t)
+	st, _ := LoadState(dir)
+	own := proto.Clone(st.Nodes[0].Endpoints[0]).(*pb.Endpoint)
+	ep, err := AddWSS(dir, WSSSpec{Label: "fi-1", Host: "n2.example.net", Port: 443, CDN: true, Priority: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Kind != pb.Endpoint_WSS || !ep.ViaCdn || len(ep.TlsSpkiPins) != 0 || ep.Priority != 10 || ep.Path != own.Path || ep.Port != 443 {
+		t.Fatalf("endpoint: %+v", ep)
+	}
+	st, _ = LoadState(dir)
+	n := st.Nodes[0]
+	if len(n.Endpoints) != 2 || !proto.Equal(n.Endpoints[0], own) {
+		t.Fatalf("endpoints: %+v", n.Endpoints)
+	}
+	if _, err := AddWSS(dir, WSSSpec{Label: "fi-1", Host: "n2.example.net", Port: 443, CDN: true, Priority: 20}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState(dir)
+	if len(st.Nodes[0].Endpoints) != 2 || st.Nodes[0].Endpoints[1].Priority != 20 {
+		t.Fatalf("second add must replace: %+v", st.Nodes[0].Endpoints)
+	}
+	if _, err := AddWSS(dir, WSSSpec{Label: "fi-1", Host: "n3.example.net", Port: 8443}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState(dir)
+	if e := st.Nodes[0].Endpoints[2]; e.ViaCdn || len(e.TlsSpkiPins) == 0 || !bytes.Equal(e.TlsSpkiPins[0], own.TlsSpkiPins[0]) {
+		t.Fatalf("a direct extra endpoint must carry the node's pins: %+v", e)
+	}
+	for _, bad := range []WSSSpec{
+		{Label: "fi-1", Host: "", Port: 443},
+		{Label: "fi-1", Host: "x.example.net", Port: 0},
+		{Label: "fi-1", Host: "x.example.net", Port: 70000},
+		{Label: "fi-1", Host: own.Host, Port: own.Port},
+		{Label: "nope", Host: "x.example.net", Port: 443},
+	} {
+		if _, err := AddWSS(dir, bad); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+}
+
+func TestRemoveEndpoint(t *testing.T) {
+	dir := newNet(t)
+	if _, err := AddWSS(dir, WSSSpec{Label: "fi-1", Host: "n2.example.net", Port: 443, CDN: true, Priority: 10}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := LoadState(dir)
+	own := st.Nodes[0].Endpoints[0]
+	if err := RemoveEndpoint(dir, "fi-1", own.Host, own.Port); err == nil {
+		t.Fatal("removed the node's own endpoint")
+	}
+	if err := RemoveEndpoint(dir, "fi-1", "missing.example.net", 443); err == nil {
+		t.Fatal("removed a missing endpoint")
+	}
+	if err := RemoveEndpoint(dir, "fi-1", "n2.example.net", 443); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = LoadState(dir)
+	if len(st.Nodes[0].Endpoints) != 1 {
+		t.Fatalf("endpoints: %+v", st.Nodes[0].Endpoints)
 	}
 }

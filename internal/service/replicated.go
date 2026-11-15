@@ -59,6 +59,9 @@ func isPrekeyConsumed(rec *pb.Record) bool {
 // afterApply runs the side effects of a newly applied record. from is the peer a replicated record came from,
 // nil for one accepted locally (client submit, local import).
 func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []byte) {
+	// the record is committed: its side effects must not depend on the caller's context (a peer session can end
+	// between the commit and here; a lost manifest load would leave this node on the old manifest until restart)
+	ctx = context.WithoutCancel(ctx)
 	switch body.Type {
 	case pb.RecordType_ENVELOPE:
 		var e pb.Envelope

@@ -332,6 +332,11 @@ func (s *Service) ImportRecord(ctx context.Context, rec *pb.Record) (bool, error
 	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
 	if err == nil && applied {
 		s.afterApply(ctx, body, nil)
+	} else if err == nil && body.Type == pb.RecordType_MANIFEST {
+		// already stored (e.g. by replication) but maybe never loaded: loading is idempotent
+		if changed, lerr := s.LoadManifest(ctx); lerr == nil && changed {
+			s.Notify.Manifest(s.CurrentManifest().Version)
+		}
 	}
 	return applied, err
 }

@@ -244,7 +244,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
 		}
-		res, key, err := svc.BackupFetch(ctx, r.Username, r.AuthSecret)
+		res, key, err := svc.BackupFetch(ctx, r.Username, s.source, r.AuthSecret)
 		if err != nil {
 			return nil, err
 		}

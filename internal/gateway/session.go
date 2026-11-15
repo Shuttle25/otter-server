@@ -19,6 +19,7 @@ type session struct {
 	out    chan *pb.Frame
 	wake   chan struct{}
 	nonce  []byte
+	source string // restore rate-limit source of this connection (service.SourceOf, D105)
 	ctx    context.Context
 	cancel context.CancelFunc
 	// blob.get may wait on a peer (proxy): run up to 4 off the read loop

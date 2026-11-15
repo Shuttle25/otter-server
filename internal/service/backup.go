@@ -15,15 +15,17 @@ import (
 	"ottermsg/server/internal/store"
 )
 
-// Restore authentication (D51).
+// Restore authentication (D51, D105).
 const (
 	DefaultKdfMKib     = 65536
 	DefaultKdfT        = 3
 	DefaultKdfP        = 1
-	MaxFailuresPerName = 5  // per username per hour, per node
-	MaxFailuresPerNode = 20 // per day, per node
-	MaxPersistentBlobs = 3  // live backup blobs per user (D50)
+	MaxPersistentBlobs = 3 // live backup blobs per user (D50)
 )
+
+// RestoreLimits (D105): a stranger can slow a name down on one node, never lock it.
+var RestoreLimits = store.AuthLimits{PerSourceHour: 5, FreePerName: 10, FreePerSource: 30,
+	BaseDelay: 30 * time.Second, MaxDelay: 15 * time.Minute}
 
 // fakeSalt answers backup.auth for unknown usernames (node-local; members publish a decoy BACKUP_META instead, C20).
 func (s *Service) fakeSalt(username string) []byte {
@@ -74,8 +76,9 @@ func (s *Service) BackupAuth(ctx context.Context, username string) (*pb.BackupAu
 }
 
 // BackupFetch checks auth_secret against the verifier; on success returns both meta records and the blob key.
-// Failures are rate limited per username and per node (D51). A name shared after a clash is refused (D103).
-func (s *Service) BackupFetch(ctx context.Context, username string, secret []byte) (*pb.BackupFetchResponse, []byte, error) {
+// A name shared after a clash is refused (D103). The attempt is reserved as a failure per (account, source) before
+// the comparison and cleared when the secret is right or this node failed (D105, C4, C10).
+func (s *Service) BackupFetch(ctx context.Context, username, source string, secret []byte) (*pb.BackupFetchResponse, []byte, error) {
 	name, cands, err := s.Store.ResolveUsername(ctx, username)
 	if err != nil {
 		return nil, nil, err
@@ -84,38 +87,39 @@ func (s *Service) BackupFetch(ctx context.Context, username string, secret []byt
 		return nil, nil, fmt.Errorf("%w: ambiguous username, use name#tag", ErrConflict)
 	}
 	username = name // one failure counter per account, typed with or without its tag
-	now := s.Now()
-	perName, err := s.Store.AuthFailures(ctx, username, now.Add(-time.Hour).UnixMilli())
+	id, err := s.Store.ReserveAuthAttempt(ctx, username, source, s.Now().UnixMilli(), RestoreLimits)
+	var sd *store.SlowDown
+	if errors.As(err, &sd) {
+		return nil, nil, fmt.Errorf("%w: %w", ErrRetryLater, sd)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	total, err := s.Store.AuthFailuresTotal(ctx, now.Add(-24*time.Hour).UnixMilli())
-	if err != nil {
-		return nil, nil, err
-	}
-	if perName >= MaxFailuresPerName || total >= MaxFailuresPerNode {
-		return nil, nil, fmt.Errorf("%w: too many attempts", ErrRetryLater)
-	}
-	fail := func() error {
-		if err := s.Store.AddAuthFailure(ctx, username, now.UnixMilli()); err != nil {
-			return err
+	keep := true // the reserved row stays as a failure unless the secret was right or this node failed
+	defer func() {
+		if !keep {
+			if err := s.Store.ClearAuthAttempt(context.WithoutCancel(ctx), id); err != nil {
+				s.logger().Warn("clearing a restore attempt failed", "err", err)
+			}
 		}
-		return fmt.Errorf("%w: wrong username or password", ErrUnauthorized)
-	}
+	}()
+	wrong := fmt.Errorf("%w: wrong username or password", ErrUnauthorized)
 	b, m, err := s.currentBackup(ctx, username)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, nil, fail()
+		return nil, nil, wrong
 	}
 	if err != nil {
+		keep = false
 		return nil, nil, err
 	}
 	if m.Version == 0 { // a decoy (C20): no secret opens it; counted like a wrong password
-		return nil, nil, fail()
+		return nil, nil, wrong
 	}
 	v := sha256.Sum256(secret)
 	if len(secret) != 32 || subtle.ConstantTimeCompare(v[:], m.AuthVerifier) != 1 {
-		return nil, nil, fail()
+		return nil, nil, wrong
 	}
+	keep = false
 	blobRaw, err := s.Store.Get(ctx, m.BlobKey)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil, fmt.Errorf("%w: backup not replicated here yet", ErrRetryLater)

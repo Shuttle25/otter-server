@@ -6,7 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"ottermsg/server/internal/blobs"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
+	"ottermsg/server/internal/store"
 )
 
 func withBlobs(t *testing.T, f *fx) {
@@ -77,7 +81,7 @@ func TestBackupAuthFakeSaltStable(t *testing.T) {
 	}
 }
 
-func TestBackupFetchAndRateLimit(t *testing.T) {
+func TestBackupFetch(t *testing.T) {
 	f := newFx(t)
 	withBlobs(t, f)
 	ctx := context.Background()
@@ -88,40 +92,145 @@ func TestBackupFetchAndRateLimit(t *testing.T) {
 	if err != nil || !bytes.Equal(got.Salt, salt) {
 		t.Fatalf("auth: %v", err)
 	}
-	res, blobKey, err := f.svc.BackupFetch(ctx, "anna", secret)
+	res, blobKey, err := f.svc.BackupFetch(ctx, "anna", owner, secret)
 	if err != nil || res.BackupMeta == nil || res.BlobMeta == nil || len(blobKey) != 32 {
 		t.Fatalf("fetch: %v", err)
 	}
+	if n, _ := f.svc.Store.AuthFailures(ctx, "anna", 0); n != 0 {
+		t.Fatalf("a correct attempt left %d rows", n)
+	}
+}
+
+const owner, stranger = "198.51.100.7", "203.0.113.66"
+
+// A stranger hammering one name is limited to his own source; the owner still gets in (C4).
+func TestBackupFetchStrangerCannotLock(t *testing.T) {
+	f := newFx(t)
+	withBlobs(t, f)
+	ctx := context.Background()
+	u := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	secret := bytes.Repeat([]byte{9}, 32)
+	f.publishBackup(u, secret)
+	now := time.Now()
+	f.svc.Now = func() time.Time { return now }
 	for i := 0; i < 5; i++ {
-		if _, _, err := f.svc.BackupFetch(ctx, "anna", make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+		if _, _, err := f.svc.BackupFetch(ctx, "anna", stranger, make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
 			t.Fatalf("wrong secret %d: %v", i, err)
 		}
 	}
-	if _, _, err := f.svc.BackupFetch(ctx, "anna", secret); !errors.Is(err, ErrRetryLater) {
-		t.Fatalf("6th attempt in an hour must be limited even with the right secret: %v", err)
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", stranger, secret); !errors.Is(err, ErrRetryLater) {
+		t.Fatalf("6th attempt from the same source in an hour, even with the right secret: %v", err)
 	}
-	f.svc.Now = func() time.Time { return time.Now().Add(61 * time.Minute) }
-	if _, _, err := f.svc.BackupFetch(ctx, "anna", secret); err != nil {
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", owner, secret); err != nil {
+		t.Fatalf("owner from another source must get in: %v", err)
+	}
+	if n, _ := f.svc.Store.AuthFailures(ctx, "anna", 0); n != 5 {
+		t.Fatalf("a correct attempt must not count: %d failures", n)
+	}
+	now = now.Add(time.Hour)
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", stranger, secret); err != nil {
 		t.Fatalf("after an hour: %v", err)
 	}
 }
 
-func TestBackupFetchNodeLimit(t *testing.T) {
+// Many sources slow a name down but never lock it longer than MaxDelay.
+func TestBackupFetchSlowsDownAcrossSources(t *testing.T) {
 	f := newFx(t)
+	withBlobs(t, f)
 	ctx := context.Background()
-	for i := 0; i < MaxFailuresPerNode; i++ {
-		if err := f.svc.Store.AddAuthFailure(ctx, string(rune('a'+i)), time.Now().UnixMilli()); err != nil {
+	u := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	secret := bytes.Repeat([]byte{9}, 32)
+	f.publishBackup(u, secret)
+	now := time.Now()
+	f.svc.Now = func() time.Time { return now }
+	for i := 0; i < RestoreLimits.FreePerName; i++ {
+		src := fmt.Sprintf("203.0.113.%d", i+1)
+		if _, _, err := f.svc.BackupFetch(ctx, "anna", src, make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("failure %d: %v", i, err)
+		}
+	}
+	_, _, err := f.svc.BackupFetch(ctx, "anna", owner, secret)
+	if !errors.Is(err, ErrRetryLater) || !strings.Contains(err.Error(), "retry in") {
+		t.Fatalf("11th attempt right away must wait: %v", err)
+	}
+	now = now.Add(RestoreLimits.BaseDelay)
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", owner, secret); err != nil {
+		t.Fatalf("after the delay: %v", err)
+	}
+	for i := 0; i < 40; i++ { // a long attack: the wait stays capped
+		if err := f.svc.Store.AddAuthFailure(ctx, "anna", fmt.Sprintf("192.0.2.%d", i), now.UnixMilli()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := f.svc.BackupFetch(ctx, "fresh", make([]byte, 32)); !errors.Is(err, ErrRetryLater) {
-		t.Fatalf("21st failure on the node: %v", err)
+	_, _, err = f.svc.BackupFetch(ctx, "anna", owner, secret)
+	var sd *store.SlowDown
+	if !errors.As(err, &sd) || sd.Wait > RestoreLimits.MaxDelay {
+		t.Fatalf("during the attack: %v", err)
+	}
+	now = now.Add(RestoreLimits.MaxDelay)
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", owner, secret); err != nil {
+		t.Fatalf("never locked longer than MaxDelay: %v", err)
+	}
+}
+
+// One source trying many names is slowed down after FreePerSource failures a day.
+func TestBackupFetchSlowsDownOneSource(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	now := time.Now()
+	f.svc.Now = func() time.Time { return now }
+	for i := 0; i < RestoreLimits.FreePerSource; i++ {
+		if _, _, err := f.svc.BackupFetch(ctx, fmt.Sprintf("ghost%d", i), stranger, make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("failure %d: %v", i, err)
+		}
+	}
+	if _, _, err := f.svc.BackupFetch(ctx, "next", stranger, make([]byte, 32)); !errors.Is(err, ErrRetryLater) {
+		t.Fatalf("source past its daily allowance: %v", err)
+	}
+	if _, _, err := f.svc.BackupFetch(ctx, "next", owner, make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("another source is not slowed: %v", err)
+	}
+}
+
+// Parallel wrong attempts are reserved one by one: never more than the limit get compared (C10).
+func TestBackupFetchParallelAttemptsReserved(t *testing.T) {
+	f := newFx(t)
+	withBlobs(t, f)
+	ctx := context.Background()
+	u := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	f.publishBackup(u, bytes.Repeat([]byte{9}, 32))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	unauthorized, later := 0, 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := f.svc.BackupFetch(ctx, "anna", stranger, make([]byte, 32))
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, ErrUnauthorized):
+				unauthorized++
+			case errors.Is(err, ErrRetryLater):
+				later++
+			default:
+				t.Errorf("unexpected: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if unauthorized != RestoreLimits.PerSourceHour || later != 20-RestoreLimits.PerSourceHour {
+		t.Fatalf("compared %d, refused %d", unauthorized, later)
+	}
+	if n, _ := f.svc.Store.AuthFailures(ctx, "anna", 0); n != RestoreLimits.PerSourceHour {
+		t.Fatalf("%d failures counted", n)
 	}
 }
 
 func TestBackupFetchUnknownCountsFailure(t *testing.T) {
 	f := newFx(t)
-	if _, _, err := f.svc.BackupFetch(context.Background(), "ghost", make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
+	if _, _, err := f.svc.BackupFetch(context.Background(), "ghost", "203.0.113.5", make([]byte, 32)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unknown user: %v", err)
 	}
 	if n, _ := f.svc.Store.AuthFailures(context.Background(), "ghost", 0); n != 1 {
@@ -195,10 +304,10 @@ func TestBackupAuthAmbiguousName(t *testing.T) {
 	if r, _ := f.svc.BackupAuth(ctx, annaTag); !bytes.Equal(r.Salt, salt) {
 		t.Fatalf("%s does not resolve to anna's backup", annaTag)
 	}
-	if _, _, err := f.svc.BackupFetch(ctx, "anna", secret); !errors.Is(err, ErrConflict) {
+	if _, _, err := f.svc.BackupFetch(ctx, "anna", owner, secret); !errors.Is(err, ErrConflict) {
 		t.Fatalf("fetch by an ambiguous name: %v", err)
 	}
-	if res, _, err := f.svc.BackupFetch(ctx, annaTag, secret); err != nil || res.BackupMeta == nil {
+	if res, _, err := f.svc.BackupFetch(ctx, annaTag, owner, secret); err != nil || res.BackupMeta == nil {
 		t.Fatalf("fetch by anna's tag: %v", err)
 	}
 }

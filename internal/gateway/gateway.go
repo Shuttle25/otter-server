@@ -134,6 +134,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
 	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel,
+		source:  service.SourceOf(r.RemoteAddr),
 		blobSem: make(chan struct{}, 4)}
 	defer func() {
 		cancel()

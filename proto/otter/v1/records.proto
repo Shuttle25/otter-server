@@ -23,6 +23,7 @@ enum RecordType {
   BLOB_FETCHED = 14;
   ANNOUNCEMENT = 15;
   ANNOUNCEMENT_DELETED = 16;
+  INSTALL = 17;               // M9.1 (C14): the account's current install, signed by the account key
 }
 
 // Signature is Ed25519 over the exact `body` bytes.
@@ -110,6 +111,13 @@ message BackupMeta {
   bytes auth_verifier = 6;   // SHA-256(auth_secret), 32 bytes
   bytes blob_key = 7;        // record key of the persistent BLOB_META (author ‖ id)
   uint64 size = 8;           // ciphertext bytes
+}
+
+// INSTALL payload (M9.1, C14). Signed by the account key. Per user the newest (installed_ms, registration_id) is the
+// account's current install; a phone believes that another phone replaced it only from a valid INSTALL record.
+message Install {
+  uint32 registration_id = 1;  // 1..16380, the Signal registration id of this install
+  int64 installed_ms = 2;      // when this install was created (registration, restore or "this phone is main again")
 }
 
 // PUSH_TOKEN payload (D60): the newest record per (author, device) is that device's push token.

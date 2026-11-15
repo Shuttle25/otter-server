@@ -33,6 +33,7 @@ type Replicator struct {
 	mu      sync.Mutex
 	backoff map[string]time.Duration
 	nextTry map[string]time.Time
+	dialing map[string]bool // peers with a dial or handshake in flight: never start a second one (it would replace the first session)
 
 	seenMu sync.Mutex
 	seen   map[string]*peerSeen // per peer node id: monitoring state that outlives sessions (D130; M9.4 monitoring reads it)
@@ -229,8 +230,12 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 		}
 		k := string(n.NodeId)
 		r.mu.Lock()
-		due := time.Now().After(r.nextTry[k])
+		due := time.Now().After(r.nextTry[k]) && !r.dialing[k]
 		if due {
+			if r.dialing == nil {
+				r.dialing = map[string]bool{}
+			}
+			r.dialing[k] = true
 			b := r.backoff[k]
 			b = min(max(b*2, minBackoff), maxBackoff)
 			r.backoff[k] = b
@@ -241,6 +246,7 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 			continue
 		}
 		go func(n *pb.NodeInfo) {
+			defer func() { r.mu.Lock(); delete(r.dialing, string(n.NodeId)); r.mu.Unlock() }()
 			var c *websocket.Conn
 			var ep *pb.Endpoint
 			var err error

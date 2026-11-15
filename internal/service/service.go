@@ -82,6 +82,7 @@ type Service struct {
 	onManifest []func(*pb.Manifest)
 	// TURN user tags of revoked or disabled accounts (RefreshRevoked)
 	revokedTags map[string]bool
+	submits     windowCounter // local submit rates per author (C8, D107)
 }
 
 func New(st *store.Store, nodeKey ed25519.PrivateKey, networkPub ed25519.PublicKey) *Service {

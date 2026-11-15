@@ -189,7 +189,7 @@ func TestRegisterFlow(t *testing.T) {
 	// the INVITE travels in the entry: a node that never saw it registers the account (D100)
 	f.mustRegister(f.newTicket(anna, time.Hour), "zoya")
 
-	_, expired := f.registerReq(f.invite(anna, -time.Minute+time.Second), "dina")
+	_, expired := f.registerReq(f.invite(anna, time.Minute), "dina")
 	f.svc.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	if _, err := f.svc.Register(ctx, expired); err == nil {
 		t.Fatal("expired invite accepted")

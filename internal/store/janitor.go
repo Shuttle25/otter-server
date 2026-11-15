@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
 )
 
 const RetentionMs = int64(30 * 24 * 60 * 60 * 1000)
@@ -112,6 +113,38 @@ func (s *Store) Expire(ctx context.Context, now int64) (ExpireStats, error) {
 			return err
 		}
 		if err := exec(&st.Tombstones, `DELETE FROM tombstones WHERE until_ms < ?`, now); err != nil {
+			return err
+		}
+		// expired invites (C8, D107): records a day after expiry, unused rows with them; used rows stay (single use).
+		// The chain travels inside the directory entry (D100), so nothing needs the standalone record any more.
+		inviteCut := now - inviteGraceMs
+		rows, err = tx.QueryContext(ctx, `SELECT record_key FROM invites WHERE expires_ms < ? AND record_key IS NOT NULL
+			AND record_key IN (SELECT record_key FROM records)`, inviteCut)
+		if err != nil {
+			return err
+		}
+		var oldInvites [][]byte
+		for rows.Next() {
+			var k []byte
+			if err := rows.Scan(&k); err != nil {
+				rows.Close()
+				return err
+			}
+			oldInvites = append(oldInvites, k)
+		}
+		rows.Close()
+		for _, k := range oldInvites {
+			if err := compact(ctx, tx, k, now); err != nil {
+				return err
+			}
+		}
+		st.Compacted += int64(len(oldInvites))
+		// records from before 0.9.3 have no invites.record_key: any invite created this long ago has expired a day ago
+		if err := exec(&st.Compacted, `DELETE FROM records WHERE type=? AND created_ms < ?`, int32(pb.RecordType_INVITE),
+			inviteCut-records.MaxInviteTTL.Milliseconds()); err != nil {
+			return err
+		}
+		if err := exec(&ignore, `DELETE FROM invites WHERE expires_ms < ? AND used_by IS NULL`, inviteCut); err != nil {
 			return err
 		}
 		n, err := compactPrekeys(ctx, tx, now)

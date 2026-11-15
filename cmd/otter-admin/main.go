@@ -38,7 +38,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   manifest sign
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
-  invite bootstrap [--ttl 168h]
+  invite bootstrap [--ttl 168h]    (at most 720h)
   user list [--via LABEL] [--allow-plain]
   user revoke NAME|NAME#TAG|USER_ID [--reason TEXT] [--yes] [--via LABEL]... [--allow-plain]
   user invite-rights NAME|NAME#TAG|USER_ID --on|--off [--via LABEL]... [--allow-plain]
@@ -432,9 +432,12 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		return publishManifest(out, *dir, via, *allowPlain)
 	case "invite bootstrap":
 		fs := flag.NewFlagSet("invite bootstrap", flag.ContinueOnError)
-		ttl := fs.Duration("ttl", 7*24*time.Hour, "invite validity")
+		ttl := fs.Duration("ttl", 7*24*time.Hour, "invite validity (at most 720h)")
 		if err := fs.Parse(a[2:]); err != nil {
 			return err
+		}
+		if *ttl <= 0 || *ttl > records.MaxInviteTTL { // checked before the passphrase is asked (C8)
+			return fmt.Errorf("--ttl must be between 1s and %s", records.MaxInviteTTL)
 		}
 		p, err := passphrase(in, false)
 		if err != nil {

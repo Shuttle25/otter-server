@@ -165,6 +165,14 @@ func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
 	}
 }
 
+// MaxInviteTTL: an invite lives at most this long, created_ms to expires_ms (C8, D107).
+const MaxInviteTTL = 30 * 24 * time.Hour
+
+// InviteLifetimeOK: an invite expires after its creation and lives at most MaxInviteTTL (C8, D107).
+func InviteLifetimeOK(createdMs, expiresMs int64) bool {
+	return expiresMs > createdMs && expiresMs-createdMs <= MaxInviteTTL.Milliseconds()
+}
+
 func (v *Validator) checkPayload(b *pb.RecordBody) error {
 	switch b.Type {
 	case pb.RecordType_BLOB_META:
@@ -224,7 +232,7 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		}
 	case pb.RecordType_INVITE:
 		var i pb.Invite
-		if err := proto.Unmarshal(b.Payload, &i); err != nil || len(i.InviteId) != 32 || i.ExpiresMs <= 0 {
+		if err := proto.Unmarshal(b.Payload, &i); err != nil || len(i.InviteId) != 32 || !InviteLifetimeOK(b.CreatedMs, i.ExpiresMs) {
 			return ErrBadPayload
 		}
 	case pb.RecordType_INVITE_USED:

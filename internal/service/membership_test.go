@@ -223,6 +223,16 @@ func TestInviteNeedsRedeemKey(t *testing.T) {
 	}
 }
 
+// An invite that was never published (so the validator never saw it) still lives at most 30 days in a chain (C8).
+func TestChainRefusesInviteLivingTooLong(t *testing.T) {
+	f := newFx(t)
+	anna := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	_, req := f.registerReq(f.newTicket(anna, records.MaxInviteTTL+time.Hour), "boris")
+	if _, err := f.svc.Register(context.Background(), req); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("31-day invite admitted: %v", err)
+	}
+}
+
 func chainOf(t *testing.T, raw []byte) *pb.DirectoryEntry {
 	var r pb.Record
 	var b pb.RecordBody

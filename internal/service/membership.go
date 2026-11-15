@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/keys"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/store"
 	"ottermsg/server/internal/turnsrv"
 )
@@ -151,6 +152,9 @@ func (s *Service) admitChain(ctx context.Context, e *pb.DirectoryEntry, strict b
 	}
 	if !ed25519.Verify(inv.RedeemPub, keys.RedeemMessage(inv.InviteId, e.UserId, e.AccountPub), e.InviteProof) {
 		return nil, fmt.Errorf("%w: invite proof", ErrInvalid)
+	}
+	if !records.InviteLifetimeOK(ib.CreatedMs, inv.ExpiresMs) { // C8: also for an invite that was never published
+		return nil, fmt.Errorf("%w: invite lifetime over %s", ErrInvalid, records.MaxInviteTTL)
 	}
 	if strict && inv.ExpiresMs < s.Now().UnixMilli() {
 		return nil, fmt.Errorf("%w: invite expired", ErrConflict)

@@ -106,6 +106,11 @@ func TestBootstrapInvite(t *testing.T) {
 		t.Fatal("wrong passphrase accepted")
 	}
 	now := time.Now()
+	for _, ttl := range []time.Duration{0, 800 * time.Hour} { // C8: an invite lives at most 30 days
+		if _, err := BootstrapInvite(dir, pass, now, ttl); err == nil {
+			t.Fatalf("ttl %s accepted", ttl)
+		}
+	}
 	res, err := BootstrapInvite(dir, pass, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)

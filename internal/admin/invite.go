@@ -49,6 +49,9 @@ type BootstrapResult struct {
 // BootstrapInvite creates a network-signed invite for the first member. The link carries the signed INVITE, so any
 // node registers it; importing the record file on a node is optional.
 func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) (*BootstrapResult, error) {
+	if ttl <= 0 || ttl > records.MaxInviteTTL { // C8: every node refuses a longer-lived invite
+		return nil, fmt.Errorf("invite ttl must be between 1s and %s", records.MaxInviteTTL)
+	}
 	st, err := LoadState(dir)
 	if err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -20,7 +21,15 @@ const (
 	tombstoneTTL  = 30 * 24 * time.Hour
 	// MaxLiveOneTime: unconsumed one-time prekeys kept per (user, device, owner node); the newest ids win (C8, D107).
 	MaxLiveOneTime = 200
+	// MaxLiveInvites: unexpired invites per author kept on a node (C8, D107). Ranked by (created_ms, record_key), so
+	// every node keeps the same ones whatever order they arrive in.
+	MaxLiveInvites = 50
+	// inviteGraceMs: an invite record is deleted this long after its expiry (janitor); one arriving later is dropped.
+	inviteGraceMs = int64(24 * 60 * 60 * 1000)
 )
+
+// ErrInviteBudget: the author already has MaxLiveInvites unexpired invites ranked before this one (local submit).
+var ErrInviteBudget = fmt.Errorf("%w: %d unexpired invites", ErrOverLimit, MaxLiveInvites)
 
 func boolInt(b bool) int {
 	if b {
@@ -74,9 +83,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := proto.Unmarshal(b.Payload, &i); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO invites(invite_id,inviter,expires_ms) VALUES(?,?,?)`,
-			i.InviteId, b.Author, i.ExpiresMs)
-		return err
+		return applyInvite(ctx, tx, it, &i, now)
 
 	case pb.RecordType_INVITE_USED:
 		var u pb.InviteUsed
@@ -154,6 +161,23 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 	case pb.RecordType_PUSH_TOKEN: // D60: newest created_ms per (user, device) wins, ties by record key
 		var p pb.PushToken
 		if err := proto.Unmarshal(b.Payload, &p); err != nil {
+			return err
+		}
+		// C8, D107: only the newest record per author is stored (device is always 1). The newest record is never
+		// deleted here, so an older one (lagging peer, hostile replay) is always recognised, also after the row was
+		// dropped (FCM UNREGISTERED) or holds a withdrawn token (D94).
+		var newer bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM records WHERE type=? AND author=? AND record_key<>?
+			AND (created_ms>? OR (created_ms=? AND record_key>?)))`,
+			int32(pb.RecordType_PUSH_TOKEN), b.Author, it.key, b.CreatedMs, b.CreatedMs, it.key).Scan(&newer); err != nil {
+			return err
+		}
+		if newer {
+			_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE type=? AND author=? AND record_key<>?`,
+			int32(pb.RecordType_PUSH_TOKEN), b.Author, it.key); err != nil {
 			return err
 		}
 		var curCreated int64
@@ -351,6 +375,74 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO manifest(version,raw) VALUES(?,?)`, m.Version, it.raw)
 		return err
+	}
+	return nil
+}
+
+// applyInvite stores an INVITE under the per-author budget (C8, D107), for local and replicated records alike. Of an
+// author's unexpired invites the first MaxLiveInvites by (created_ms, record_key) are kept: a local one past the rank
+// is refused, a replicated one dropped, and an unused one pushed past the rank by a new arrival is evicted (used ones
+// stay for the single-use check). An invite that expired more than a day ago (a replay after the janitor) is dropped.
+func applyInvite(ctx context.Context, tx *sql.Tx, it item, i *pb.Invite, now int64) error {
+	b := it.body
+	if i.ExpiresMs < now-inviteGraceMs {
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+		return err
+	}
+	var ahead int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites WHERE inviter=? AND expires_ms>?
+		AND (created_ms<? OR (created_ms=? AND COALESCE(record_key, x'')<?))`,
+		b.Author, now, b.CreatedMs, b.CreatedMs, it.key).Scan(&ahead); err != nil {
+		return err
+	}
+	if ahead >= MaxLiveInvites {
+		if !it.fromPeer {
+			return ErrInviteBudget
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key) // past the rank: dropped
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO invites(invite_id,inviter,expires_ms,created_ms,record_key) VALUES(?,?,?,?,?)`,
+		i.InviteId, b.Author, i.ExpiresMs, b.CreatedMs, it.key)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 { // the id is taken: a second record for it would escape the budget
+		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
+		return err
+	}
+	// legacy rows (no record_key) rank first and are never evicted; the OFFSET counts every unexpired row
+	rows, err := tx.QueryContext(ctx, `SELECT invite_id, record_key, used_by IS NOT NULL FROM invites WHERE inviter=? AND expires_ms>?
+		ORDER BY created_ms, COALESCE(record_key, x'') LIMIT -1 OFFSET ?`, b.Author, now, MaxLiveInvites)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id, key []byte
+		used    bool
+	}
+	var past []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.key, &r.used); err != nil {
+			rows.Close()
+			return err
+		}
+		past = append(past, r)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range past {
+		if r.used || r.key == nil {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM invites WHERE invite_id=?`, r.id); err != nil {
+			return err
+		}
+		if err := compact(ctx, tx, r.key, now); err != nil {
+			return err
+		}
 	}
 	return nil
 }

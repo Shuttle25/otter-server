@@ -23,6 +23,7 @@ enum RecordType {
   BLOB_FETCHED = 14;
   ANNOUNCEMENT = 15;
   ANNOUNCEMENT_DELETED = 16;
+  INSTALL = 17;               // M9.1 (C14): the account's current install, signed by the account key
 }
 
 // Signature is Ed25519 over the exact `body` bytes.
@@ -112,6 +113,13 @@ message BackupMeta {
   uint64 size = 8;           // ciphertext bytes
 }
 
+// INSTALL payload (M9.1, C14). Signed by the account key. Per user the newest (installed_ms, registration_id) is the
+// account's current install; a phone believes that another phone replaced it only from a valid INSTALL record.
+message Install {
+  uint32 registration_id = 1;  // 1..16380, the Signal registration id of this install
+  int64 installed_ms = 2;      // when this install was created (registration, restore or "this phone is main again")
+}
+
 // PUSH_TOKEN payload (D60): the newest record per (author, device) is that device's push token.
 message PushToken {
   enum Kind {
@@ -120,7 +128,9 @@ message PushToken {
   }
   uint32 device_id = 1;
   Kind kind = 2;
-  string token = 3;
+  string token = 3;       // 1–4096 bytes of UTF-8; empty exactly when withdrawn
+  bool messages_off = 4;  // M9.1: notifications off on the phone: wake this device for calls only
+  bool withdrawn = 5;     // M9.1: Google wake-ups off: nodes forget the token, no pushes at all
 }
 
 // ANNOUNCEMENT payload (D66). Author = ID16(news public key); signed by a news key listed in the manifest (D65).

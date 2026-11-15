@@ -116,8 +116,9 @@ message BlobStatus {
 }
 
 message LoginResponse {
-  uint32 registration_id = 1;  // of the newest install this node knows (D52)
-  int64 installed_ms = 2;
+  uint32 registration_id = 1;  // of the newest install this node knows (D52); unsigned, ignored by 0.9.0+ phones (C14)
+  int64 installed_ms = 2;      // unsigned, ignored by 0.9.0+ phones (C14)
+  Record install = 3;          // the newest INSTALL record of the account, if this node has one (M9.1, C14)
 }
 
 message BackupAuthRequest { string username = 1; }

@@ -10,6 +10,7 @@ import (
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
+	"ottermsg/server/internal/store"
 )
 
 type session struct {
@@ -169,32 +170,47 @@ func (s *session) deliverLoop() {
 				s.g.log.Warn("mailbox", "err", err)
 				break
 			}
-			next := make(map[string]bool, len(entries))
-			batch := &pb.RecordBatch{}
-			for _, e := range entries {
-				k := string(e.Key)
-				next[k] = true
-				if sent[k] || len(batch.Records) >= deliverBatch {
-					continue
-				}
-				r := &pb.Record{}
-				if proto.Unmarshal(e.Raw, r) == nil {
-					batch.Records = append(batch.Records, r)
-				}
-				sent[k] = true
-			}
-			for k := range sent {
-				if !next[k] {
-					delete(sent, k) // acknowledged meanwhile
-				}
-			}
+			batch, full := nextBatch(entries, sent, deliverBatchBytes)
 			if len(batch.Records) == 0 {
 				break
 			}
 			s.event("envelopes", batch)
-			if len(batch.Records) < deliverBatch {
+			if !full {
 				break
 			}
 		}
 	}
+}
+
+// nextBatch builds the next envelopes event from the mailbox entries not yet in sent: at most deliverBatch records
+// and at most maxBytes of records, but always at least one record, so an event stays far below a phone's 4 MiB frame
+// limit (D93). It marks the chosen entries sent and forgets sent keys no longer in the mailbox (acknowledged
+// meanwhile). full reports that entries were left for the next event.
+func nextBatch(entries []store.MailboxEntry, sent map[string]bool, maxBytes int) (batch *pb.RecordBatch, full bool) {
+	next := make(map[string]bool, len(entries))
+	batch = &pb.RecordBatch{}
+	size := 0
+	for _, e := range entries {
+		k := string(e.Key)
+		next[k] = true
+		if sent[k] || full {
+			continue
+		}
+		if len(batch.Records) >= deliverBatch || (len(batch.Records) > 0 && size+len(e.Raw) > maxBytes) {
+			full = true // the rest goes in the next event
+			continue
+		}
+		r := &pb.Record{}
+		if proto.Unmarshal(e.Raw, r) == nil {
+			batch.Records = append(batch.Records, r)
+			size += len(e.Raw)
+		}
+		sent[k] = true
+	}
+	for k := range sent {
+		if !next[k] {
+			delete(sent, k) // acknowledged meanwhile
+		}
+	}
+	return batch, full
 }

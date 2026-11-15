@@ -72,7 +72,7 @@ func freeUDPPort(t *testing.T) int {
 }
 
 func testConfig(secret []byte, maxPer, maxAll int, nl netlog.Logger) Config {
-	return Config{RelayIP: net.IPv4(127, 0, 0, 1), PortMin: 52100, PortMax: 52140, Secret: secret, Realm: "otter",
+	return Config{RelayIP: net.IPv4(127, 0, 0, 1), PortMin: 32100, PortMax: 32140, Secret: secret, Realm: "otter",
 		MaxPerUser: maxPer, MaxTotal: maxAll, RelayKbps: 2000, AllowPrivatePeers: true, Netlog: nl,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), pionOut: io.Discard}
 }
@@ -142,7 +142,7 @@ func TestRelayBetweenTwoAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := ra.LocalAddr().(*net.UDPAddr).Port; p < 52100 || p > 52140 {
+	if p := ra.LocalAddr().(*net.UDPAddr).Port; p < 32100 || p > 32140 {
 		t.Fatalf("relay port %d outside the range", p)
 	}
 	rb.WriteTo([]byte("hi"), ra.LocalAddr()) // creates b's permission for a
@@ -372,7 +372,7 @@ func TestCloseReleasesPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// every relay port is free again
-	for port := 52100; port <= 52140; port++ {
+	for port := 32100; port <= 32140; port++ {
 		c, err := net.ListenPacket("udp4", "0.0.0.0:"+strconv.Itoa(port))
 		if err != nil {
 			t.Fatalf("relay port %d still in use: %v", port, err)
@@ -397,7 +397,7 @@ func TestStartErrors(t *testing.T) {
 		"short secret": func(c *Config) { c.Secret = secret[:16] },
 		"no relay ip":  func(c *Config) { c.RelayIP = nil },
 		"ipv6 relay":   func(c *Config) { c.RelayIP = net.ParseIP("2001:db8::1") },
-		"ports":        func(c *Config) { c.PortMin, c.PortMax = 52140, 52100 },
+		"ports":        func(c *Config) { c.PortMin, c.PortMax = 32140, 32100 },
 		"no rate":      func(c *Config) { c.RelayKbps = 0 },
 		"no per user":  func(c *Config) { c.MaxPerUser = 0 },
 		"no total":     func(c *Config) { c.MaxTotal = 0 },

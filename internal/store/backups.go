@@ -40,6 +40,17 @@ func (s *Store) DeviceInstall(ctx context.Context, user []byte, device uint32) (
 	return rid, inst, err
 }
 
+// InstallRecord returns the newest INSTALL record of a user (serialized pb.Record), or ErrNotFound (C14).
+func (s *Store) InstallRecord(ctx context.Context, user []byte) ([]byte, error) {
+	var raw []byte
+	err := s.r.QueryRowContext(ctx, `SELECT r.raw FROM installs i JOIN records r ON r.record_key = i.record_key
+		WHERE i.user_id = ?`, user).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return raw, err
+}
+
 // PersistentBlobs counts the user's live persistent blobs (D50 limit).
 func (s *Store) PersistentBlobs(ctx context.Context, owner []byte) (int, error) {
 	var n int

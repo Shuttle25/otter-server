@@ -330,7 +330,7 @@ func (s *sim) stop(n *simNode) {
 // Relay ports shared by every node of a sim. On one host all relays have the same IP (127.0.0.1), and a relay drops
 // writes to its own address unless the port is one of its relay ports, so one shared range stands in for "another
 // node's public IP" (on real nodes the ranges are per host). pion retries a busy port.
-const simRelayMin, simRelayMax = 53000, 53040
+const simRelayMin, simRelayMax = 32300, 32340 // below the ephemeral range (32768+) and above the listen ports (20000–31999)
 
 // startTurn starts n's relay on fresh loopback ports (UDP and TCP on one port, TLS on another) with a self-signed
 // certificate and returns it with the issuer for svc.Turn.

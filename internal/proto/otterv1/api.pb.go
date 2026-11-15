@@ -1066,8 +1066,9 @@ func (x *BlobStatus) GetMissing() []uint32 {
 
 type LoginResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	RegistrationId uint32                 `protobuf:"varint,1,opt,name=registration_id,json=registrationId,proto3" json:"registration_id,omitempty"` // of the newest install this node knows (D52)
-	InstalledMs    int64                  `protobuf:"varint,2,opt,name=installed_ms,json=installedMs,proto3" json:"installed_ms,omitempty"`
+	RegistrationId uint32                 `protobuf:"varint,1,opt,name=registration_id,json=registrationId,proto3" json:"registration_id,omitempty"` // of the newest install this node knows (D52); unsigned, ignored by 0.9.0+ phones (C14)
+	InstalledMs    int64                  `protobuf:"varint,2,opt,name=installed_ms,json=installedMs,proto3" json:"installed_ms,omitempty"`          // unsigned, ignored by 0.9.0+ phones (C14)
+	Install        *Record                `protobuf:"bytes,3,opt,name=install,proto3" json:"install,omitempty"`                                      // the newest INSTALL record of the account, if this node has one (M9.1, C14)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1114,6 +1115,13 @@ func (x *LoginResponse) GetInstalledMs() int64 {
 		return x.InstalledMs
 	}
 	return 0
+}
+
+func (x *LoginResponse) GetInstall() *Record {
+	if x != nil {
+		return x.Install
+	}
+	return nil
 }
 
 type BackupAuthRequest struct {
@@ -1661,10 +1669,11 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\n" +
 	"BlobStatus\x12\x16\n" +
 	"\x06chunks\x18\x01 \x01(\rR\x06chunks\x12\x18\n" +
-	"\amissing\x18\x02 \x03(\rR\amissing\"[\n" +
+	"\amissing\x18\x02 \x03(\rR\amissing\"\x87\x01\n" +
 	"\rLoginResponse\x12'\n" +
 	"\x0fregistration_id\x18\x01 \x01(\rR\x0eregistrationId\x12!\n" +
-	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\"/\n" +
+	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\x12*\n" +
+	"\ainstall\x18\x03 \x01(\v2\x10.otter.v1.RecordR\ainstall\"/\n" +
 	"\x11BackupAuthRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\"n\n" +
 	"\x12BackupAuthResponse\x12\x12\n" +
@@ -1766,13 +1775,14 @@ var file_otter_v1_api_proto_depIdxs = []int32{
 	28, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
 	28, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
 	28, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
-	28, // 10: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
-	28, // 11: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	28, // 10: otter.v1.LoginResponse.install:type_name -> otter.v1.Record
+	28, // 11: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
+	28, // 12: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_api_proto_init() }

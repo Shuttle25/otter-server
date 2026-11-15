@@ -1,6 +1,7 @@
 package push
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -27,12 +28,19 @@ func (f *fakeSender) Send(_ context.Context, token string) error {
 type memTokens struct {
 	mu   sync.Mutex
 	toks map[string]string
+	off  map[string]bool
 }
 
-func (m *memTokens) PushToken(_ context.Context, user []byte, device uint32) (string, error) {
+func (m *memTokens) PushTarget(_ context.Context, user []byte, device uint32) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.toks[string(user)], nil
+	return m.toks[string(user)], m.off[string(user)], nil
+}
+
+// PushToken: test helper only (not part of Tokens any more).
+func (m *memTokens) PushToken(ctx context.Context, user []byte, device uint32) (string, error) {
+	tok, _, err := m.PushTarget(ctx, user, device)
+	return tok, err
 }
 
 func (m *memTokens) DropPushToken(_ context.Context, user []byte, device uint32, token string) error {
@@ -131,4 +139,25 @@ func (s *syncBuf) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+func TestPusherMessagesOffStillRingsCalls(t *testing.T) {
+	s := &fakeSender{}
+	toks := &memTokens{toks: map[string]string{"bob": "tok-b"}, off: map[string]bool{"bob": true}}
+	var logs bytes.Buffer
+	p := New(s, toks, slog.New(slog.NewTextHandler(&logs, nil)))
+	ctx := context.Background()
+	p.Wake(ctx, []byte("bob"), 1)
+	p.Wait()
+	if len(s.sent) != 0 {
+		t.Fatalf("message push sent to a calls-only device: %v", s.sent)
+	}
+	if !strings.Contains(logs.String(), "reason=messages_off") {
+		t.Fatalf("skip not logged: %s", logs.String())
+	}
+	p.WakeCall(ctx, []byte("bob"), 1)
+	p.Wait()
+	if len(s.sent) != 1 || s.sent[0] != "tok-b" {
+		t.Fatalf("call push to a calls-only device: %v", s.sent)
+	}
 }

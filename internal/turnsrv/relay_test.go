@@ -112,14 +112,14 @@ func TestNoTCPRelays(t *testing.T) {
 
 func TestRelayPortRange(t *testing.T) {
 	g := &relayGen{
-		base: &turn.RelayAddressGeneratorPortRange{RelayAddress: net.IPv4(127, 0, 0, 1), Address: "127.0.0.1", MinPort: 52150, MaxPort: 52160},
-		own:  []net.IP{net.IPv4(127, 0, 0, 1)}, minPort: 52150, maxPort: 52160, bytesPerSec: 1000, stats: &Stats{}, now: time.Now,
+		base: &turn.RelayAddressGeneratorPortRange{RelayAddress: net.IPv4(127, 0, 0, 1), Address: "127.0.0.1", MinPort: 32150, MaxPort: 32160},
+		own:  []net.IP{net.IPv4(127, 0, 0, 1)}, minPort: 32150, maxPort: 32160, bytesPerSec: 1000, stats: &Stats{}, now: time.Now,
 	}
 	if err := g.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	// RESERVATION-TOKEN / EVEN-PORT can ask for a fixed port: never outside the range
-	for _, p := range []int{52149, 52161, 22, 3478} {
+	for _, p := range []int{32149, 32161, 22, 3478} {
 		if _, _, err := g.AllocatePacketConn(turn.AllocateListenerConfig{Network: "udp4", RequestedPort: p}); err == nil {
 			t.Fatalf("port %d outside the relay range allocated", p)
 		}
@@ -132,7 +132,7 @@ func TestRelayPortRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pc.Close()
-	if p := addr.(*net.UDPAddr).Port; p < 52150 || p > 52160 {
+	if p := addr.(*net.UDPAddr).Port; p < 32150 || p > 32160 {
 		t.Fatalf("relay port %d", p)
 	}
 	if _, ok := pc.(*limitedConn); !ok {

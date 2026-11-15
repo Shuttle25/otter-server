@@ -232,7 +232,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, err
 		}
 		return &pb.PushStatus{HasPush: ok}, nil
-	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack", "push.register":
+	case "prekeys.upload", "msg.send", "msg.ack", "invite.create", "blob.ack", "push.register", "install.publish":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {
 			return nil, err
@@ -242,19 +242,18 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		}
 		allowed := map[string]pb.RecordType{"prekeys.upload": pb.RecordType_PREKEYS, "msg.send": pb.RecordType_ENVELOPE,
 			"msg.ack": pb.RecordType_ACK, "invite.create": pb.RecordType_INVITE, "blob.ack": pb.RecordType_BLOB_FETCHED,
-			"push.register": pb.RecordType_PUSH_TOKEN}[req.Method]
+			"push.register": pb.RecordType_PUSH_TOKEN, "install.publish": pb.RecordType_INSTALL}[req.Method]
 		if req.Method == "msg.ack" && s.replaced() {
 			// its acks would drop the new install's mail; the delivery loop closes the connection after this answer
 			s.kick()
 			return nil, fmt.Errorf("%w: this install was replaced", service.ErrUnauthorized)
 		}
 		body, err := svc.Submit(ctx, s.userID(), r.Record, allowed)
-		if err == nil && body.Type == pb.RecordType_PREKEYS {
-			// a restored phone uploads its newer install over its own session: that session is the new install
-			var p pb.PreKeys
-			if proto.Unmarshal(body.Payload, &p) == nil {
+		if err == nil {
+			// a phone that signs a newer install over its own session is that install (D56): it is not cut off
+			if inst, ok := installOf(body); ok {
 				s.mu.Lock()
-				s.installedMs = max(s.installedMs, p.InstalledMs)
+				s.installedMs = max(s.installedMs, inst)
 				s.mu.Unlock()
 			}
 		}
@@ -262,4 +261,21 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 	default:
 		return nil, fmt.Errorf("%w: unknown method %q", service.ErrInvalid, req.Method)
 	}
+}
+
+// installOf is the install time a PREKEYS or INSTALL record declares (D52, C14).
+func installOf(b *pb.RecordBody) (int64, bool) {
+	switch b.Type {
+	case pb.RecordType_PREKEYS:
+		var p pb.PreKeys
+		if proto.Unmarshal(b.Payload, &p) == nil {
+			return p.InstalledMs, true
+		}
+	case pb.RecordType_INSTALL:
+		var in pb.Install
+		if proto.Unmarshal(b.Payload, &in) == nil {
+			return in.InstalledMs, true
+		}
+	}
+	return 0, false
 }

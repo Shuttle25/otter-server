@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	ProtocolVersion = 1
-	maxFrame        = 1 << 20
-	deliverBatch    = 100
-	writeTimeout    = 10 * time.Second
+	ProtocolVersion   = 1
+	maxFrame          = 1 << 20
+	deliverBatch      = 100
+	deliverBatchBytes = 768 << 10 // one envelopes event; phones refuse frames over 4 MiB (D93)
+	writeTimeout      = 10 * time.Second
 )
 
 type Gateway struct {

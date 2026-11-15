@@ -25,8 +25,10 @@ const (
 	BlobChunkSize      = 256 << 10
 	MaxBlobReaders     = 100
 	MaxBlobTTL         = 31 * 24 * time.Hour
-	MaxPushToken       = 4096 // bytes of an FCM token (D60)
-	MaxNewsText        = 4000 // runes per language of an announcement (D66)
+	MaxPushToken       = 4096             // bytes of an FCM token (D60)
+	MaxNewsText        = 4000             // runes per language of an announcement (D66)
+	MaxInstallSkew     = 10 * time.Minute // INSTALL.installed_ms may be at most this far ahead of the node clock (C14)
+	MaxRegistrationID  = 16380            // Signal registration ids are 1..16380
 )
 
 var (
@@ -229,6 +231,12 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		return checkEnvelope(b)
 	case pb.RecordType_PREKEYS:
 		return checkPrekeys(b)
+	case pb.RecordType_INSTALL:
+		var in pb.Install
+		if err := proto.Unmarshal(b.Payload, &in); err != nil || in.RegistrationId < 1 || in.RegistrationId > MaxRegistrationID ||
+			in.InstalledMs < 0 || in.InstalledMs > v.Now().Add(MaxInstallSkew).UnixMilli() || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
 	}
 	return nil
 }
@@ -260,11 +268,19 @@ func checkEnvelope(b *pb.RecordBody) error {
 	return nil
 }
 
-// checkPushToken: device 1, kind FCM, 1..MaxPushToken bytes of UTF-8 (D60).
+// checkPushToken: device 1, kind FCM; a 1..MaxPushToken-byte UTF-8 token, or withdrawn with no token (D60, D94).
 func checkPushToken(b *pb.RecordBody) error {
 	var p pb.PushToken
-	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM ||
-		len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
+	if err := proto.Unmarshal(b.Payload, &p); err != nil || p.DeviceId != 1 || p.Kind != pb.PushToken_FCM {
+		return ErrBadPayload
+	}
+	if p.Withdrawn {
+		if p.Token != "" || p.MessagesOff {
+			return ErrBadPayload
+		}
+		return nil
+	}
+	if len(p.Token) == 0 || len(p.Token) > MaxPushToken || !utf8.ValidString(p.Token) {
 		return ErrBadPayload
 	}
 	return nil
@@ -352,16 +368,23 @@ func checkBlobMeta(b *pb.RecordBody) error {
 	return nil
 }
 
-// checkBackupMeta: a user's password backup pointer (D50).
+// checkBackupMeta: a user's password backup pointer (D50), or a decoy (version 0, C20): no blob, size 0 and blob key
+// author ‖ 16 zero bytes, so backup.auth answers alike for members with and without a backup.
 func checkBackupMeta(b *pb.RecordBody) error {
 	var m pb.BackupMeta
 	if err := proto.Unmarshal(b.Payload, &m); err != nil {
 		return ErrBadPayload
 	}
 	switch {
-	case b.ExpiresMs != 0, m.Version == 0, len(m.Salt) != 16, len(m.AuthVerifier) != 32,
+	case b.ExpiresMs != 0, len(m.Salt) != 16, len(m.AuthVerifier) != 32,
 		m.KdfMKib < 19456 || m.KdfMKib > 262144, m.KdfT < 1 || m.KdfT > 10, m.KdfP < 1 || m.KdfP > 4,
-		len(m.BlobKey) != 32 || !bytes.Equal(m.BlobKey[:16], b.Author), m.Size == 0 || m.Size > MaxBlobSize:
+		len(m.BlobKey) != 32 || !bytes.Equal(m.BlobKey[:16], b.Author):
+		return ErrBadPayload
+	case m.Version == 0:
+		if m.Size != 0 || !bytes.Equal(m.BlobKey[16:], make([]byte, 16)) {
+			return ErrBadPayload
+		}
+	case m.Size == 0 || m.Size > MaxBlobSize:
 		return ErrBadPayload
 	}
 	return nil

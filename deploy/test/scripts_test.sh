@@ -82,6 +82,36 @@ grep -q '^cp -p /etc/otter/node.toml /etc/otter/node.toml.prev$' deploy/upgrade.
 rollback=$(sed -n '/rolling back/,/^REMOTE$/p' deploy/upgrade.sh)
 grep -q '^cp -p /etc/otter/node.toml.prev /etc/otter/node.toml$' <<< "$rollback" || fail "upgrade.sh: rollback does not restore node.toml"
 
+# --- upgrade.sh (remote part, run locally): backup dir 0700, copies 0600, newest 3 pre-upgrade copies (C26)
+up="$work/up"; mkdir -p "$up/bin" "$up/etc" "$up/lib" "$up/backups"
+printf '#!/bin/sh\nshift 3; exec "$@"\n' > "$up/bin/runuser"
+printf '#!/bin/bash\nargs=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) args+=("$1"); shift;; esac; done\nexec /usr/bin/install "${args[@]}"\n' > "$up/bin/install"
+cat > "$up/bin/otter-node" <<'STUB'
+#!/bin/bash
+case "$1" in
+  version) echo 0.8.1 ;;
+  backup) while (($#)); do [[ "$1" == --out ]] && { umask 022; echo db > "$2"; }; shift; done ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$up/bin/systemctl"; printf '#!/bin/sh\nexit 0\n' > "$up/bin/health.sh"
+chmod +x "$up/bin/"*
+cp "$up/bin/otter-node" "$up/bin/otter-node.new"; echo 'x = 1' > "$up/etc/node.toml"
+chmod 0755 "$up/backups"
+for d in 20250101 20250201 20250301 20250401; do (umask 022; echo old > "$up/backups/pre-upgrade-$d-000000.db"); done
+(umask 022; echo daily > "$up/backups/node-2026-11-01.db")
+sed -n "/^remote \"\$target\" bash -s -- \"\$sum\" <<'REMOTE'$/,/^REMOTE$/p" deploy/upgrade.sh | sed '1d;$d' |
+  sed -e "s#/usr/local/bin/otter-node#$up/bin/otter-node#g" -e "s#/var/backups/otter#$up/backups#g" \
+      -e "s#/var/lib/otter#$up/lib#g" -e "s#/etc/otter#$up/etc#g" -e "s#/usr/local/lib/otter/health.sh#health.sh#g" > "$work/upgrade-local.sh"
+sum=$(sha256sum "$up/bin/otter-node.new" | cut -d' ' -f1)
+PATH="$up/bin:$PATH" bash "$work/upgrade-local.sh" "$sum" > "$work/upgrade-local.out" 2>&1 || fail "upgrade remote part: $(cat "$work/upgrade-local.out")"
+[[ "$(stat -c %a "$up/backups")" == 700 ]] || fail "backup dir mode $(stat -c %a "$up/backups")"
+[[ -z "$(find "$up/backups" -name '*.db' ! -perm 0600)" ]] || fail "backup files not 0600: $(ls -l "$up/backups")"
+[[ "$(ls "$up/backups" | grep -c '^pre-upgrade-')" == 3 ]] || fail "pre-upgrade copies kept: $(ls "$up/backups")"
+[[ ! -e "$up/backups/pre-upgrade-20250101-000000.db" && ! -e "$up/backups/pre-upgrade-20250201-000000.db" ]] || fail "oldest copies not pruned"
+[[ -e "$up/backups/node-2026-11-01.db" ]] || fail "daily copy pruned"
+pr=$(grep -n 'pre-upgrade-\*\.db' deploy/upgrade.sh)
+grep -q 'runuser -u otter -- find .* | sort -zr | tail -zn +4 | runuser -u otter -- xargs -0r rm -f --' <<< "$pr" || fail "prune not as otter: $pr"
+
 # --- status.sh with stubbed ssh: unreachable nodes are reported, exit 1
 mkdir -p "$work/stub"
 printf '#!/bin/sh\necho "ssh: connect to host: Connection refused" >&2\nexit 255\n' > "$work/stub/ssh"
@@ -168,17 +198,59 @@ grep -q 'debug-signed' <<< "$out" || fail "debug APK message: $out"
 if out=$(PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/old.apk" 2>&1); then fail "wrong versionName accepted"; fi
 grep -q "versionName is '0.0.0-old'" <<< "$out" || fail "versionName message: $out"
 [[ ! -e "$work/ssh.log" ]] || fail "refused APK reached ssh/scp"
-out=$(PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/good.apk" < /dev/null 2>&1) || fail "release-apk: $out"
+# release-apk uses its own ssh stub: it answers 'version', records the remote command as the remote shell would
+# split it, and keeps what arrived on stdin (C3: the APK travels on ssh stdin, never via scp or /tmp)
+mkdir -p "$work/stub-apk"
+cat > "$work/stub-apk/ssh" <<STUB
+#!/bin/bash
+echo "ssh \$*" >> "$work/ssh.log"
+target=\$3; shift 3
+case "\$*" in *"otter-node version"*) echo "\${NODE_VERSION:-0.8.3}"; exit 0 ;; esac
+eval "set -- \$*"
+printf '%s\n' "\$@" > "$work/remote-\$target.cmd"
+cat > "$work/remote-\$target.stdin"
+case "\$target" in *"\$SSH_FAIL"*) [ -n "\$SSH_FAIL" ] && exit 1 ;; esac
+exit 0
+STUB
+chmod +x "$work/stub-apk/ssh"
+apkpath="$work/stub-apk:$work/stub:$PATH"
+if out=$(NODE_VERSION=0.8.1 PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "release to a 0.8.1 node accepted"; fi
+grep -q 'runs otter-node 0.8.1: upgrade it to 0.8.3' <<< "$out" || fail "old node message: $out"
+[[ ! -e "$work/remote-root@n1.example.stdin" ]] || fail "APK sent to an old node"
+out=$(PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" < /dev/null 2>&1) || fail "release-apk: $out"
 sha=$(sha256sum "$work/good.apk" | cut -d' ' -f1)
-grep -q "^scp -q -P 22 .*good.apk root@n1.example:/tmp/otter-$sha.apk$" "$work/ssh.log" || fail "upload n1: $(cat "$work/ssh.log")"
-grep -q "^scp -q -P 2222 .*good.apk root@n2.example:/tmp/otter-$sha.apk$" "$work/ssh.log" || fail "upload n2: $(cat "$work/ssh.log")"
-[[ "$(grep -c "^ssh -p .* root@n[12].example /usr/local/bin/otter-node apk import --config /etc/otter/node.toml /tmp/otter-$sha.apk" "$work/ssh.log")" == 2 ]] ||
-  fail "apk import: $(cat "$work/ssh.log")"
+if grep -q '^scp\|/tmp/otter-' "$work/ssh.log"; then fail "release-apk still uses scp or /tmp: $(cat "$work/ssh.log")"; fi
+for t in root@n1.example root@n2.example; do
+  cmp -s "$work/remote-$t.stdin" "$work/good.apk" || fail "$t: APK not streamed on stdin"
+  c="$work/remote-$t.cmd"
+  [[ "$(sed -n 1,2p "$c" | tr '\n' ' ')" == "bash -c " ]] || fail "$t: not bash -c: $(cat "$c")"
+  grep -qF 'd=$(mktemp -d /root/otter-apk.XXXXXX)' "$c" || fail "$t: no root-only temp dir: $(cat "$c")"
+  grep -qF 'sha256sum --quiet -c' "$c" || fail "$t: no checksum: $(cat "$c")"
+  grep -qF 'runuser -u otter -- /usr/local/bin/otter-node apk import --config /etc/otter/node.toml - < "$d/app.apk"' "$c" ||
+    fail "$t: import not as otter from stdin: $(cat "$c")"
+  [[ "$(sed -n 5p "$c")" == "$sha" ]] || fail "$t: sha not passed: $(cat "$c")"
+done
 grep -q "news: deploy/news-dialog.sh 0.0.0-st --apk .*good.apk --version-code 6" <<< "$out" || fail "release-apk news hint: $out"
 [[ ! -e "$work/announce.log" ]] || fail "release-apk announced without a terminal"
-rm -f "$work/ssh.log"
-if out=$(SCP_FAIL=n2.example PATH="$work/stub:$PATH" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "failed upload ignored"; fi
-grep -q 'upload to n2 failed' <<< "$out" || fail "upload failure message: $out"
+# run the remote script itself with stub runuser/otter-node: imported as sent, temp dir removed; a bad sum imports nothing
+ra="$work/remote-apk"; mkdir -p "$ra/bin" "$ra/root"
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-u otter --" ] || exit 9\nshift 3; exec "$@"\n' > "$ra/bin/runuser"
+printf '#!/bin/sh\n[ "$*" = "apk import --config /etc/otter/node.toml -" ] || exit 9\ncat > "%s/imported"\n' "$ra" > "$ra/bin/otter-node"
+chmod +x "$ra/bin/"*
+script=$(sed -n 3p "$work/remote-root@n1.example.cmd" | sed -e "s#/root/otter-apk#$ra/root/otter-apk#" -e "s#/usr/local/bin/otter-node#otter-node#")
+# hostile layout: the node user planted the old predictable upload path as a link to a file of root's
+mkdir -p "$ra/tmp"; printf 'root only' > "$ra/victim"; ln -s "$ra/victim" "$ra/tmp/otter-$sha.apk"
+TMPDIR="$ra/tmp" PATH="$ra/bin:$PATH" bash -c "$script" import "$sha" < "$work/good.apk" || fail "remote script failed"
+cmp -s "$ra/imported" "$work/good.apk" || fail "remote script: imported bytes differ"
+[[ -z "$(ls -A "$ra/root")" ]] || fail "remote script left its temp dir"
+[[ "$(cat "$ra/victim")" == 'root only' ]] || fail "remote script wrote through the planted link"
+rm -f "$ra/imported"
+if PATH="$ra/bin:$PATH" bash -c "$script" import "$(printf '0%.0s' {1..64})" < "$work/good.apk" >/dev/null 2>&1; then fail "bad sum accepted"; fi
+[[ ! -e "$ra/imported" ]] || fail "bad sum imported"
+[[ -z "$(ls -A "$ra/root")" ]] || fail "remote script left its temp dir after a bad sum"
+rm -f "$work/ssh.log" "$work"/remote-root@*
+if out=$(SSH_FAIL=n2.example PATH="$apkpath" deploy/release-apk.sh 0.0.0-st "$work/good.apk" --no-news 2>&1); then fail "failed import ignored"; fi
+grep -q 'apk import on n2 failed' <<< "$out" || fail "import failure message: $out"
 
 mkdir -p dist/news
 printf '## ru\n\nВышла версия 0.0.0-st.\nОбновите приложение.\n\n## en\nVersion 0.0.0-st is out.\n' > dist/news/0.0.0-st.md
@@ -268,6 +340,111 @@ grep -q '49160:49200/udp' deploy/bundle/install.sh || fail "install.sh firewall:
 grep -q 'if \[\[ "\$turn_ufw" == 1 \]\]; then' deploy/bundle/install.sh || fail "install.sh changes ufw for TURN without a yes"
 grep -q 'cloud firewall: also open UDP 3478, TCP 3478, TCP 5349, UDP 49160-49200' deploy/bundle/install.sh || fail "install.sh cloud reminder"
 grep -q 'OTTER_TURN_UFW=\$turn_ufw ./bundle-' deploy/push.sh || fail "push.sh does not pass the ufw answer"
+
+# --- root-run steps never write into the node user's directories (C3 class, D82)
+grep -nH '/var/lib/otter\|/var/backups/otter' deploy/bundle/install.sh deploy/upgrade.sh deploy/release-apk.sh |
+  grep -v -e 'runuser -u otter --' -e 'install -d -o otter -g otter -m 0700 /var/\(lib\|backups\)/otter$' \
+    -e ':backup=/var/backups/otter/pre-upgrade-' -e ':  useradd --system --home-dir /var/lib/otter --no-create-home ' \
+    > "$work/rootwrites" || true
+[[ ! -s "$work/rootwrites" ]] || fail "root-run lines touching otter's directories: $(cat "$work/rootwrites")"
+grep -qF 'runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml - < "$f"' deploy/bundle/install.sh ||
+  fail "install.sh: invites not imported as otter from stdin"
+# The same, executed: install.sh and the upgrade.sh rollback run against a fake root. A guard stands in for the
+# root/otter split: every file tool refuses to act as root (no OTTER_AS=otter) on a path inside otter's directories,
+# and only 'runuser -u otter --' sets OTTER_AS=otter. The node user plants links; the deploy steps must not follow them.
+fr="$work/fakeroot"
+mkdir -p "$fr/bin" "$fr/etc/otter" "$fr/etc/systemd/system" "$fr/var/lib" "$fr/var/backups" "$fr/usr/local/bin" \
+  "$fr/usr/local/lib/otter" "$fr/bundle/site/css" "$fr/bundle/invites"
+for t in install cp tar mkdir chown chmod rm ln mv touch; do
+  cat > "$fr/bin/$t" <<STUB
+#!/bin/bash
+if [ "\$OTTER_AS" != otter ]; then
+  for a in "\$@"; do case "\$a" in "$fr/var/lib/otter/"*|"$fr/var/backups/otter/"*) echo "root $t \$*" >> "$fr/violations"; exit 1 ;; esac; done
+fi
+[ $t = chown ] && exit 0  # not root here: ownership is the guard's job
+args=(); skip=0
+for a in "\$@"; do if ((skip)); then skip=0; elif [ $t = install ] && [[ "\$a" == -[og] ]]; then skip=1; else args+=("\$a"); fi; done
+exec $(command -v $t) "\${args[@]}"
+STUB
+done
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-u otter --" ] || exit 9\nshift 3; OTTER_AS=otter exec "$@"\n' > "$fr/bin/runuser"
+printf '#!/bin/sh\ncase "$1" in is-active) [ "$3" = chrony ] ;; esac\n' > "$fr/bin/systemctl"
+printf '#!/bin/sh\necho yes\n' > "$fr/bin/timedatectl"
+printf '#!/bin/sh\nexit 0\n' > "$fr/bin/id"
+printf '#!/bin/sh\nexit 0\n' > "$fr/bin/ss"
+printf '#!/bin/sh\necho x86_64\n' > "$fr/bin/uname"
+printf '#!/bin/sh\necho "Status: inactive"\n' > "$fr/bin/ufw"
+chmod +x "$fr/bin/"*
+printf 'ID=debian\n' > "$fr/etc/os-release"
+paths=(-e "s#/etc/otter#$fr/etc/otter#g" -e "s#/etc/os-release#$fr/etc/os-release#g" -e "s#/etc/systemd/system#$fr/etc/systemd/system#g"
+  -e "s#/var/lib/otter#$fr/var/lib/otter#g" -e "s#/var/backups/otter#$fr/var/backups/otter#g"
+  -e "s#/usr/local/bin/#$fr/usr/local/bin/#g" -e "s#/usr/local/lib/otter#$fr/usr/local/lib/otter#g")
+b="$fr/bundle"
+sed "${paths[@]}" -e 's/\$EUID -eq 0/0 -eq 0/' deploy/bundle/install.sh > "$b/install.sh"
+# the node binary: imports what arrives on stdin (as otter only), reports itself, backs up per $BACKUP_MODE
+cat > "$b/otter-node-amd64" <<STUB
+#!/bin/bash
+case "\$1" in
+  version) echo 0.8.3 ;;
+  check) exit 0 ;;
+  import) [ "\$OTTER_AS" = otter ] && [ "\${@: -1}" = - ] || exit 9; cat >> "$fr/imported" ;;
+  backup) out=\${@: -1}; if [ "\$BACKUP_MODE" = link ]; then ln -s "$fr/rootsecret" "\$out"; else echo db-copy > "\$out"; fi ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$b/health.sh"
+chmod +x "$b/otter-node-amd64" "$b/health.sh" "$b/install.sh"
+for f in node.key tls.key manifest.bin tls.crt uninstall.sh backup.sh otter-node.service otter-backup.service otter-backup.timer; do echo "$f" > "$b/$f"; done
+printf 'data_dir = "/var/lib/otter"\n' > "$b/node.toml"
+printf 'OTTER_PORT=27443\nOTTER_PROBE_URL=https://192.0.2.1:27443/\n' > "$b/probe.env"
+echo '<html>decoy</html>' > "$b/site/index.html"; echo 'body{}' > "$b/site/css/a.css"
+printf 'invite-1' > "$b/invites/a.bin"
+(cd "$b" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+fakeinstall() { rm -f "$fr/violations" "$fr/imported"; (cd "$b" && PATH="$fr/bin:$PATH" bash ./install.sh) > "$work/install.out" 2>&1; }
+fakeinstall || fail "fake-root install: $(cat "$work/install.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "install.sh as root inside otter's directories: $(cat "$fr/violations")"
+cmp -s "$fr/var/lib/otter/site/css/a.css" "$b/site/css/a.css" || fail "install.sh did not unpack the site"
+[[ "$(cat "$fr/imported")" == invite-1 ]] || fail "invite not imported on otter's stdin"
+if compgen -G "$fr/var/lib/otter/import-*" >/dev/null; then fail "invite copied into otter's directory"; fi
+# hostile layout: otter replaced its site directory with a link to a directory of root's (read-only for otter)
+mkdir -p "$fr/victim"; chmod 0555 "$fr/victim"
+mv "$fr/var/lib/otter/site" "$fr/var/lib/otter/site.real"; ln -s "$fr/victim" "$fr/var/lib/otter/site"
+if fakeinstall; then fail "install.sh followed the planted site link"; fi
+[[ ! -e "$fr/violations" ]] || fail "install.sh as root inside otter's directories: $(cat "$fr/violations")"
+[[ -z "$(ls -A "$fr/victim")" && "$(stat -c %a "$fr/victim")" == 555 ]] || fail "the link target was changed"
+chmod 0755 "$fr/victim"; rm "$fr/var/lib/otter/site"; mv "$fr/var/lib/otter/site.real" "$fr/var/lib/otter/site"
+# upgrade.sh rollback (health check fails once): the pre-upgrade copy is restored by otter, never by root
+sed -n "/<<'REMOTE'$/,/^REMOTE$/p" deploy/upgrade.sh | sed -e 1d -e '$d' | sed "${paths[@]}" > "$fr/upgrade-remote.sh"
+printf '#!/bin/sh\n[ -e "%s/healthy-once" ] && exit 0; touch "%s/healthy-once"; exit 1\n' "$fr" "$fr" > "$fr/usr/local/lib/otter/health.sh"
+chmod +x "$fr/usr/local/lib/otter/health.sh"
+printf 'secret of root' > "$fr/rootsecret"; chmod 0000 "$fr/rootsecret"
+fakeupgrade() {
+  rm -f "$fr/violations" "$fr/healthy-once" "$fr/var/lib/otter/node.db" "$fr/var/backups/otter/"*; cp "$b/otter-node-amd64" "$fr/usr/local/bin/otter-node.new"
+  cp "$b/node.toml" "$fr/etc/otter/node.toml"
+  if [[ -n "${PLANT:-}" ]]; then  # otter's own layout: old 0644 copies and a link to root's file among them
+    for d in 1 2 3 4; do (umask 022; echo old > "$fr/var/backups/otter/pre-upgrade-2025010$d-000000.db"); done
+    ln -s "$fr/rootsecret" "$fr/var/backups/otter/node-planted.db"
+  fi
+  PATH="$fr/bin:$PATH" bash "$fr/upgrade-remote.sh" "$(sha256sum "$fr/usr/local/bin/otter-node.new" | cut -d' ' -f1)" > "$work/upgrade.out" 2>&1
+}
+rc=0; BACKUP_MODE=file fakeupgrade || rc=$?
+[[ $rc == 2 ]] || fail "fake-root rollback exit $rc: $(cat "$work/upgrade.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh rollback as root inside otter's directories: $(cat "$fr/violations")"
+[[ "$(cat "$fr/var/lib/otter/node.db")" == db-copy && "$(stat -c %a "$fr/var/lib/otter/node.db")" == 600 ]] ||
+  fail "rollback did not restore the copy 0600"
+# hostile layout: the 'backup' is otter's link to a file only root may read; the rollback must not copy it out
+rc=0; BACKUP_MODE=link fakeupgrade || rc=$?
+[[ $rc != 0 ]] || fail "rollback restored through a planted link"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh rollback as root inside otter's directories: $(cat "$fr/violations")"
+if grep -qs 'secret of root' "$fr/var/lib/otter/node.db"; then fail "rollback handed root's file to otter"; fi
+# hostile layout: the 0600 pass and the pruning (C26) run as otter and never chmod through otter's planted link
+rc=0; PLANT=1 BACKUP_MODE=file fakeupgrade || rc=$?
+[[ $rc == 2 ]] || fail "fake-root upgrade with planted copies exit $rc: $(cat "$work/upgrade.out" "$fr/violations" 2>/dev/null)"
+[[ ! -e "$fr/violations" ]] || fail "upgrade.sh as root inside otter's directories: $(cat "$fr/violations")"
+[[ "$(stat -c %a "$fr/rootsecret")" == 0 ]] || fail "the 0600 pass changed root's file through a link"
+[[ "$(stat -c %a "$fr/var/backups/otter")" == 700 ]] || fail "fake-root backup dir mode $(stat -c %a "$fr/var/backups/otter")"
+[[ "$(find "$fr/var/backups/otter" -name 'pre-upgrade-*' -type f | wc -l)" == 3 && -z "$(find "$fr/var/backups/otter" -type f ! -perm 0600)" ]] ||
+  fail "fake-root copies after upgrade: $(ls -l "$fr/var/backups/otter")"
+chmod 0600 "$fr/rootsecret"
 
 # make-bundle.sh: [turn] with the node's IP only for 0.8.0+
 printf 'fake' > dist/otter-node_0.8.0-st_linux_amd64; printf 'fake' > dist/otter-node_0.8.0-st_linux_arm64

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -565,5 +566,61 @@ func TestRunTurnStartFailure(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("netlog: %+v", es)
+	}
+}
+
+func TestApkImportRefusesRoot(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	apkFile := filepath.Join(t.TempDir(), "x.apk")
+	if err := os.WriteFile(apkFile, []byte("apk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	geteuid = func() int { return 0 }
+	defer func() { geteuid = os.Geteuid }()
+	err := run(context.Background(), []string{"apk", "import", "--config", cfg, apkFile}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "never as root") {
+		t.Fatalf("root import: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(cfg), "data", "apk")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("apk dir touched as root: %v", err)
+	}
+}
+
+func TestApkImportFromStdin(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	data := bytes.Repeat([]byte("apk!"), 1000)
+	stdin = bytes.NewReader(data)
+	defer func() { stdin = os.Stdin }()
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"apk", "import", "--config", cfg, "-"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if want := fmt.Sprintf("-: stored %x\n", sum); out.String() != want {
+		t.Fatalf("output %q, want %q", out.String(), want)
+	}
+	orig := filepath.Join(t.TempDir(), "orig.apk")
+	os.WriteFile(orig, data, 0o644)
+	link := filepath.Join(t.TempDir(), "link.apk")
+	os.Symlink(orig, link)
+	if err := run(context.Background(), []string{"apk", "import", "--config", cfg, link}, &out); err == nil {
+		t.Fatal("symlink imported")
+	}
+}
+
+func TestImportRecordFromStdin(t *testing.T) {
+	cfg, manifest, _, _, _ := testNode(t)
+	raw, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdin = bytes.NewReader(raw)
+	defer func() { stdin = os.Stdin }()
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"import", "--config", cfg, "-"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "-: applied\n" {
+		t.Fatalf("output %q", out.String())
 	}
 }

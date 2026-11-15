@@ -29,6 +29,20 @@ step "install (push.sh)"
 deploy/make-bundle.sh vm 0.0.1-e2e
 deploy/push.sh vm "$T"
 [[ "$(vmsh /usr/local/bin/otter-node version)" == 0.0.1-e2e ]] || fail "installed version"
+step "root deploy steps never follow the node user's links (C3, D82)"
+if vmsh /usr/local/bin/otter-node apk import --config /etc/otter/node.toml /etc/hostname; then fail "apk import ran as root"; fi
+vmsh 'runuser -u otter -- sh -c "rm -rf /var/lib/otter/apk && ln -s /etc /var/lib/otter/apk"'
+if printf 'apk' | vmsh 'runuser -u otter -- /usr/local/bin/otter-node apk import --config /etc/otter/node.toml -'; then
+  fail "otter wrote an APK into /etc"
+fi
+vmsh 'runuser -u otter -- sh -c "mv /var/lib/otter/site /var/lib/otter/site.real && ln -s /etc /var/lib/otter/site"'
+deploy/make-bundle.sh vm 0.0.1-e2e >/dev/null
+if deploy/push.sh vm "$T" >/dev/null 2>&1; then fail "install followed the planted site link"; fi
+[[ "$(vmsh stat -c %U:%G /etc)" == root:root ]] || fail "/etc owner changed"
+vmsh 'test -z "$(find /etc -maxdepth 1 -user otter)"' || fail "otter-owned files in /etc"
+vmsh 'rm /var/lib/otter/apk /var/lib/otter/site && mv /var/lib/otter/site.real /var/lib/otter/site'
+deploy/make-bundle.sh vm 0.0.1-e2e >/dev/null
+deploy/push.sh vm "$T" >/dev/null || fail "re-install after cleanup"
 [[ -z "$(ls "$OTTER_ADMIN_DIR"/invites/*.bin 2>/dev/null)" ]] || fail "bootstrap invite not moved to delivered/"
 step "install again (idempotent)"
 deploy/make-bundle.sh vm 0.0.1-e2e

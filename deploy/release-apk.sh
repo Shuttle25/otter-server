@@ -23,12 +23,22 @@ code=$(sed -n "s/.* versionCode='\([0-9]*\)'.*/\1/p" <<< "$badging" | head -1)
 sha=$(sha256sum "$apk" | cut -d' ' -f1)
 labels=$(node_labels)
 for l in $labels; do host_lookup "$l" || die "node $l has no SSH target: deploy/hosts.sh set $l root@HOST"; done
+# C3 (D82): nodes before 0.8.3 import APKs as root; refuse them before anything is sent
+for l in $labels; do
+  host_lookup "$l"
+  export OTTER_SSH_PORT=$TARGET_PORT SSH_PORT=$TARGET_PORT
+  v=$(remote "$TARGET" /usr/local/bin/otter-node version < /dev/null) || die "cannot reach $l"
+  version_ge "$v" 0.8.3 || die "node $l runs otter-node $v: upgrade it to 0.8.3 or newer first (deploy/upgrade-all.sh)"
+done
+# The APK arrives on ssh stdin in a fresh root-only directory (mktemp -d: 0700, unpredictable name), is checked
+# there, and reaches the importer, which runs as otter, only as an open file on its stdin. Root never opens a path
+# the node user can write (C3, D82).
+import_cmd='set -euo pipefail; d=$(mktemp -d /root/otter-apk.XXXXXX); trap '"'"'rm -rf "$d"'"'"' EXIT; cat > "$d/app.apk"; echo "$1  $d/app.apk" | sha256sum --quiet -c; runuser -u otter -- /usr/local/bin/otter-node apk import --config /etc/otter/node.toml - < "$d/app.apk"'
 for l in $labels; do
   host_lookup "$l"
   export OTTER_SSH_PORT=$TARGET_PORT SSH_PORT=$TARGET_PORT
   say "copying APK $version ($code) to $l"
-  upload "$TARGET" "$apk" "/tmp/otter-$sha.apk" || die "upload to $l failed (run release-apk.sh again)"
-  remote "$TARGET" "/usr/local/bin/otter-node apk import --config /etc/otter/node.toml /tmp/otter-$sha.apk; rc=\$?; rm -f /tmp/otter-$sha.apk; exit \$rc" \
+  remote "$TARGET" "bash -c $(printf '%q' "$import_cmd") import $sha" < "$apk" \
     || die "apk import on $l failed (run release-apk.sh again)"
 done
 say "APK $version ($code) is on every node (sha256 $sha)"

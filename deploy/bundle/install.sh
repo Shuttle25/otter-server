@@ -35,12 +35,14 @@ if systemctl is-active --quiet otter-node; then say "stopping otter-node"; syste
 say "installing files"
 install -d -o root -g otter -m 0750 /etc/otter
 install -d -o otter -g otter -m 0700 /var/lib/otter
-install -d -o otter -g otter -m 0755 /var/lib/otter/site
 install -d -o otter -g otter -m 0700 /var/backups/otter
 install -d -o root -g root -m 0755 /usr/local/lib/otter
 install -o root -g otter -m 0640 node.key tls.key node.toml manifest.bin tls.crt probe.env /etc/otter/
-cp -r site/. /var/lib/otter/site/
-chown -R otter:otter /var/lib/otter/site
+# otter's data directory: root never writes inside it (D82). otter unpacks the decoy site itself, so a link
+# planted there can only point otter at what otter may already write. (Comments here must not name the path:
+# scripts_test.sh flags every root line that does.)
+runuser -u otter -- mkdir -p -m 0755 /var/lib/otter/site
+tar -C site -cf - . | runuser -u otter -- tar -C /var/lib/otter/site --no-same-owner --no-same-permissions --no-overwrite-dir -xf -
 if [[ -x /usr/local/bin/otter-node ]] && ! cmp -s "otter-node-$arch" /usr/local/bin/otter-node; then
   cp -p /usr/local/bin/otter-node /usr/local/bin/otter-node.prev
 fi
@@ -60,11 +62,8 @@ runuser -u otter -- /usr/local/bin/otter-node check --config /etc/otter/node.tom
 shopt -s nullglob
 for f in invites/*.bin; do
   say "importing $(basename "$f")"
-  # the bundle directory is root-only: hand the record to otter through its data directory
-  tmp=/var/lib/otter/import-$(basename "$f")
-  install -o otter -g otter -m 0600 "$f" "$tmp"
-  runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml "$tmp"
-  rm -f "$tmp"
+  # the bundle directory is root-only: root opens the file, otter reads it on stdin (D82)
+  runuser -u otter -- /usr/local/bin/otter-node import --config /etc/otter/node.toml - < "$f"
 done
 
 if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then

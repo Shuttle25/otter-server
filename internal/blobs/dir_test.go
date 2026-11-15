@@ -47,3 +47,25 @@ func TestDir(t *testing.T) {
 		t.Fatalf("keys after remove %x", keys)
 	}
 }
+
+func TestBadKeysRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "blobs")
+	d, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range [][]byte{nil, {0xab}, make([]byte, 31), make([]byte, 33)} {
+		if err := d.Write(k, 0, []byte("x")); !errors.Is(err, ErrBadKey) {
+			t.Fatalf("write %d-byte key: %v", len(k), err)
+		}
+		if _, err := d.Read(k, 0); !errors.Is(err, ErrBadKey) {
+			t.Fatalf("read %d-byte key: %v", len(k), err)
+		}
+		if err := d.Remove(k); !errors.Is(err, ErrBadKey) {
+			t.Fatalf("remove %d-byte key: %v", len(k), err)
+		}
+	}
+	if e, _ := os.ReadDir(root); len(e) != 0 {
+		t.Fatalf("bad keys created %d entries", len(e))
+	}
+}

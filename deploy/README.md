@@ -36,7 +36,7 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | Task | Command |
 |------|---------|
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
-| Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual; a rollback also restores `node.toml` from `node.toml.prev`) |
+| Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual; a rollback also restores `node.toml` from `node.toml.prev`; the DB copy is 0600, the newest 3 `pre-upgrade-*.db` are kept, and the copy, pruning and restore run as `otter`, D82/D84) |
 | All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts (+ `turn_allocs=`), disk, push, TURN, then the last 5 connectivity log lines per node; exit 1 on any problem) |
 | TURN relay (calls) on a node | `deploy/turn-setup.sh fi-1 [--if-missing] [--force]` (0.8.0+; `upgrade-all.sh` runs it; below) |
 | REALITY on a node | `deploy/reality-setup.sh fi-1 --dest dl.google.com [--port 443] [--force]` → `manifest sign` + `manifest publish` (below) |
@@ -45,7 +45,7 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
 | Push wake-ups | `deploy/push-key.sh fi-1 ~/fcm.json` → `otter-admin node set-push --label fi-1` → `manifest sign` + `manifest publish` |
-| Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` |
+| Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` (7 copies, 0600 in the 0700 `/var/backups/otter`) |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 
 ## REALITY and dial-out-only nodes (M7, D70–D74)
@@ -165,8 +165,10 @@ Releasing an app version (APK signed with the release keystore, not the debug ke
 deploy/release-apk.sh 0.6.0 path/to/app-release.apk [--no-news]
 ```
 
-It refuses a debug-signed APK or a versionName ≠ VERSION, copies the APK to every node (`otter-node apk import`,
-newest 2 kept), then — from a terminal, unless `--no-news` — opens the news dialog with an «Обновить» button for
+It refuses a debug-signed APK or a versionName ≠ VERSION, and refuses to release while any node runs otter-node
+older than 0.8.3. It streams the APK over ssh into a root-only temp directory, checks its SHA-256 and imports it as
+`otter` (nodes must run 0.8.3+; `runuser -u otter -- otter-node apk import … - < APK`, newest 2 kept; `apk import`
+refuses to run as root, D82), then — from a terminal, unless `--no-news` — opens the news dialog with an «Обновить» button for
 this APK. `upgrade-all.sh VERSION` opens the same dialog (without the button) after a successful run.
 
 The dialog (`deploy/news-dialog.sh VERSION [--apk FILE --version-code N]`) reads the draft `dist/news/VERSION.md`

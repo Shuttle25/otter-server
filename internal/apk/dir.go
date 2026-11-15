@@ -4,6 +4,7 @@ package apk
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,21 +30,48 @@ func New(path string) (*Dir, error) {
 
 func hexName(sum []byte) string { return hex.EncodeToString(sum) + ".apk" }
 
-// Import copies src into the directory under its SHA-256 and prunes old files. Returns the sum.
-// Run as root (deploy), the file and the directory are given to the owner of the data dir (the node user).
+var (
+	ErrNotRegular = errors.New("apk: not a regular file")
+	ErrEmpty      = errors.New("apk: empty file")
+)
+
+// Import copies the regular file src into the directory under its SHA-256 and prunes old files. Returns the sum.
+// src is opened without following a symlink and must be a regular file (O_NONBLOCK: a FIFO cannot stall it).
+// Runs as the node user only: `otter-node apk import` refuses root (C3, D82).
 func (d *Dir) Import(src string) ([]byte, error) {
-	in, err := os.Open(src)
+	in, err := os.OpenFile(src, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer in.Close()
+	st, err := in.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: %w", src, ErrNotRegular)
+	}
+	return d.ImportReader(in)
+}
+
+// ImportReader stores everything read from r (deploy streams the APK on stdin) and prunes old files.
+func (d *Dir) ImportReader(r io.Reader) ([]byte, error) {
 	tmp, err := os.CreateTemp(d.path, ".import-*")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), in); err != nil {
+	n, err := io.Copy(io.MultiWriter(tmp, h), r)
+	if err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if n == 0 {
+		tmp.Close()
+		return nil, ErrEmpty
+	}
+	if err := tmp.Chmod(0o640); err != nil {
 		tmp.Close()
 		return nil, err
 	}
@@ -51,19 +79,7 @@ func (d *Dir) Import(src string) ([]byte, error) {
 		return nil, err
 	}
 	sum := h.Sum(nil)
-	if err := os.Chmod(tmp.Name(), 0o640); err != nil {
-		return nil, err
-	}
-	if st, err := os.Stat(filepath.Dir(d.path)); err == nil && os.Geteuid() == 0 {
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok { // the node user owns its data dir
-			if err := os.Chown(tmp.Name(), int(sys.Uid), int(sys.Gid)); err != nil {
-				return nil, err
-			}
-			if err := os.Chown(d.path, int(sys.Uid), int(sys.Gid)); err != nil {
-				return nil, err
-			}
-		}
-	}
+	// rename replaces whatever holds the final name (a planted symlink included) and never writes through it
 	if err := os.Rename(tmp.Name(), filepath.Join(d.path, hexName(sum))); err != nil {
 		return nil, err
 	}

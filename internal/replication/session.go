@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/blobs"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/service"
 )
@@ -88,6 +89,11 @@ func (s *session) run() error {
 			}
 		case *pb.PeerFrame_BlobGet:
 			g := k.BlobGet
+			if len(g.BlobKey) != blobs.KeyLen { // hostile or broken peer: answer "missing", keep the session (C11)
+				s.r.log.Warn("peer asked for a malformed blob key", "peer", fmt.Sprintf("%x", s.peer), "len", len(g.BlobKey))
+				s.send(blobChunk(g.Req, nil))
+				continue
+			}
 			select {
 			case s.serveSem <- struct{}{}:
 			default: // busy: answer "missing" rather than block replication
@@ -96,6 +102,12 @@ func (s *session) run() error {
 			}
 			go func() {
 				defer func() { <-s.serveSem }()
+				defer func() {
+					if p := recover(); p != nil { // one bad request must never stop the node (D83)
+						s.r.log.Error("serving a blob chunk panicked", "peer", fmt.Sprintf("%x", s.peer), "panic", p)
+						s.send(blobChunk(g.Req, nil))
+					}
+				}()
 				data, ok, err := s.r.svc.LocalChunk(s.ctx, g.BlobKey, g.Index)
 				if err != nil || !ok {
 					data = nil

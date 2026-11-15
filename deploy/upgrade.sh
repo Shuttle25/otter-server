@@ -16,9 +16,13 @@ say() { printf '==> %s\n' "$*"; }
 echo "$sum  /usr/local/bin/otter-node.new" | sha256sum --quiet -c
 chmod 0755 /usr/local/bin/otter-node.new
 ts=$(date +%Y%m%d-%H%M%S)
+install -d -o otter -g otter -m 0700 /var/backups/otter
 backup=/var/backups/otter/pre-upgrade-$ts.db
 say "backing up the database to $backup (installed binary: $(/usr/local/bin/otter-node version))"
 runuser -u otter -- /usr/local/bin/otter-node backup --config /etc/otter/node.toml --out "$backup"
+# C26 (D84): copies made before 0.8.3 are 0644; keep the newest 3 pre-upgrade copies. All as otter (D82).
+runuser -u otter -- find /var/backups/otter -maxdepth 1 -type f -name '*.db' -exec chmod 0600 {} +
+runuser -u otter -- find /var/backups/otter -maxdepth 1 -type f -name 'pre-upgrade-*.db' -print0 | sort -zr | tail -zn +4 | runuser -u otter -- xargs -0r rm -f --
 say "swapping binaries"
 systemctl stop otter-node
 cp -p /usr/local/bin/otter-node /usr/local/bin/otter-node.prev
@@ -34,8 +38,9 @@ systemctl stop otter-node || true
 mv /usr/local/bin/otter-node /usr/local/bin/otter-node.failed
 cp -p /usr/local/bin/otter-node.prev /usr/local/bin/otter-node
 cp -p /etc/otter/node.toml.prev /etc/otter/node.toml
-rm -f /var/lib/otter/node.db-wal /var/lib/otter/node.db-shm
-install -o otter -g otter -m 0600 "$backup" /var/lib/otter/node.db
+runuser -u otter -- rm -f /var/lib/otter/node.db-wal /var/lib/otter/node.db-shm
+# as otter: the backup sits in otter's directory and could be a planted link (D82)
+runuser -u otter -- install -m 0600 "$backup" /var/lib/otter/node.db
 systemctl start otter-node || true
 if /usr/local/lib/otter/health.sh; then
   say "rolled back to $(/usr/local/bin/otter-node version); the failed binary is /usr/local/bin/otter-node.failed"

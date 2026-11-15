@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -319,4 +320,78 @@ func AddReality(dir string, s RealitySpec) (*pb.Endpoint, error) {
 	}
 	n.Endpoints = append(keep, ep)
 	return ep, saveNodes(dir, st.Nodes)
+}
+
+type WSSSpec struct {
+	Label, Host string
+	Port        uint32
+	CDN         bool   // behind a CDN: no pins, the CDN's certificate is checked against the CAs (D131)
+	Priority    uint32 // higher = tried later; nodes and phones try the node's own endpoint first
+}
+
+// AddWSS adds (or replaces, same host and port) an extra WSS endpoint after the node's own (D131). The secret path is
+// the node's; Endpoints[0] (the pinned, direct endpoint that rotate-tls, set-ip and dns use) never changes.
+func AddWSS(dir string, s WSSSpec) (*pb.Endpoint, error) {
+	st, err := LoadState(dir)
+	if err != nil {
+		return nil, err
+	}
+	n, err := findNode(st, s.Label)
+	if err != nil {
+		return nil, err
+	}
+	if s.Host == "" || s.Port == 0 || s.Port > 65535 {
+		return nil, errors.New("--host and a --port between 1 and 65535 are required")
+	}
+	if len(n.Endpoints) == 0 || n.Endpoints[0].Kind != pb.Endpoint_WSS {
+		return nil, fmt.Errorf("node %s has no WSS endpoint to take the secret path from", s.Label)
+	}
+	own := n.Endpoints[0]
+	if strings.EqualFold(own.Host, s.Host) && own.Port == s.Port {
+		return nil, errors.New("that is the node's own endpoint")
+	}
+	ep := &pb.Endpoint{Kind: pb.Endpoint_WSS, Host: s.Host, Port: s.Port, Path: own.Path, ViaCdn: s.CDN, Priority: s.Priority}
+	if !s.CDN {
+		for _, p := range own.TlsSpkiPins {
+			ep.TlsSpkiPins = append(ep.TlsSpkiPins, bytes.Clone(p))
+		}
+	}
+	keep := n.Endpoints[:1]
+	for _, e := range n.Endpoints[1:] {
+		if e.Kind == pb.Endpoint_WSS && strings.EqualFold(e.Host, s.Host) && e.Port == s.Port {
+			continue
+		}
+		keep = append(keep, e)
+	}
+	n.Endpoints = append(keep, ep)
+	return ep, saveNodes(dir, st.Nodes)
+}
+
+// RemoveEndpoint removes an extra WSS endpoint (host and port); the node's own endpoint cannot be removed.
+func RemoveEndpoint(dir, label, host string, port uint32) error {
+	st, err := LoadState(dir)
+	if err != nil {
+		return err
+	}
+	n, err := findNode(st, label)
+	if err != nil {
+		return err
+	}
+	if len(n.Endpoints) > 0 && strings.EqualFold(n.Endpoints[0].Host, host) && n.Endpoints[0].Port == port {
+		return errors.New("that is the node's own endpoint; use 'node remove' or 'node set-ip'")
+	}
+	keep := n.Endpoints[:0]
+	found := false
+	for _, e := range n.Endpoints {
+		if e.Kind == pb.Endpoint_WSS && strings.EqualFold(e.Host, host) && e.Port == port {
+			found = true
+			continue
+		}
+		keep = append(keep, e)
+	}
+	if !found {
+		return fmt.Errorf("node %s has no WSS endpoint %s:%d", label, host, port)
+	}
+	n.Endpoints = keep
+	return saveNodes(dir, st.Nodes)
 }

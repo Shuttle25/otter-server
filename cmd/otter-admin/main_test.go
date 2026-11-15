@@ -365,3 +365,33 @@ func TestDialOutOnlyAndRealityCLI(t *testing.T) {
 		t.Fatal("add-reality accepted a bad public key")
 	}
 }
+
+func TestAddWSSCLI(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	for _, s := range [][]string{
+		{"--dir", dir, "network", "init"},
+		{"--dir", dir, "node", "add", "--label", "fi-1", "--wss-host", "chat.example.org"},
+	} {
+		if err := run(s, &out, strings.NewReader("")); err != nil {
+			t.Fatalf("%v: %v", s, err)
+		}
+	}
+	out.Reset()
+	if err := run([]string{"--dir", dir, "node", "add-wss", "--label", "fi-1", "--host", "n2.example.net", "--cdn"}, &out, nil); err != nil ||
+		!strings.Contains(out.String(), "WSS n2.example.net:443 cdn=true priority=10 pins=0") {
+		t.Fatalf("add-wss: %v %s", err, out.String())
+	}
+	out.Reset()
+	if err := run([]string{"--dir", dir, "node", "list"}, &out, nil); err != nil || strings.Count(out.String(), "fi-1") != 2 {
+		t.Fatalf("node list: %v %s", err, out.String())
+	}
+	out.Reset()
+	if err := run([]string{"--dir", dir, "node", "remove-endpoint", "--label", "fi-1", "--host", "n2.example.net", "--port", "443"}, &out, nil); err != nil {
+		t.Fatalf("remove-endpoint: %v %s", err, out.String())
+	}
+	if err := run([]string{"--dir", dir, "node", "remove-endpoint", "--label", "fi-1", "--host", "chat.example.org", "--port", "27443"}, &out, nil); err == nil {
+		t.Fatal("removed the node's own endpoint")
+	}
+}

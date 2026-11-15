@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"ottermsg/server/internal/netlog"
@@ -79,9 +80,22 @@ func (p *partition) Block(a, b *simNode) {
 	p.blocked[key(a.id, b.id)] = true
 	ra, rb := p.repls[string(a.id)], p.repls[string(b.id)]
 	p.mu.Unlock()
-	ra.DropPeer(b.id)
-	rb.DropPeer(a.id)
+	// A dial that passed the gate before Block may still be in its node handshake and register a session after a
+	// single DropPeer (more likely since peer sessions ping and redial, D130). Keep cutting for longer than one
+	// handshake can take; after that every new dial is refused by the gate.
+	until := time.Now().Add(blockSettle)
+	for {
+		ra.DropPeer(b.id)
+		rb.DropPeer(a.id)
+		if time.Now().After(until) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
+
+// blockSettle exceeds the test handshake timeout (5 × dial = 250 ms, replication.SetTestTimings in newSim).
+const blockSettle = 400 * time.Millisecond
 
 func (p *partition) Heal(a, b *simNode) {
 	p.mu.Lock()

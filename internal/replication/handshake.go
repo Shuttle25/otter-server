@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	ProtocolVersion  = 1
-	maxSkew          = 5 * time.Minute
-	handshakeTimeout = 10 * time.Second
+	ProtocolVersion = 1
+	maxSkew         = 5 * time.Minute
 )
+
+var handshakeTimeout = 10 * time.Second // var: tests shorten it (SetTestTimings)
 
 // readFrame reads one peer frame; n is the payload length received.
 func readFrame(ctx context.Context, c *websocket.Conn) (f *pb.PeerFrame, n int, err error) {

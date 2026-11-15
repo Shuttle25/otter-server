@@ -100,6 +100,80 @@ below 0.7.0 by hand, remove its `[reality]` section (older binaries refuse unkno
 endpoint left in the manifest then only costs peers one failed dial before WSS. The drop-in
 `/etc/systemd/system/otter-node.service.d/reality.conf` may stay.
 
+## CDN-fronted endpoint (Cloudflare, D130–D131)
+
+**When.** A censor freezes every connection to a foreign node's address after a few KB (seen from ru-1 to eeee,
+2026-11-15: WSS and REALITY on that address both froze, while a CDN passed bulk data). From 0.9.1 nodes ping peer
+sessions every 25 s and end a session after 60 s without a pong; such a frozen outbound session counts as
+`reset_after_kb` and a handshake failing after a good dial marks the endpoint failed (D130), so the dialer moves on to
+the next endpoint. Give the frozen node an extra, unpinned WSS endpoint behind a CDN (D131): priority 10, so nodes and
+phones use it only after the direct endpoints fail. `Endpoints[0]` stays the node's own pinned endpoint.
+
+First effect, before any CDN (on the node that cannot get through, e.g. ru-1):
+
+```bash
+ssh root@ru-1 'runuser -u otter -- /usr/local/bin/otter-node netlog --config /etc/otter/node.toml --limit 15'
+# eeee  ping  out  fail timeout
+# wss:<eeee-ip>:27443  out  fail reset_after_kb (frozen: …)
+```
+
+**1. CDN dashboard** (a domain already in the CDN account; not the name phones use for the node, so it can be dropped
+without touching anything else). `<cdn-host>` is that name; it never goes into a repo.
+
+1. DNS → Add record: type `A`, name = the `<cdn-host>` label, IPv4 `<eeee-ip>`, **Proxy status: Proxied** (orange).
+2. Rules → Origin Rules → Create: "Hostname equals `<cdn-host>`" → Destination port: **rewrite to 27443** (the node's
+   WSS port).
+3. Rules → Configuration Rules → Create: "Hostname equals `<cdn-host>`" → SSL: **Full** (not "Full (strict)": the
+   node's certificate is self-signed and pinned). Leave the zone's default SSL mode as it is.
+4. Network → WebSockets: **On** (default).
+5. Do **not** enable caching rules, "Always use HTTPS" redirects to other ports, Rocket Loader or Bot Fight Mode for
+   this name; they can break the WebSocket upgrade.
+
+**2. Test the CDN path** (from the laptop, then from the node that cannot get through):
+
+```bash
+curl -s -o /dev/null --max-time 10 -w 'site: %{http_code}\n' https://<cdn-host>/
+curl -s -o /dev/null --max-time 5 --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H "Sec-WebSocket-Key: $(head -c 16 /dev/urandom | base64)" \
+  -w 'peer: %{http_code}\n' https://<cdn-host>/<secret-path>/peer
+```
+
+`<secret-path>` is the part after the port in the node's `otter-admin node list` WSS line (without the leading `/`).
+Expected: `site: 200` (the camouflage site through the CDN), `peer: 101`. `site: 52x` = origin rule or SSL mode
+wrong; `peer: 400/426` = WebSockets off or the path wrong.
+
+**3. Add the endpoint and publish** (laptop, admin binary 0.9.1+; `manifest sign` asks for the passphrase):
+
+```bash
+otter-admin node add-wss --label eeee --host <cdn-host> --port 443 --cdn --priority 10
+otter-admin node list                     # a second eeee WSS line with cdn=true pin=-
+otter-admin manifest sign
+otter-admin manifest publish --via eeee --via ru-1
+```
+
+Expected: `node eeee: WSS <cdn-host>:443 cdn=true priority=10 pins=0`; publish prints `ok` (or `already current`)
+per node. If publishing via ru-1 times out, eeee's copy still reaches ru-1 over the next short session.
+
+**4. Confirm** (on ru-1, after ~15 min):
+
+```bash
+ssh root@ru-1 'runuser -u otter -- /usr/local/bin/otter-node netlog --config /etc/otter/node.toml --limit 10'
+ssh root@ru-1 'journalctl -u otter-node --since "-30min" -o cat | grep -E "peer session (up|down)" | tail -5'
+```
+
+Expected: newest netlog lines `wss:<cdn-host>:443 out ok`; one `peer session up` and no `down` after it. Then send a
+photo from a phone on ru-1 to a phone on eeee.
+
+**Rollback** (only if the CDN path misbehaves):
+
+```bash
+otter-admin node remove-endpoint --label eeee --host <cdn-host> --port 443
+otter-admin manifest sign && otter-admin manifest publish --via eeee --via ru-1
+```
+
+then delete the DNS record and both rules in the CDN dashboard. `remove-endpoint` refuses the node's own endpoint
+(`Endpoints[0]`).
+
 ## Calls (TURN, M8, D77)
 
 Every 0.8.0+ node embeds a TURN relay for 1:1 audio calls. Phones get short-lived credentials from their node

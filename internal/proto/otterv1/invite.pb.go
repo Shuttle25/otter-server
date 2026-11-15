@@ -31,6 +31,7 @@ type InviteBundle struct {
 	InviterAccountPub  []byte                 `protobuf:"bytes,5,opt,name=inviter_account_pub,json=inviterAccountPub,proto3" json:"inviter_account_pub,omitempty"`
 	InviterIdentityPub []byte                 `protobuf:"bytes,6,opt,name=inviter_identity_pub,json=inviterIdentityPub,proto3" json:"inviter_identity_pub,omitempty"`
 	InviterName        string                 `protobuf:"bytes,7,opt,name=inviter_name,json=inviterName,proto3" json:"inviter_name,omitempty"`
+	Invite             *Record                `protobuf:"bytes,8,opt,name=invite,proto3" json:"invite,omitempty"` // M9.2: the signed INVITE (its redeem_pub matches secret)
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -114,11 +115,18 @@ func (x *InviteBundle) GetInviterName() string {
 	return ""
 }
 
+func (x *InviteBundle) GetInvite() *Record {
+	if x != nil {
+		return x.Invite
+	}
+	return nil
+}
+
 var File_otter_v1_invite_proto protoreflect.FileDescriptor
 
 const file_otter_v1_invite_proto_rawDesc = "" +
 	"\n" +
-	"\x15otter/v1/invite.proto\x12\botter.v1\x1a\x16otter/v1/records.proto\"\xa2\x02\n" +
+	"\x15otter/v1/invite.proto\x12\botter.v1\x1a\x16otter/v1/records.proto\"\xcc\x02\n" +
 	"\fInviteBundle\x12\x1f\n" +
 	"\vnetwork_pub\x18\x01 \x01(\fR\n" +
 	"networkPub\x12,\n" +
@@ -127,7 +135,8 @@ const file_otter_v1_invite_proto_rawDesc = "" +
 	"\x0finviter_user_id\x18\x04 \x01(\fR\rinviterUserId\x12.\n" +
 	"\x13inviter_account_pub\x18\x05 \x01(\fR\x11inviterAccountPub\x120\n" +
 	"\x14inviter_identity_pub\x18\x06 \x01(\fR\x12inviterIdentityPub\x12!\n" +
-	"\finviter_name\x18\a \x01(\tR\vinviterNameBV\n" +
+	"\finviter_name\x18\a \x01(\tR\vinviterName\x12(\n" +
+	"\x06invite\x18\b \x01(\v2\x10.otter.v1.RecordR\x06inviteBV\n" +
 	"\x15app.ottermsg.proto.v1B\vInviteProtoP\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -149,11 +158,12 @@ var file_otter_v1_invite_proto_goTypes = []any{
 }
 var file_otter_v1_invite_proto_depIdxs = []int32{
 	1, // 0: otter.v1.InviteBundle.manifest:type_name -> otter.v1.Record
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: otter.v1.InviteBundle.invite:type_name -> otter.v1.Record
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_invite_proto_init() }

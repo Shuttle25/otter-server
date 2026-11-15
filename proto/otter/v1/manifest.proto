@@ -12,6 +12,7 @@ message Manifest {
   repeated NodeInfo nodes = 4;
   uint32 min_app_version = 5;
   repeated bytes news_keys = 6; // Ed25519 public keys allowed to sign announcements (D65)
+  repeated bytes founding_members = 8; // M9.2 (D100): user_ids admitted without an invite chain
 }
 
 message NodeInfo {

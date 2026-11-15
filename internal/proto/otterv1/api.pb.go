@@ -1174,6 +1174,7 @@ type BackupAuthResponse struct {
 	KdfMKib       uint32                 `protobuf:"varint,2,opt,name=kdf_m_kib,json=kdfMKib,proto3" json:"kdf_m_kib,omitempty"`
 	KdfT          uint32                 `protobuf:"varint,3,opt,name=kdf_t,json=kdfT,proto3" json:"kdf_t,omitempty"`
 	KdfP          uint32                 `protobuf:"varint,4,opt,name=kdf_p,json=kdfP,proto3" json:"kdf_p,omitempty"`
+	Candidates    []string               `protobuf:"bytes,10,rep,name=candidates,proto3" json:"candidates,omitempty"` // M9.2 (D103): the name is shared after a clash; retry with each "name#tag"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1236,6 +1237,66 @@ func (x *BackupAuthResponse) GetKdfP() uint32 {
 	return 0
 }
 
+func (x *BackupAuthResponse) GetCandidates() []string {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+// admin.users: Ed25519 by the network key over AdminAuthMessage(node_id, hello nonce, ts_ms).
+type AdminRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TsMs          int64                  `protobuf:"varint,1,opt,name=ts_ms,json=tsMs,proto3" json:"ts_ms,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdminRequest) Reset() {
+	*x = AdminRequest{}
+	mi := &file_otter_v1_api_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdminRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdminRequest) ProtoMessage() {}
+
+func (x *AdminRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdminRequest.ProtoReflect.Descriptor instead.
+func (*AdminRequest) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *AdminRequest) GetTsMs() int64 {
+	if x != nil {
+		return x.TsMs
+	}
+	return 0
+}
+
+func (x *AdminRequest) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 type BackupFetchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
@@ -1246,7 +1307,7 @@ type BackupFetchRequest struct {
 
 func (x *BackupFetchRequest) Reset() {
 	*x = BackupFetchRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[20]
+	mi := &file_otter_v1_api_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1258,7 +1319,7 @@ func (x *BackupFetchRequest) String() string {
 func (*BackupFetchRequest) ProtoMessage() {}
 
 func (x *BackupFetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[20]
+	mi := &file_otter_v1_api_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1271,7 +1332,7 @@ func (x *BackupFetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupFetchRequest.ProtoReflect.Descriptor instead.
 func (*BackupFetchRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{20}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BackupFetchRequest) GetUsername() string {
@@ -1298,7 +1359,7 @@ type BackupFetchResponse struct {
 
 func (x *BackupFetchResponse) Reset() {
 	*x = BackupFetchResponse{}
-	mi := &file_otter_v1_api_proto_msgTypes[21]
+	mi := &file_otter_v1_api_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1310,7 +1371,7 @@ func (x *BackupFetchResponse) String() string {
 func (*BackupFetchResponse) ProtoMessage() {}
 
 func (x *BackupFetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[21]
+	mi := &file_otter_v1_api_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1323,7 +1384,7 @@ func (x *BackupFetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupFetchResponse.ProtoReflect.Descriptor instead.
 func (*BackupFetchResponse) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{21}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BackupFetchResponse) GetBackupMeta() *Record {
@@ -1351,7 +1412,7 @@ type ApkGetRequest struct {
 
 func (x *ApkGetRequest) Reset() {
 	*x = ApkGetRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[22]
+	mi := &file_otter_v1_api_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1363,7 +1424,7 @@ func (x *ApkGetRequest) String() string {
 func (*ApkGetRequest) ProtoMessage() {}
 
 func (x *ApkGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[22]
+	mi := &file_otter_v1_api_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1376,7 +1437,7 @@ func (x *ApkGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApkGetRequest.ProtoReflect.Descriptor instead.
 func (*ApkGetRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{22}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ApkGetRequest) GetSha256() []byte {
@@ -1403,7 +1464,7 @@ type ApkChunk struct {
 
 func (x *ApkChunk) Reset() {
 	*x = ApkChunk{}
-	mi := &file_otter_v1_api_proto_msgTypes[23]
+	mi := &file_otter_v1_api_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1415,7 +1476,7 @@ func (x *ApkChunk) String() string {
 func (*ApkChunk) ProtoMessage() {}
 
 func (x *ApkChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[23]
+	mi := &file_otter_v1_api_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1428,7 +1489,7 @@ func (x *ApkChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApkChunk.ProtoReflect.Descriptor instead.
 func (*ApkChunk) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{23}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ApkChunk) GetData() []byte {
@@ -1458,7 +1519,7 @@ type TurnCredentials struct {
 
 func (x *TurnCredentials) Reset() {
 	*x = TurnCredentials{}
-	mi := &file_otter_v1_api_proto_msgTypes[24]
+	mi := &file_otter_v1_api_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1470,7 +1531,7 @@ func (x *TurnCredentials) String() string {
 func (*TurnCredentials) ProtoMessage() {}
 
 func (x *TurnCredentials) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[24]
+	mi := &file_otter_v1_api_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1483,7 +1544,7 @@ func (x *TurnCredentials) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnCredentials.ProtoReflect.Descriptor instead.
 func (*TurnCredentials) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{24}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TurnCredentials) GetUsername() string {
@@ -1524,7 +1585,7 @@ type PushStatusRequest struct {
 
 func (x *PushStatusRequest) Reset() {
 	*x = PushStatusRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[25]
+	mi := &file_otter_v1_api_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1597,7 @@ func (x *PushStatusRequest) String() string {
 func (*PushStatusRequest) ProtoMessage() {}
 
 func (x *PushStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[25]
+	mi := &file_otter_v1_api_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1610,7 @@ func (x *PushStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushStatusRequest.ProtoReflect.Descriptor instead.
 func (*PushStatusRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{25}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *PushStatusRequest) GetUserId() []byte {
@@ -1568,7 +1629,7 @@ type PushStatus struct {
 
 func (x *PushStatus) Reset() {
 	*x = PushStatus{}
-	mi := &file_otter_v1_api_proto_msgTypes[26]
+	mi := &file_otter_v1_api_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1580,7 +1641,7 @@ func (x *PushStatus) String() string {
 func (*PushStatus) ProtoMessage() {}
 
 func (x *PushStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[26]
+	mi := &file_otter_v1_api_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1593,7 +1654,7 @@ func (x *PushStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushStatus.ProtoReflect.Descriptor instead.
 func (*PushStatus) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{26}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *PushStatus) GetHasPush() bool {
@@ -1675,12 +1736,19 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\x12*\n" +
 	"\ainstall\x18\x03 \x01(\v2\x10.otter.v1.RecordR\ainstall\"/\n" +
 	"\x11BackupAuthRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\"n\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"\x8e\x01\n" +
 	"\x12BackupAuthResponse\x12\x12\n" +
 	"\x04salt\x18\x01 \x01(\fR\x04salt\x12\x1a\n" +
 	"\tkdf_m_kib\x18\x02 \x01(\rR\akdfMKib\x12\x13\n" +
 	"\x05kdf_t\x18\x03 \x01(\rR\x04kdfT\x12\x13\n" +
-	"\x05kdf_p\x18\x04 \x01(\rR\x04kdfP\"Q\n" +
+	"\x05kdf_p\x18\x04 \x01(\rR\x04kdfP\x12\x1e\n" +
+	"\n" +
+	"candidates\x18\n" +
+	" \x03(\tR\n" +
+	"candidates\"A\n" +
+	"\fAdminRequest\x12\x13\n" +
+	"\x05ts_ms\x18\x01 \x01(\x03R\x04tsMs\x12\x1c\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"Q\n" +
 	"\x12BackupFetchRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1f\n" +
 	"\vauth_secret\x18\x02 \x01(\fR\n" +
@@ -1732,7 +1800,7 @@ func file_otter_v1_api_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_api_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_otter_v1_api_proto_goTypes = []any{
 	(Status)(0),                 // 0: otter.v1.Status
 	(*Frame)(nil),               // 1: otter.v1.Frame
@@ -1755,29 +1823,30 @@ var file_otter_v1_api_proto_goTypes = []any{
 	(*LoginResponse)(nil),       // 18: otter.v1.LoginResponse
 	(*BackupAuthRequest)(nil),   // 19: otter.v1.BackupAuthRequest
 	(*BackupAuthResponse)(nil),  // 20: otter.v1.BackupAuthResponse
-	(*BackupFetchRequest)(nil),  // 21: otter.v1.BackupFetchRequest
-	(*BackupFetchResponse)(nil), // 22: otter.v1.BackupFetchResponse
-	(*ApkGetRequest)(nil),       // 23: otter.v1.ApkGetRequest
-	(*ApkChunk)(nil),            // 24: otter.v1.ApkChunk
-	(*TurnCredentials)(nil),     // 25: otter.v1.TurnCredentials
-	(*PushStatusRequest)(nil),   // 26: otter.v1.PushStatusRequest
-	(*PushStatus)(nil),          // 27: otter.v1.PushStatus
-	(*Record)(nil),              // 28: otter.v1.Record
+	(*AdminRequest)(nil),        // 21: otter.v1.AdminRequest
+	(*BackupFetchRequest)(nil),  // 22: otter.v1.BackupFetchRequest
+	(*BackupFetchResponse)(nil), // 23: otter.v1.BackupFetchResponse
+	(*ApkGetRequest)(nil),       // 24: otter.v1.ApkGetRequest
+	(*ApkChunk)(nil),            // 25: otter.v1.ApkChunk
+	(*TurnCredentials)(nil),     // 26: otter.v1.TurnCredentials
+	(*PushStatusRequest)(nil),   // 27: otter.v1.PushStatusRequest
+	(*PushStatus)(nil),          // 28: otter.v1.PushStatus
+	(*Record)(nil),              // 29: otter.v1.Record
 }
 var file_otter_v1_api_proto_depIdxs = []int32{
 	2,  // 0: otter.v1.Frame.request:type_name -> otter.v1.Request
 	3,  // 1: otter.v1.Frame.response:type_name -> otter.v1.Response
 	4,  // 2: otter.v1.Frame.event:type_name -> otter.v1.Event
 	0,  // 3: otter.v1.Response.status:type_name -> otter.v1.Status
-	28, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
-	28, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
-	28, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
-	28, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
-	28, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
-	28, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
-	28, // 10: otter.v1.LoginResponse.install:type_name -> otter.v1.Record
-	28, // 11: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
-	28, // 12: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
+	29, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
+	29, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
+	29, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
+	29, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
+	29, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
+	29, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
+	29, // 10: otter.v1.LoginResponse.install:type_name -> otter.v1.Record
+	29, // 11: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
+	29, // 12: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
 	13, // [13:13] is the sub-list for method output_type
 	13, // [13:13] is the sub-list for method input_type
 	13, // [13:13] is the sub-list for extension type_name
@@ -1802,7 +1871,7 @@ func file_otter_v1_api_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_api_proto_rawDesc), len(file_otter_v1_api_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

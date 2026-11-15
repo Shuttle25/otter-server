@@ -102,3 +102,22 @@ func TestPeerAuthMessage(t *testing.T) {
 		t.Fatal("peer and client contexts must differ")
 	}
 }
+
+func TestInviteRedeemKey(t *testing.T) {
+	secret := bytes.Repeat([]byte{7}, 32)
+	k1, err := InviteRedeemKey(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2, _ := InviteRedeemKey(secret)
+	if !k1.Equal(k2) {
+		t.Fatal("not deterministic")
+	}
+	if _, err := InviteRedeemKey(secret[:31]); err == nil {
+		t.Fatal("short secret accepted")
+	}
+	m := RedeemMessage(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 16), bytes.Repeat([]byte{3}, 32))
+	if len(m) != len("otter-invite-redeem-v1")+80 || string(m[:22]) != "otter-invite-redeem-v1" {
+		t.Fatalf("message %x", m)
+	}
+}

@@ -51,6 +51,8 @@ message DirectoryEntry {
   uint64 version = 7;
   bool can_invite = 8;
   int64 registered_ms = 9; // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
+  bytes invite_record = 10; // M9.2 (D100): the inviter's signed INVITE Record (serialized); copied into later versions
+  bytes invite_proof = 11;  // M9.2 (D100): Ed25519 by the invite's redeem key over RedeemMessage(invite_id, user_id, account_pub)
 }
 
 message Revocation {
@@ -67,6 +69,7 @@ message InviteRights {
 message Invite {
   bytes invite_id = 1;   // SHA-256(secret)
   int64 expires_ms = 2;
+  bytes redeem_pub = 3;  // M9.2 (D100): Ed25519 public key of HKDF-SHA256(secret, "otter/invite-redeem/v1")
 }
 
 message InviteUsed {

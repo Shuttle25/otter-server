@@ -48,16 +48,24 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` (7 copies, 0600 in the 0700 `/var/backups/otter`) |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 
-## REALITY and dial-out-only nodes (M7, D70–D74)
+## REALITY and dial-out-only nodes (M7, D70–D74, D132)
 
-**When.** A node inside a censored network (Russia) cannot be dialed from abroad and its outgoing WSS gets
-throttled. Mark it **dial-out-only** (it dials the other nodes, nobody dials it) and give the foreign nodes it talks
-to a **VLESS+REALITY** listener on :443 (D72). To a censor's probe that port looks like the camouflage site; only
-peers holding the node's public key get through. Phones still use WSS (D75).
+**A node in Russia: do NOT set dial-out-only (D132).** The real network (2026-11-15) showed the opposite of the M7
+assumption: every connection ru-1 started to a foreign node froze after ~11–20 KB (direct WSS, REALITY on :443, and
+a CDN-proxied endpoint alike), while connections started from abroad into ru-1 carried bulk data. So a node in
+Russia keeps `dial_out_only` **off** and its node port reachable from abroad; the foreign nodes dial it, and one
+session carries both directions. If a Russian node was marked earlier: `otter-admin node set-dial-out-only --label L
+--off` → `manifest sign` + `manifest publish`. The 25 s ping (D130, 0.9.1+) ends a frozen session either way.
 
-**Dial-out-only.** `add-node.sh` asks «Is LABEL inside a censored network?» for a new node (or pass
-`--dial-out-only` / `--no-dial-out-only`). For an existing node: `otter-admin node set-dial-out-only --label L
-[--off]` → `manifest sign` + `manifest publish`. A re-run of `add-node.sh` never changes the flag.
+**Dial-out-only** is only for a node that cannot accept inbound connections at all (e.g. behind NAT): it dials the
+other nodes, nobody dials it. `add-node.sh` asks «Make LABEL dial-out-only? … [y/N]» for a
+new node (or pass `--dial-out-only` / `--no-dial-out-only`; default No = dialed normally). For an existing node:
+`otter-admin node set-dial-out-only --label L [--off]` → `manifest sign` + `manifest publish`. A re-run of
+`add-node.sh` never changes the flag.
+
+**REALITY** (D72) stays available: a **VLESS+REALITY** listener on :443 of a node, which to a censor's probe looks
+like the camouflage site; only peers holding the node's public key get through. Phones still use WSS (D75). It did
+not help a node in Russia reach foreign hosting (D132).
 
 **Camouflage site.** Pick a big foreign TLS 1.3 + HTTP/2 site that is not blocked and test it **from the node**
 (that is where REALITY forwards probes):
@@ -102,8 +110,12 @@ endpoint left in the manifest then only costs peers one failed dial before WSS. 
 
 ## CDN-fronted endpoint (Cloudflare, D130–D131)
 
+**Not for a node in Russia (D132).** From ru-1 (2026-11-15) the CDN route froze too: the CDN's own content passed,
+but traffic the CDN proxied from a foreign origin stopped at ~18–20 KB, like the direct links. A node in Russia is
+dialed from abroad instead (see above). The steps below stay as a generic capability for other censors.
+
 **When.** A censor freezes every connection to a foreign node's address after a few KB (seen from ru-1 to eeee,
-2026-11-15: WSS and REALITY on that address both froze, while a CDN passed bulk data). From 0.9.1 nodes ping peer
+2026-11-15: WSS and REALITY on that address both froze). From 0.9.1 nodes ping peer
 sessions every 25 s and end a session after 60 s without a pong; such a frozen outbound session counts as
 `reset_after_kb` and a handshake failing after a good dial marks the endpoint failed (D130), so the dialer moves on to
 the next endpoint. Give the frozen node an extra, unpinned WSS endpoint behind a CDN (D131): priority 10, so nodes and

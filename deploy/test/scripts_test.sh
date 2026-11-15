@@ -78,6 +78,7 @@ bin/otter-admin --dir "$OTTER_ADMIN_DIR" manifest sign >/dev/null
 rm -f "$work/admin.log"
 
 # --- upgrade.sh keeps node.toml.prev and restores it on rollback
+sed -n "/<<'REMOTE'/,/^REMOTE$/p" deploy/upgrade.sh | sed -n 2,4p | grep -qx 'cd /' || fail "upgrade.sh remote part does not cd / (otter's find fails in /root)"
 grep -q '^cp -p /etc/otter/node.toml /etc/otter/node.toml.prev$' deploy/upgrade.sh || fail "upgrade.sh: no node.toml backup"
 rollback=$(sed -n '/rolling back/,/^REMOTE$/p' deploy/upgrade.sh)
 grep -q '^cp -p /etc/otter/node.toml.prev /etc/otter/node.toml$' <<< "$rollback" || fail "upgrade.sh: rollback does not restore node.toml"

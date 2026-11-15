@@ -11,6 +11,8 @@ upload "$target" "$bin" /usr/local/bin/otter-node.new
 set +e
 remote "$target" bash -s -- "$sum" <<'REMOTE'
 set -euo pipefail
+# root's ssh session starts in /root, which otter cannot enter; `find` run as otter must return to its start dir
+cd /
 sum=$1
 say() { printf '==> %s\n' "$*"; }
 echo "$sum  /usr/local/bin/otter-node.new" | sha256sum --quiet -c

@@ -158,6 +158,38 @@ func TestValidate(t *testing.T) {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_USED, Author: userID,
 				Payload: payload(&pb.InviteUsed{InviteId: make([]byte, 32), UserId: revID})}, userPriv)
 		}, ErrBadPayload},
+		{"revocation ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: netID,
+				Payload: payload(&pb.Revocation{UserId: userID, Reason: strings.Repeat("я", 200)})}, netPriv)
+		}, nil},
+		{"revocation short user_id", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: netID,
+				Payload: payload(&pb.Revocation{UserId: make([]byte, 15), Reason: "left"})}, netPriv)
+		}, ErrBadPayload},
+		{"revocation long reason", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: netID,
+				Payload: payload(&pb.Revocation{UserId: userID, Reason: strings.Repeat("я", 201)})}, netPriv)
+		}, ErrBadPayload},
+		{"revocation expiring", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: netID, ExpiresMs: now.UnixMilli() + 1000,
+				Payload: payload(&pb.Revocation{UserId: userID})}, netPriv)
+		}, ErrBadPayload},
+		{"revocation by a user", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: userID,
+				Payload: payload(&pb.Revocation{UserId: revID})}, userPriv)
+		}, ErrBadAuthor},
+		{"invite_rights ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_RIGHTS, Author: netID,
+				Payload: payload(&pb.InviteRights{UserId: userID, Version: 1})}, netPriv)
+		}, nil},
+		{"invite_rights version 0", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_RIGHTS, Author: netID,
+				Payload: payload(&pb.InviteRights{UserId: userID, CanInvite: true})}, netPriv)
+		}, ErrBadPayload},
+		{"invite_rights short user_id", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_RIGHTS, Author: netID,
+				Payload: payload(&pb.InviteRights{UserId: make([]byte, 17), Version: 1})}, netPriv)
+		}, ErrBadPayload},
 		{"envelope ok", func() *pb.Record {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_ENVELOPE, Author: userID,
 				Payload: payload(envelope(userID, 1, pb.Envelope_SIGNAL, []*pb.Recipient{{User: revID, Device: 1, Content: []byte{1}}}))}, userPriv)

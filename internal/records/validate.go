@@ -190,6 +190,17 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		if err := proto.Unmarshal(b.Payload, &m); err != nil || !bytes.Equal(m.NetworkPub, v.NetworkPub) || m.Version == 0 {
 			return ErrBadPayload
 		}
+	case pb.RecordType_REVOCATION: // D99: permanent, so no expiry
+		var r pb.Revocation
+		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || !utf8.ValidString(r.Reason) ||
+			utf8.RuneCountInString(r.Reason) > 200 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
+	case pb.RecordType_INVITE_RIGHTS:
+		var r pb.InviteRights
+		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || r.Version == 0 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
 	case pb.RecordType_DIRECTORY_ENTRY:
 		var e pb.DirectoryEntry
 		_ = proto.Unmarshal(b.Payload, &e) // already parsed in signerKey

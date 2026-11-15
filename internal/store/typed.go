@@ -332,6 +332,20 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=? AND type=?`, d.Target, int32(pb.RecordType_ANNOUNCEMENT))
 		return err
 
+	case pb.RecordType_REVOCATION: // network-signed (D99)
+		var r pb.Revocation
+		if err := proto.Unmarshal(b.Payload, &r); err != nil {
+			return err
+		}
+		return applyRevocation(ctx, tx, b, &r)
+
+	case pb.RecordType_INVITE_RIGHTS: // network-signed (D99, D101)
+		var r pb.InviteRights
+		if err := proto.Unmarshal(b.Payload, &r); err != nil {
+			return err
+		}
+		return applyInviteRights(ctx, tx, b, &r)
+
 	case pb.RecordType_MANIFEST:
 		var m pb.Manifest
 		if err := proto.Unmarshal(b.Payload, &m); err != nil {
@@ -436,11 +450,7 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 		name, conflict = conflictName(e.Username, e.UserId), 1
 	}
 	if !exists {
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO users(user_id,username,account_pub,entry_key,version,can_invite,created_ms,entry_created_ms,username_conflict)
-			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			e.UserId, name, e.AccountPub, it.key, e.Version, boolInt(e.CanInvite), now, rank, conflict)
-		return err
+		return insertUser(ctx, tx, it, e, name, conflict, rank, now)
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, entry_created_ms=?, username_conflict=? WHERE user_id=?`,
 		name, it.key, e.Version, rank, conflict, e.UserId)

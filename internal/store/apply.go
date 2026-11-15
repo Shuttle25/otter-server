@@ -20,6 +20,9 @@ const (
 type Item struct {
 	Record *pb.Record
 	Body   *pb.RecordBody
+	// Admission: for a DIRECTORY_ENTRY of a user this node does not know yet, what the service derived from its
+	// invite chain (D100). nil for everything else (and in store tests: legacy rank).
+	Admission *Admission
 }
 
 type item struct {
@@ -27,6 +30,7 @@ type item struct {
 	body     *pb.RecordBody
 	origin   []byte
 	fromPeer bool // replicated: business conflicts never fail
+	adm      *Admission
 }
 
 type applyReq struct {
@@ -55,7 +59,7 @@ func toItem(it Item, origin []byte) (item, error) {
 	if err != nil {
 		return item{}, err
 	}
-	return item{key: key, raw: raw, body: it.Body, origin: origin}, nil
+	return item{key: key, raw: raw, body: it.Body, origin: origin, adm: it.Admission}, nil
 }
 
 // Apply stores a validated record. Idempotent by author||id.
@@ -65,7 +69,7 @@ func (s *Store) Apply(ctx context.Context, rec *pb.Record, body *pb.RecordBody) 
 
 // ApplyFrom is Apply with the node that first accepted the record (mailbox origin).
 func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBody, origin []byte) (int64, bool, error) {
-	it, err := toItem(Item{rec, body}, origin)
+	it, err := toItem(Item{Record: rec, Body: body}, origin)
 	if err != nil {
 		return 0, false, err
 	}
@@ -78,7 +82,12 @@ func (s *Store) ApplyFrom(ctx context.Context, rec *pb.Record, body *pb.RecordBo
 
 // ApplyReplicated applies a record received from peer `from`. Business conflicts never fail here.
 func (s *Store) ApplyReplicated(ctx context.Context, rec *pb.Record, body *pb.RecordBody, from []byte) (int64, bool, error) {
-	it, err := toItem(Item{rec, body}, from)
+	return s.ApplyReplicatedItem(ctx, Item{Record: rec, Body: body}, from)
+}
+
+// ApplyReplicatedItem is ApplyReplicated for an item that may carry an Admission.
+func (s *Store) ApplyReplicatedItem(ctx context.Context, in Item, from []byte) (int64, bool, error) {
+	it, err := toItem(in, from)
 	if err != nil {
 		return 0, false, err
 	}

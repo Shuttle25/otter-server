@@ -309,11 +309,13 @@ func TestRegisterErrors(t *testing.T) {
 		t.Fatalf("invite_used for another invite: %v", err)
 	}
 
-	// an inviter without invite rights cannot create invites
-	noRights, req := f.registerReqWith(f.invite(anna, time.Hour), "gleb", func(e *pb.DirectoryEntry, _ *pb.PreKeys, _ *pb.InviteUsed) {
-		e.CanInvite = false
-	})
+	// an inviter whose invite rights the admin withdrew cannot create invites (D101); the entry's own claim is ignored (C6)
+	noRights, req := f.registerReqWith(f.invite(anna, time.Hour), "gleb", nil)
 	if _, err := f.svc.Register(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	withdraw := sign(t, pb.RecordType_INVITE_RIGHTS, keys.ID16(f.svc.NetworkPub), &pb.InviteRights{UserId: noRights.id, Version: 1}, f.netPriv)
+	if _, err := f.svc.ImportRecord(ctx, withdraw); err != nil {
 		t.Fatal(err)
 	}
 	inv := &pb.Invite{InviteId: make([]byte, 32), ExpiresMs: time.Now().Add(time.Hour).UnixMilli()}

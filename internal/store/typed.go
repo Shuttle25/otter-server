@@ -18,6 +18,8 @@ const (
 	PrekeyKyber   = 2
 	PrekeyOneTime = 3
 	tombstoneTTL  = 30 * 24 * time.Hour
+	// MaxLiveOneTime: unconsumed one-time prekeys kept per (user, device, owner node); the newest ids win (C8, D107).
+	MaxLiveOneTime = 200
 )
 
 func boolInt(b bool) int {
@@ -39,9 +41,12 @@ func raiseInstall(ctx context.Context, tx *sql.Tx, user []byte, device, rid uint
 	switch {
 	case exists && inst < cur:
 		return false, nil // an older install (a phone that was replaced): its keys must not be handed out
-	case exists && inst > cur:
-		if _, err := tx.ExecContext(ctx, `DELETE FROM prekeys WHERE user_id=? AND device_id=?`, user, device); err != nil {
-			return false, err
+	case exists && inst > cur: // the new install restarts its key ids: the old floors go with the old keys (D107)
+		for _, q := range []string{`DELETE FROM prekeys WHERE user_id=? AND device_id=?`,
+			`DELETE FROM prekey_floor WHERE user_id=? AND device_id=?`} {
+			if _, err := tx.ExecContext(ctx, q, user, device); err != nil {
+				return false, err
+			}
 		}
 	}
 	_, err = tx.ExecContext(ctx,
@@ -114,14 +119,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		if err := put(PrekeyKyber, p.KyberPrekey); err != nil {
 			return err
 		}
-		for _, k := range p.OneTime {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO prekeys(user_id,device_id,key_id,kind,owner_node,public) VALUES(?,?,?,?,?,?)`,
-				b.Author, p.DeviceId, k.Id, PrekeyOneTime, k.OwnerNode, k.PublicKey); err != nil {
-				return err
-			}
-		}
-		return nil
+		return putOneTime(ctx, tx, b.Author, &p)
 
 	case pb.RecordType_INSTALL: // C14: newest (installed_ms, registration_id) per user; raises device 1 like PREKEYS
 		var in pb.Install
@@ -470,4 +468,43 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, username_conflict=? WHERE user_id=?`,
 		name, it.key, e.Version, conflict, e.UserId)
 	return err
+}
+
+// putOneTime stores a PREKEYS record's one-time keys under the budget (C8, D107), for local and replicated records
+// alike: ids below the (user, device, owner) floor were consumed and forgotten here and are never stored again, and
+// only the newest MaxLiveOneTime unconsumed ids per owner stay live (older ones are marked consumed).
+func putOneTime(ctx context.Context, tx *sql.Tx, author []byte, p *pb.PreKeys) error {
+	floors := map[string]int64{}
+	touched := map[string][]byte{}
+	for _, k := range p.OneTime {
+		o := string(k.OwnerNode)
+		floor, ok := floors[o]
+		if !ok {
+			err := tx.QueryRowContext(ctx, `SELECT floor_id FROM prekey_floor WHERE user_id=? AND device_id=? AND owner_node=?`,
+				author, p.DeviceId, k.OwnerNode).Scan(&floor)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			floors[o] = floor
+		}
+		if int64(k.Id) < floor {
+			continue // consumed and forgotten here: a replayed record must not hand it out again
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO prekeys(user_id,device_id,key_id,kind,owner_node,public) VALUES(?,?,?,?,?,?)`,
+			author, p.DeviceId, k.Id, PrekeyOneTime, k.OwnerNode, k.PublicKey); err != nil {
+			return err
+		}
+		touched[o] = k.OwnerNode
+	}
+	for _, owner := range touched {
+		if _, err := tx.ExecContext(ctx, `UPDATE prekeys SET consumed=1
+			WHERE user_id=? AND device_id=? AND kind=? AND owner_node=? AND consumed=0 AND key_id NOT IN
+			(SELECT key_id FROM prekeys WHERE user_id=? AND device_id=? AND kind=? AND owner_node=? AND consumed=0
+			 ORDER BY key_id DESC LIMIT ?)`,
+			author, p.DeviceId, PrekeyOneTime, owner, author, p.DeviceId, PrekeyOneTime, owner, MaxLiveOneTime); err != nil {
+			return err
+		}
+	}
+	return nil
 }

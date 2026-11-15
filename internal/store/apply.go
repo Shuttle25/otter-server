@@ -264,6 +264,12 @@ func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
+	var gone int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM compacted WHERE record_key=?`, it.key).Scan(&gone); err == nil {
+		return 0, false, nil // deleted here as superseded (C8, D107): a re-send changes nothing
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, err
+	}
 	if it.fromPeer && expiring(it.body) && it.body.CreatedMs < now-RetentionMs {
 		return 0, false, nil
 	}

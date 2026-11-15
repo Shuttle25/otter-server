@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -245,8 +246,76 @@ func admitted(t *testing.T, user []byte, name string, invite, rank []byte, rankM
 	e := entry(user, name, 1)
 	e.RegisteredMs = registeredMs
 	it := mkItemAt(t, pb.RecordType_DIRECTORY_ENTRY, user, e, max(registeredMs, rankMs))
-	it.Admission = &Admission{InviteID: invite, Rank: rank, RankMs: rankMs}
+	it.Admission = &Admission{InviteID: invite, Rank: rank, RankMs: rankMs, Inviter: netInviter}
 	return it
+}
+
+// netInviter stands for the network's id16 as the author of a bootstrap invite.
+var netInviter = bytes.Repeat([]byte{0xee}, 16)
+
+// invitedBy is admitted with a member as the INVITE's author.
+func invitedBy(t *testing.T, inviter, user []byte, name string, invite, rank []byte) Item {
+	it := admitted(t, user, name, invite, rank, 1000, 1000)
+	it.Admission.Inviter = inviter
+	return it
+}
+
+// D102/D104: a duplicate loser never admits anyone. x loses invite inv to y; x invited z, z invited w. In every arrival
+// order (an invitee only after its inviter, as the service's RETRY_LATER makes it) x, z and w end up disabled, y and an
+// account invited by y do not.
+func TestDuplicateLoserNeverAdmits(t *testing.T) {
+	ctx := context.Background()
+	inv := bytes.Repeat([]byte{1}, 32)
+	x, y, z, w, v := r16(), r16(), r16(), r16(), r16()
+	lo, hi := bytes.Repeat([]byte{0x10}, 32), bytes.Repeat([]byte{0x20}, 32)
+	items := map[string]Item{
+		"x": admitted(t, x, "xenia", inv, hi, 1000, 1000),
+		"y": admitted(t, y, "yuri", inv, lo, 1000, 1000),
+		"z": invitedBy(t, x, z, "zed", r16(), r16()),
+		"w": invitedBy(t, z, w, "wen", r16(), r16()),
+		"v": invitedBy(t, y, v, "vera", r16(), r16()),
+	}
+	after := map[string]string{"z": "x", "w": "z", "v": "y"}
+	var perms func(done string, rest []string)
+	n := 0
+	perms = func(done string, rest []string) {
+		if len(rest) == 0 {
+			n++
+			s, _ := open(t)
+			for _, k := range done {
+				if _, _, err := s.ApplyReplicatedItem(ctx, items[string(k)], peer); err != nil {
+					t.Fatal(done, err)
+				}
+			}
+			want := map[string]struct {
+				id     []byte
+				reason string
+			}{"x": {x, ReasonDuplicateInvite}, "z": {z, ReasonInvitedByDuplicate}, "w": {w, ReasonInvitedByDuplicate},
+				"y": {y, ""}, "v": {v, ""}}
+			for k, c := range want {
+				var revoked int
+				var reason string
+				if err := s.r.QueryRow(`SELECT revoked, revoke_reason FROM users WHERE user_id=?`, c.id).Scan(&revoked, &reason); err != nil {
+					t.Fatal(done, k, err)
+				}
+				if (revoked == 1) != (c.reason != "") || reason != c.reason {
+					t.Fatalf("order %s: %s revoked=%d reason=%q", done, k, revoked, reason)
+				}
+			}
+			return
+		}
+		for i, k := range rest {
+			if p, ok := after[k]; ok && !strings.Contains(done, p) {
+				continue
+			}
+			r := append(append([]string{}, rest[:i]...), rest[i+1:]...)
+			perms(done+k, r)
+		}
+	}
+	perms("", []string{"x", "y", "z", "w", "v"})
+	if n < 10 {
+		t.Fatalf("only %d orders", n)
+	}
 }
 
 // C5 (D102): of two redemptions of one invite, the lowest rank stays in any arrival order; locally a second one is refused.

@@ -126,7 +126,9 @@ func parseInvite(raw []byte) (*pb.Record, *pb.RecordBody, *pb.Invite, error) {
 // admitChain verifies the invite chain of a new account (D100). Everything it checks is in signed records, so every
 // node reaches the same answer. strict = registration on this node: the invite must also be valid now and its inviter
 // allowed now. Invite rights are not part of the admission: every member may invite unless the admin withdrew it
-// (D101 as changed by the owner).
+// (D101 as changed by the owner). An inviter disabled as a duplicate (D102) never admits anyone: registration refuses
+// its invite (inviterAllowed: revoked), and a replicated account it invited is stored disabled by the store
+// (disableDuplicates), so its own invitees do not wait forever for an inviter that is never stored.
 func (s *Service) admitChain(ctx context.Context, e *pb.DirectoryEntry, strict bool) (*store.Admission, error) {
 	if len(e.InviteRecord) == 0 || len(e.InviteProof) != ed25519.SignatureSize {
 		return nil, fmt.Errorf("%w: no invite chain (update the app)", ErrInvalid)
@@ -178,5 +180,5 @@ func (s *Service) admitChain(ctx context.Context, e *pb.DirectoryEntry, strict b
 		}
 	}
 	h := sha256.Sum256(e.InviteProof)
-	return &store.Admission{InviteID: inv.InviteId, Rank: h[:], RankMs: ib.CreatedMs}, nil
+	return &store.Admission{InviteID: inv.InviteId, Rank: h[:], RankMs: ib.CreatedMs, Inviter: ib.Author}, nil
 }

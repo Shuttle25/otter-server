@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"testing"
@@ -245,5 +246,77 @@ func TestDoubleRedemptionConverges(t *testing.T) {
 		InviteUsed:     s.signAs(z, pb.RecordType_INVITE_USED, &pb.InviteUsed{InviteId: sum[:], UserId: z.id})}, nil)
 	if st != pb.Status_STATUS_CONFLICT {
 		t.Fatalf("third redemption: %v %s", st, msg)
+	}
+}
+
+// memberInvite is an INVITE signed by member a (a member-made link).
+func (s *sim) memberInvite(a *account) *ticket {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		s.t.Fatal(err)
+	}
+	inv, err := records.InvitePayload(secret, time.Now().Add(time.Hour).UnixMilli())
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return &ticket{secret: secret, rec: s.signAs(a, pb.RecordType_INVITE, inv)}
+}
+
+// D102/D104: an account disabled as a duplicate never admits anyone. The loser of a double redemption invites zed
+// (and zed invites wen) on its own side of a partition before it learns it lost; once the partitions heal, in a
+// different arrival order on every node, every node disables zed and wen like the phone drops them.
+func TestDuplicateLoserNeverAdmits(t *testing.T) {
+	s := newSim(t, "a", "b", "c")
+	a, b, c := s.node("a"), s.node("b"), s.node("c")
+	s.part.Block(a, b)
+	s.part.Block(a, c)
+	s.part.Block(b, c)
+	tk := s.invite(a)
+	if _, err := b.svc.ImportRecord(context.Background(), tk.rec); err != nil {
+		t.Fatal(err)
+	}
+	x := s.registerWith(a, "xenia", tk)
+	y := s.registerWith(b, "yuri", tk)
+	hx, hy := sha256.Sum256(x.proof), sha256.Sum256(y.proof)
+	winner, loser, ln := x, y, b
+	if bytes.Compare(hx[:], hy[:]) > 0 {
+		winner, loser, ln = y, x, a
+	}
+	zed := s.registerWith(ln, "zed", s.memberInvite(loser)) // the loser's node does not know yet that it lost
+	wen := s.registerWith(ln, "wen", s.memberInvite(zed))
+	s.part.Heal(a, c) // c learns one side first
+	time.Sleep(300 * time.Millisecond)
+	s.part.Heal(b, c)
+	time.Sleep(300 * time.Millisecond)
+	s.part.Heal(a, b)
+	ctx := context.Background()
+	disabledOrAbsent := func(n *simNode, u *account) bool {
+		x, _ := n.st.UserByID(ctx, u.id)
+		return x == nil || x.Revoked
+	}
+	eventually(t, "loser, its invitee and theirs disabled everywhere", func() bool {
+		return s.all(func(n *simNode) bool {
+			w, _ := n.st.UserByID(ctx, winner.id)
+			l, _ := n.st.UserByID(ctx, loser.id)
+			z, _ := n.st.UserByID(ctx, zed.id)
+			v, _ := n.st.UserByID(ctx, wen.id)
+			return w != nil && !w.Revoked && l != nil && l.Revoked && z != nil && z.Revoked && v != nil && v.Revoked
+		})
+	})
+	for _, n := range s.nodes {
+		for _, u := range []*account{zed, wen} {
+			if st := s.tryLogin(n, u); st != pb.Status_STATUS_REVOKED {
+				t.Fatalf("%s: login of %s invited through the loser: %v", n.label, u.name, st)
+			}
+		}
+	}
+	// the loser's (and its invitees') new invites are refused at registration on every node
+	for _, n := range s.nodes {
+		for _, inviter := range []*account{loser, zed} {
+			u, st, _ := s.tryRegister(n, "late", s.memberInvite(inviter))
+			if st == pb.Status_STATUS_OK || !disabledOrAbsent(n, u) || s.tryLogin(n, u) == pb.Status_STATUS_OK {
+				t.Fatalf("%s: a fresh invite of %s admitted an account: %v", n.label, inviter.name, st)
+			}
+		}
 	}
 }

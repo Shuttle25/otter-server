@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -14,12 +13,17 @@ import (
 // ReasonDuplicateInvite is users.revoke_reason of an account that lost a double redemption (D102).
 const ReasonDuplicateInvite = "duplicate invite"
 
+// ReasonInvitedByDuplicate is users.revoke_reason of an account whose inviter (or an inviter further up its chain) is
+// disabled as a duplicate: such an account never admits anyone (D102, as the phone checks it, D104).
+const ReasonInvitedByDuplicate = "invited by a duplicate"
+
 // Admission is what the service derived from a new account's invite chain (D100). Invite rights are not part of it:
 // every member may invite unless the admin withdrew it with INVITE_RIGHTS (D101 as changed by the owner, 2026-11-15).
 type Admission struct {
 	InviteID []byte // nil for founding members
 	Rank     []byte // SHA-256(invite_proof): the lowest keeps a doubly redeemed invite (D102)
 	RankMs   int64  // username clash rank: the INVITE's created_ms, or registered_ms of a founding member (D103)
+	Inviter  []byte // the INVITE's author (the network's id16 for a bootstrap invite); nil for founding members
 }
 
 // rightsNow is the user's current invite right: the newest INVITE_RIGHTS version ("no" wins a tie), else yes (D101).
@@ -134,16 +138,12 @@ func (s *Store) MembershipRecords(ctx context.Context) ([][]byte, error) {
 // REVOCATION arrived first or the account lost a double redemption of its invite, invite rights from INVITE_RIGHTS or
 // the default, never from DirectoryEntry.can_invite (C6).
 func insertUser(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, name string, conflict int, rank, now int64) error {
-	lost, err := redeem(ctx, tx, it, e.UserId)
-	if err != nil {
+	if err := redeem(ctx, tx, it, e.UserId); err != nil {
 		return err
 	}
-	revoked, reason := lost, ""
-	if lost {
-		reason = ReasonDuplicateInvite
-	}
+	revoked, reason := false, ""
 	var rr string
-	err = tx.QueryRowContext(ctx, `SELECT reason FROM revocations WHERE user_id=?`, e.UserId).Scan(&rr)
+	err := tx.QueryRowContext(ctx, `SELECT reason FROM revocations WHERE user_id=?`, e.UserId).Scan(&rr)
 	switch {
 	case err == nil:
 		revoked, reason = true, rr
@@ -157,60 +157,79 @@ func insertUser(ctx context.Context, tx *sql.Tx, it item, e *pb.DirectoryEntry, 
 		return err
 	}
 	if revoked {
-		return revokeUser(ctx, tx, e.UserId, reason)
+		if err := revokeUser(ctx, tx, e.UserId, reason); err != nil {
+			return err
+		}
 	}
-	return nil
+	return disableDuplicates(ctx, tx)
 }
 
-// redeem records the account's redemption and applies the network-wide single-use rule (D102): of all accounts that
-// redeemed one invite, the lowest rank (SHA-256(invite_proof), then user_id) stays and every other one is disabled.
-// A redemption on this node of an invite already redeemed by someone else is refused instead. Returns whether the new
-// account lost.
-func redeem(ctx context.Context, tx *sql.Tx, it item, user []byte) (bool, error) {
+// redeem records the account's redemption (D102). A redemption on this node of an invite already redeemed by someone
+// else is refused; a replicated one is stored and disableDuplicates decides.
+func redeem(ctx context.Context, tx *sql.Tx, it item, user []byte) error {
 	a := it.adm
 	if a == nil || a.InviteID == nil {
-		return false, nil
+		return nil
 	}
 	if !it.fromPeer {
 		var x int
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM redemptions WHERE invite_id=? AND user_id<>?`, a.InviteID, user).Scan(&x)
 		if err == nil {
-			return false, ErrInviteUnavailable
+			return ErrInviteUnavailable
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return false, err
+			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO redemptions(invite_id,user_id,rank) VALUES(?,?,?)`, a.InviteID, user, a.Rank); err != nil {
-		return false, err
-	}
-	var best []byte
-	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM redemptions WHERE invite_id=? ORDER BY rank, user_id LIMIT 1`,
-		a.InviteID).Scan(&best); err != nil {
-		return false, err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT user_id FROM redemptions WHERE invite_id=? AND user_id<>? AND user_id<>?`, a.InviteID, best, user)
+	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO redemptions(invite_id,user_id,rank,inviter) VALUES(?,?,?,?)`,
+		a.InviteID, user, a.Rank, a.Inviter)
+	return err
+}
+
+// duplicates is every account disabled by the single-use rule (D102), the same set the phone computes (D104): of all
+// accounts that redeemed one invite, all but the lowest rank (SHA-256(invite_proof), then user_id) lose; and an account
+// whose inviter lost, or was itself invited through a loser, never counts as admitted. All redeemers of one invite share
+// its inviter, so this never changes who wins another invite, and it depends only on the stored redemptions: every
+// node reaches the same set in any arrival order. Rows only ever get added, so the set only grows.
+const duplicates = `WITH RECURSIVE bad(user_id, dup) AS (
+	SELECT r.user_id, 1 FROM redemptions r WHERE EXISTS (SELECT 1 FROM redemptions o WHERE o.invite_id=r.invite_id
+	  AND (o.rank < r.rank OR (o.rank = r.rank AND o.user_id < r.user_id)))
+	UNION
+	SELECT r.user_id, 0 FROM redemptions r JOIN bad b ON r.inviter = b.user_id)
+SELECT b.user_id, MAX(b.dup) FROM bad b JOIN users u ON u.user_id = b.user_id WHERE u.revoked = 0 GROUP BY b.user_id`
+
+// disableDuplicates disables every account of the duplicates set not disabled yet.
+func disableDuplicates(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, duplicates)
 	if err != nil {
-		return false, err
+		return err
 	}
-	var losers [][]byte
+	type hit struct {
+		id  []byte
+		dup bool
+	}
+	var hits []hit
 	for rows.Next() {
-		var id []byte
-		if err := rows.Scan(&id); err != nil {
+		var h hit
+		if err := rows.Scan(&h.id, &h.dup); err != nil {
 			rows.Close()
-			return false, err
+			return err
 		}
-		losers = append(losers, id)
+		hits = append(hits, h)
 	}
 	if err := rows.Close(); err != nil {
-		return false, err
+		return err
 	}
-	for _, id := range losers {
-		if err := revokeUser(ctx, tx, id, ReasonDuplicateInvite); err != nil {
-			return false, err
+	for _, h := range hits {
+		reason := ReasonInvitedByDuplicate
+		if h.dup {
+			reason = ReasonDuplicateInvite
+		}
+		if err := revokeUser(ctx, tx, h.id, reason); err != nil {
+			return err
 		}
 	}
-	return !bytes.Equal(best, user), nil
+	return nil
 }
 
 // ResolveUsername maps a name typed for a restore to the stored username (D103): a name that never clashed as is;

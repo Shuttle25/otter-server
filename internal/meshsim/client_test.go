@@ -155,6 +155,15 @@ func (s *sim) register(n *simNode, name string, owners ...*simNode) *account {
 
 // registerWith is register with a given invite.
 func (s *sim) registerWith(n *simNode, name string, tk *ticket, owners ...*simNode) *account {
+	a, st, msg := s.tryRegister(n, name, tk, owners...)
+	if st != pb.Status_STATUS_OK {
+		s.t.Fatalf("register %s: %v %s", name, st, msg)
+	}
+	return a
+}
+
+// tryRegister is registerWith returning the node's answer.
+func (s *sim) tryRegister(n *simNode, name string, tk *ticket, owners ...*simNode) (*account, pb.Status, string) {
 	if len(owners) == 0 {
 		owners = []*simNode{n}
 	}
@@ -180,11 +189,11 @@ func (s *sim) registerWith(n *simNode, name string, tk *ticket, owners ...*simNo
 	sum := sha256.Sum256(tk.secret)
 	c := s.dial(n)
 	defer c.close()
-	c.mustCall("register", &pb.RegisterRequest{
+	st, msg := c.call("register", &pb.RegisterRequest{
 		DirectoryEntry: s.signAs(a, pb.RecordType_DIRECTORY_ENTRY, e),
 		Prekeys:        s.signAs(a, pb.RecordType_PREKEYS, pk),
 		InviteUsed:     s.signAs(a, pb.RecordType_INVITE_USED, &pb.InviteUsed{InviteId: sum[:], UserId: a.id})}, nil)
-	return a
+	return a, st, msg
 }
 
 // login dials n and logs a in.

@@ -155,10 +155,15 @@ func (r *Replicator) runSession(c *websocket.Conn, peer, dialer []byte, ep *pb.E
 	r.log.Info("peer session down", "peer", fmt.Sprintf("%x", peer), "err", err)
 	if ep != nil && err != nil && r.baseCtx().Err() == nil {
 		in, dur := s.bytesIn.Load(), time.Since(s.start)
-		if dur < throttleSession && in >= netlog.ThrottleBytes {
+		frozen := s.pingFailed.Load() // D130: a freeze can start at any time, even after a long transfer
+		if frozen || (dur < throttleSession && in >= netlog.ThrottleBytes) {
 			r.rank.Done(ep, netlog.ResetAfterKB)
+			detail := fmt.Sprintf("%d bytes in %s: %v", in, dur.Round(time.Second), err)
+			if frozen {
+				detail = fmt.Sprintf("frozen: no pong within %s, %d bytes in %s", peerPingTimeout, in, dur.Round(time.Second))
+			}
 			r.nlog.Add(r.baseCtx(), netlog.Entry{Peer: r.labelOf(peer), Endpoint: EndpointName(ep), Direction: "out",
-				Result: "fail", Class: netlog.ResetAfterKB, Detail: fmt.Sprintf("%d bytes in %s: %v", in, dur.Round(time.Second), err)})
+				Result: "fail", Class: netlog.ResetAfterKB, Detail: detail})
 		}
 	}
 	r.mu.Lock()
@@ -187,6 +192,7 @@ func SetTestTimings(dial, backoff time.Duration) {
 	maxBackoff = 10 * backoff
 	pullRetryMin, pullRetryMax, pullIdle = backoff, 10*backoff, 10*backoff
 	peerPing, peerPingTimeout = 2*dial, 5*dial
+	handshakeTimeout = 5 * dial
 }
 
 func (r *Replicator) baseCtx() context.Context { r.mu.Lock(); defer r.mu.Unlock(); return r.ctx }
@@ -251,7 +257,10 @@ func (r *Replicator) dialMissing(ctx context.Context) {
 				r.log.Info("peer handshake failed", "peer", n.Label, "err", err)
 				c.CloseNow()
 				if ctx.Err() == nil {
-					// the transport attempt was already logged as ok; which endpoint carried it is not tracked here
+					// the transport attempt was already logged as ok; the endpoint is now ranked failed (D130)
+					if ep != nil {
+						r.rank.Done(ep, netlog.Handshake) // D130: the transport opened but froze or failed; try the next endpoint first
+					}
 					err = fmt.Errorf("%w: %v", netlog.ErrHandshake, err)
 					r.nlog.Add(ctx, netlog.Entry{Peer: n.Label, Endpoint: "handshake", Direction: "out", Result: "fail",
 						Class: netlog.Classify(err, 0), Detail: err.Error()})

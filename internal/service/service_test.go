@@ -23,6 +23,7 @@ type rec struct {
 	low       []int
 	lowOwner  [][]byte
 	manifests []uint64
+	revoked   [][]byte
 }
 
 func (r *rec) Envelope([]byte, uint32) { r.env++ }
@@ -34,6 +35,7 @@ func (r *rec) PrekeysLow(_ []byte, _ uint32, owner []byte, n int) {
 func (r *rec) Manifest(v uint64)          { r.manifests = append(r.manifests, v) }
 func (r *rec) Online([]byte, uint32) bool { return false }
 func (r *rec) News()                      { r.news++ }
+func (r *rec) Revoked(u []byte)           { r.revoked = append(r.revoked, u) }
 
 type fx struct {
 	t       *testing.T
@@ -324,8 +326,8 @@ func TestRegisterErrors(t *testing.T) {
 	}
 	// nothing from the failed attempts leaked into the directory
 	dir, _ := f.svc.Directory(ctx)
-	if len(dir) != 3 {
-		t.Fatalf("directory has %d entries", len(dir))
+	if len(dir) != 4 { // 3 entries + the INVITE_RIGHTS record (D99)
+		t.Fatalf("directory has %d records", len(dir))
 	}
 }
 

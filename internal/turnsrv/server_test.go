@@ -411,3 +411,21 @@ func TestStartErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestRefusedUserCannotAllocate(t *testing.T) {
+	secret := bytes.Repeat([]byte{6}, SecretLen)
+	nl := &memLog{}
+	cfg := testConfig(secret, 4, 41, nl)
+	revoked := UserTag([]byte("boris-0000000000"))
+	cfg.Refuse = func(tag string) bool { return tag == revoked }
+	_, addr := startCfg(t, cfg)
+	u, p := Credentials(secret, []byte("boris-0000000000"), time.Now(), time.Hour)
+	if _, err := client(t, addr, u, p).Allocate(); err == nil {
+		t.Fatal("revoked user allocated")
+	}
+	waitFor(t, "auth netlog line", func() bool { return nl.count(netlog.Auth) == 1 })
+	ua, pa := Credentials(secret, []byte("anna-00000000000"), time.Now(), time.Hour)
+	if _, err := client(t, addr, ua, pa).Allocate(); err != nil {
+		t.Fatal(err)
+	}
+}

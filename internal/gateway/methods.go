@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/coder/websocket"
 
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -11,7 +14,8 @@ import (
 )
 
 var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true,
-	"auth.login": true, "backup.auth": true, "backup.fetch": true, "news.publish": true}
+	"auth.login": true, "backup.auth": true, "backup.fetch": true, "news.publish": true,
+	"network.publish": true, "admin.users": true} // admin.users: Task 35
 
 func status(err error) pb.Status {
 	switch {
@@ -36,9 +40,23 @@ func status(err error) pb.Status {
 	}
 }
 
+// errSessionRevoked: the logged-in account is revoked; the request is answered REVOKED and the session ends (C2).
+var errSessionRevoked = fmt.Errorf("%w: account revoked", service.ErrRevoked)
+
 func (s *session) handle(ctx context.Context, req *pb.Request) {
 	resp := &pb.Response{Id: req.Id}
 	body, err := s.dispatch(ctx, req)
+	if errors.Is(err, errSessionRevoked) {
+		resp.Status, resp.Error = pb.Status_STATUS_REVOKED, err.Error()
+		// written here, not queued: the queue stops with the session
+		if b, err := proto.Marshal(&pb.Frame{Kind: &pb.Frame_Response{Response: resp}}); err == nil {
+			wctx, cancel := context.WithTimeout(ctx, time.Second)
+			_ = s.conn.Write(wctx, websocket.MessageBinary, b)
+			cancel()
+		}
+		s.endRevoked()
+		return
+	}
 	if err != nil {
 		resp.Status = status(err)
 		resp.Error = err.Error()
@@ -64,6 +82,11 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		return nil, fmt.Errorf("%w: login required", service.ErrUnauthorized)
 	}
 	svc := s.g.svc
+	if u := s.userID(); u != nil {
+		if k, ok := svc.Store.UserKey(u); ok && k.Revoked { // the close may have raced this request (C2)
+			return nil, errSessionRevoked
+		}
+	}
 	switch req.Method {
 	case "ping":
 		return &pb.Empty{}, nil
@@ -113,6 +136,15 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
 		}
 		return &pb.Empty{}, svc.PublishManifest(ctx, r.Record)
+	case "network.publish":
+		var r pb.RecordRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		if r.Record == nil {
+			return nil, fmt.Errorf("%w: record missing", service.ErrInvalid)
+		}
+		return &pb.Empty{}, svc.PublishNetworkRecord(ctx, r.Record)
 	case "news.publish":
 		var r pb.RecordRequest
 		if err := decode(req.Body, &r); err != nil {
@@ -221,7 +253,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 		}
 		return &pb.Empty{}, svc.PublishBackup(ctx, s.userID(), r.Record)
 	case "turn.credentials":
-		return svc.TurnCredentials(s.userID())
+		return svc.TurnCredentials(ctx, s.userID())
 	case "push.status":
 		var r pb.PushStatusRequest
 		if err := decode(req.Body, &r); err != nil {

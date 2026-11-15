@@ -34,6 +34,8 @@ type Notifier interface {
 	Online(user []byte, device uint32) bool
 	// News: an announcement was accepted or dropped; sessions re-fetch news.list (D67).
 	News()
+	// Revoked: the account was revoked or disabled; every session of it ends at once (C2).
+	Revoked(user []byte)
 }
 
 // Waker sends a push wake-up (internal/push.Pusher). nil = this node never pushes.
@@ -52,6 +54,7 @@ func (nopNotifier) PrekeysLow([]byte, uint32, []byte, int) {}
 func (nopNotifier) Manifest(uint64)                        {}
 func (nopNotifier) Online([]byte, uint32) bool             { return false }
 func (nopNotifier) News()                                  {}
+func (nopNotifier) Revoked([]byte)                         {}
 
 // ApkSource serves APK chunks (internal/apk.Dir). A missing file or chunk is an error wrapping os.ErrNotExist.
 type ApkSource interface {
@@ -77,6 +80,8 @@ type Service struct {
 	mu         sync.RWMutex
 	manifest   *pb.Manifest
 	onManifest []func(*pb.Manifest)
+	// TURN user tags of revoked or disabled accounts (RefreshRevoked)
+	revokedTags map[string]bool
 }
 
 func New(st *store.Store, nodeKey ed25519.PrivateKey, networkPub ed25519.PublicKey) *Service {
@@ -231,6 +236,12 @@ func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	// phones verify revocations and invite rights with the network key themselves (D99, D104)
+	more, err := s.Store.MembershipRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	raws = append(raws, more...)
 	out := make([]*pb.Record, 0, len(raws))
 	for _, raw := range raws {
 		r := &pb.Record{}

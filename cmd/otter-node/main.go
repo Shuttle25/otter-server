@@ -305,6 +305,7 @@ func serve(ctx context.Context, a *app) error {
 	if _, err := a.svc.LoadManifest(ctx); err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
+	a.svc.RefreshRevoked(ctx) // TURN refuses revoked accounts from the first request (C2)
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)
@@ -391,7 +392,7 @@ func startTurn(a *app) (*turnsrv.Server, turnsrv.Issuer, error) {
 		TLS: tc, RelayIP: net.ParseIP(t.RelayIP).To4(), PortMin: t.RelayPortMin, PortMax: t.RelayPortMax, Secret: secret,
 		Realm: t.Realm, MaxPerUser: t.MaxAllocationsPerUser, MaxTotal: t.MaxAllocations, RelayKbps: t.RelayKbps,
 		AllowPrivatePeers: t.AllowPrivatePeers, Netlog: netlog.StoreLogger{S: a.st}, StatsFile: turnStatsPath(a.cfg),
-		Log: a.log})
+		Refuse: a.svc.TurnTagRevoked, Log: a.log})
 	if err != nil {
 		return nil, turnsrv.Issuer{}, err
 	}

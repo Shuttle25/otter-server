@@ -79,6 +79,12 @@ func (s *session) dropReplaced() bool {
 	return true
 }
 
+// endRevoked closes the connection of a revoked account (C2).
+func (s *session) endRevoked() {
+	s.cancel() // ends the read loop at once
+	go s.conn.Close(websocket.StatusPolicyViolation, "revoked")
+}
+
 // keepalive pings the client every interval; a ping without a pong within timeout ends the session
 // (cancel stops the read loop, which removes the session). Pongs are processed by the concurrent read loop.
 func (s *session) keepalive(interval, timeout time.Duration) {

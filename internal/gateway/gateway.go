@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -99,6 +100,15 @@ func (g *Gateway) News() {
 	for _, s := range g.snapshot() {
 		if s.loggedIn() {
 			s.event("news", &pb.Empty{})
+		}
+	}
+}
+
+// Revoked implements service.Notifier: every session of the account ends at once (C2).
+func (g *Gateway) Revoked(user []byte) {
+	for _, s := range g.snapshot() {
+		if u := s.userID(); u != nil && bytes.Equal(u, user) {
+			s.endRevoked()
 		}
 	}
 }

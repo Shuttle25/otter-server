@@ -13,9 +13,11 @@ type TurnIssuer interface {
 	Issue(userID []byte, now time.Time) *pb.TurnCredentials
 }
 
-// TurnCredentials issues credentials valid only on this node's relay.
-// M9 (user revocation) must make this refuse revoked users (spec "Server: new RPCs").
-func (s *Service) TurnCredentials(user []byte) (*pb.TurnCredentials, error) {
+// TurnCredentials issues credentials valid only on this node's relay; never to a revoked or unknown account (C2).
+func (s *Service) TurnCredentials(ctx context.Context, user []byte) (*pb.TurnCredentials, error) {
+	if k, ok := s.Store.UserKey(user); !ok || k.Revoked {
+		return nil, ErrRevoked
+	}
 	if s.Turn == nil {
 		return nil, fmt.Errorf("%w: turn relay is off on this node", ErrUnavailable)
 	}

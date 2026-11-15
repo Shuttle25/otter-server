@@ -248,11 +248,12 @@ func (s *sim) start(n *simNode) {
 	if _, err := svc.LoadManifest(context.Background()); err != nil {
 		s.t.Fatal(err)
 	}
+	svc.RefreshRevoked(context.Background())
 	var ts *turnsrv.Server
 	var turnAddr, turnTLSAddr string
 	if n.turnOn { // before serving: sessions read svc.Turn without a lock (as otter-node run)
 		var iss turnsrv.Issuer
-		ts, iss, turnAddr, turnTLSAddr = s.startTurn(n)
+		ts, iss, turnAddr, turnTLSAddr = s.startTurn(n, svc)
 		svc.Turn = iss
 	}
 	gw := gateway.New(svc, quiet)
@@ -334,7 +335,7 @@ const simRelayMin, simRelayMax = 32300, 32340 // below the ephemeral range (3276
 
 // startTurn starts n's relay on fresh loopback ports (UDP and TCP on one port, TLS on another) with a self-signed
 // certificate and returns it with the issuer for svc.Turn.
-func (s *sim) startTurn(n *simNode) (*turnsrv.Server, turnsrv.Issuer, string, string) {
+func (s *sim) startTurn(n *simNode, svc *service.Service) (*turnsrv.Server, turnsrv.Issuer, string, string) {
 	if n.turnKey == nil {
 		n.turnKey = make([]byte, turnsrv.SecretLen)
 		rand.Read(n.turnKey)
@@ -353,7 +354,7 @@ func (s *sim) startTurn(n *simNode) (*turnsrv.Server, turnsrv.Issuer, string, st
 		srv, err := turnsrv.Start(turnsrv.Config{UDPListen: addr, TCPListen: addr, TLSListen: tlsAddr,
 			TLS:     &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}},
 			RelayIP: net.IPv4(127, 0, 0, 1), PortMin: simRelayMin, PortMax: simRelayMax, Secret: n.turnKey, Realm: "otter",
-			MaxPerUser: 4, MaxTotal: 16, RelayKbps: 2000, AllowPrivatePeers: true, Log: quiet})
+			MaxPerUser: 4, MaxTotal: 16, RelayKbps: 2000, AllowPrivatePeers: true, Refuse: svc.TurnTagRevoked, Log: quiet})
 		if err != nil {
 			continue
 		}

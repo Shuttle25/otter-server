@@ -29,6 +29,10 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 		return false, fmt.Errorf("%w: %v", ErrRetryLater, err)
 	case errors.Is(err, records.ErrExpired):
 		return false, nil
+	case errors.Is(err, records.ErrRevoked):
+		// the author was revoked after writing it; refusing with a retry would stall this peer forever (D99)
+		s.Log.Debug("skipping record of a revoked author")
+		return false, nil
 	case err != nil:
 		return false, invalid(err)
 	}
@@ -58,7 +62,11 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []by
 			s.maybePush(ctx, body, &e, from)
 		}
 	case pb.RecordType_DIRECTORY_ENTRY:
+		s.RefreshRevoked(ctx) // an entry may arrive after its revocation, or a double redemption may disable one (D102)
 		s.Notify.Directory()
+	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
+		s.RefreshRevoked(ctx)
+		s.Notify.Directory() // phones re-sync and verify the record themselves (D104)
 	case pb.RecordType_BLOB_FETCHED:
 		s.kickSweep() // the blob may be gone now: remove its files soon
 	case pb.RecordType_MANIFEST:

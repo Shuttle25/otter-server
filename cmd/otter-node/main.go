@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -349,9 +350,20 @@ func serve(ctx context.Context, a *app) error {
 		}
 	}
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
-	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"))
+	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"), http.HandlerFunc(repl.ServeTunnel))
 	errc := make(chan error, 2)
 	go func() { errc <- wss.Serve(srv, wcfg) }()
+	if a.cfg.WSS.TLSCert != "" { // D114: restore streams relayed by a node marked no_backups end here, under our WSS certificate
+		cert, err := tls.LoadX509KeyPair(a.cfg.WSS.TLSCert, a.cfg.WSS.TLSKey)
+		if err != nil {
+			srv.Close()
+			return fmt.Errorf("tunnel tls: %w", err)
+		}
+		tsrv := wss.NewServer(wss.Config{Path: a.cfg.WSS.Path}, gw, nil, nil)
+		tsrv.ErrorLog = log.New(io.Discard, "", 0) // handshake errors of abandoned restores
+		go tsrv.Serve(tls.NewListener(repl.TunnelListener(), &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}))
+		defer tsrv.Close()
+	}
 	if a.cfg.RealityEnabled() {
 		stopReality, err := startReality(a, gw, repl, errc)
 		if err != nil {
@@ -421,7 +433,7 @@ func startReality(a *app, gw http.Handler, repl *replication.Replicator, errc ch
 		return nil, err
 	}
 	icfg := wss.Config{Path: a.cfg.WSS.Path, SiteDir: a.cfg.WSS.SiteDir}
-	isrv := wss.NewServer(icfg, gw, replication.WithListener(repl, "reality"))
+	isrv := wss.NewServer(icfg, gw, replication.WithListener(repl, "reality"), http.HandlerFunc(repl.ServeTunnel))
 	go func() { errc <- isrv.Serve(ln) }()
 	r := a.cfg.Reality
 	rs, err := reality.StartServer(reality.ServerConfig{Listen: r.Listen, PrivateKey: priv, Dest: r.Dest,

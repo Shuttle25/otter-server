@@ -40,6 +40,13 @@ func (g *registry) has(peer []byte) bool {
 	return g.byPeer[string(peer)] != nil
 }
 
+// get returns the live session with peer, whichever side dialed it, or nil.
+func (g *registry) get(peer []byte) *session {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.byPeer[string(peer)]
+}
+
 // all returns the live sessions.
 func (g *registry) all() []*session {
 	g.mu.Lock()

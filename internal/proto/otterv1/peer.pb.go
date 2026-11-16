@@ -38,6 +38,10 @@ type PeerFrame struct {
 	//	*PeerFrame_BlobChunk
 	//	*PeerFrame_HoldsQuery
 	//	*PeerFrame_Holds
+	//	*PeerFrame_TunnelOpen
+	//	*PeerFrame_TunnelData
+	//	*PeerFrame_TunnelAck
+	//	*PeerFrame_TunnelClose
 	Kind          isPeerFrame_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -179,6 +183,42 @@ func (x *PeerFrame) GetHolds() *PeerHolds {
 	return nil
 }
 
+func (x *PeerFrame) GetTunnelOpen() *PeerTunnelOpen {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_TunnelOpen); ok {
+			return x.TunnelOpen
+		}
+	}
+	return nil
+}
+
+func (x *PeerFrame) GetTunnelData() *PeerTunnelData {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_TunnelData); ok {
+			return x.TunnelData
+		}
+	}
+	return nil
+}
+
+func (x *PeerFrame) GetTunnelAck() *PeerTunnelAck {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_TunnelAck); ok {
+			return x.TunnelAck
+		}
+	}
+	return nil
+}
+
+func (x *PeerFrame) GetTunnelClose() *PeerTunnelClose {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_TunnelClose); ok {
+			return x.TunnelClose
+		}
+	}
+	return nil
+}
+
 type isPeerFrame_Kind interface {
 	isPeerFrame_Kind()
 }
@@ -227,6 +267,22 @@ type PeerFrame_Holds struct {
 	Holds *PeerHolds `protobuf:"bytes,11,opt,name=holds,proto3,oneof"`
 }
 
+type PeerFrame_TunnelOpen struct {
+	TunnelOpen *PeerTunnelOpen `protobuf:"bytes,12,opt,name=tunnel_open,json=tunnelOpen,proto3,oneof"`
+}
+
+type PeerFrame_TunnelData struct {
+	TunnelData *PeerTunnelData `protobuf:"bytes,13,opt,name=tunnel_data,json=tunnelData,proto3,oneof"`
+}
+
+type PeerFrame_TunnelAck struct {
+	TunnelAck *PeerTunnelAck `protobuf:"bytes,14,opt,name=tunnel_ack,json=tunnelAck,proto3,oneof"`
+}
+
+type PeerFrame_TunnelClose struct {
+	TunnelClose *PeerTunnelClose `protobuf:"bytes,15,opt,name=tunnel_close,json=tunnelClose,proto3,oneof"`
+}
+
 func (*PeerFrame_Hello) isPeerFrame_Kind() {}
 
 func (*PeerFrame_Auth) isPeerFrame_Kind() {}
@@ -248,6 +304,14 @@ func (*PeerFrame_BlobChunk) isPeerFrame_Kind() {}
 func (*PeerFrame_HoldsQuery) isPeerFrame_Kind() {}
 
 func (*PeerFrame_Holds) isPeerFrame_Kind() {}
+
+func (*PeerFrame_TunnelOpen) isPeerFrame_Kind() {}
+
+func (*PeerFrame_TunnelData) isPeerFrame_Kind() {}
+
+func (*PeerFrame_TunnelAck) isPeerFrame_Kind() {}
+
+func (*PeerFrame_TunnelClose) isPeerFrame_Kind() {}
 
 type PeerHello struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -866,11 +930,214 @@ func (x *PeerHolds) GetHeld() bool {
 	return false
 }
 
+// Restore tunnel (D114): opened by a node marked no_backups for a phone; the bytes are the phone's TLS stream to the
+// receiving node. It rides on the existing peer session, whichever side dialed it (D132).
+type PeerTunnelOpen struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stream        uint64                 `protobuf:"varint,1,opt,name=stream,proto3" json:"stream,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerTunnelOpen) Reset() {
+	*x = PeerTunnelOpen{}
+	mi := &file_otter_v1_peer_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerTunnelOpen) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerTunnelOpen) ProtoMessage() {}
+
+func (x *PeerTunnelOpen) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerTunnelOpen.ProtoReflect.Descriptor instead.
+func (*PeerTunnelOpen) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PeerTunnelOpen) GetStream() uint64 {
+	if x != nil {
+		return x.Stream
+	}
+	return 0
+}
+
+type PeerTunnelData struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stream        uint64                 `protobuf:"varint,1,opt,name=stream,proto3" json:"stream,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"` // 1..32768 bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerTunnelData) Reset() {
+	*x = PeerTunnelData{}
+	mi := &file_otter_v1_peer_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerTunnelData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerTunnelData) ProtoMessage() {}
+
+func (x *PeerTunnelData) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerTunnelData.ProtoReflect.Descriptor instead.
+func (*PeerTunnelData) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PeerTunnelData) GetStream() uint64 {
+	if x != nil {
+		return x.Stream
+	}
+	return 0
+}
+
+func (x *PeerTunnelData) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// The receiver consumed `chunks` data frames; the sender may have at most 32 unacknowledged.
+type PeerTunnelAck struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stream        uint64                 `protobuf:"varint,1,opt,name=stream,proto3" json:"stream,omitempty"`
+	Chunks        uint32                 `protobuf:"varint,2,opt,name=chunks,proto3" json:"chunks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerTunnelAck) Reset() {
+	*x = PeerTunnelAck{}
+	mi := &file_otter_v1_peer_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerTunnelAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerTunnelAck) ProtoMessage() {}
+
+func (x *PeerTunnelAck) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerTunnelAck.ProtoReflect.Descriptor instead.
+func (*PeerTunnelAck) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PeerTunnelAck) GetStream() uint64 {
+	if x != nil {
+		return x.Stream
+	}
+	return 0
+}
+
+func (x *PeerTunnelAck) GetChunks() uint32 {
+	if x != nil {
+		return x.Chunks
+	}
+	return 0
+}
+
+type PeerTunnelClose struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stream        uint64                 `protobuf:"varint,1,opt,name=stream,proto3" json:"stream,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerTunnelClose) Reset() {
+	*x = PeerTunnelClose{}
+	mi := &file_otter_v1_peer_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerTunnelClose) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerTunnelClose) ProtoMessage() {}
+
+func (x *PeerTunnelClose) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerTunnelClose.ProtoReflect.Descriptor instead.
+func (*PeerTunnelClose) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PeerTunnelClose) GetStream() uint64 {
+	if x != nil {
+		return x.Stream
+	}
+	return 0
+}
+
+func (x *PeerTunnelClose) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_otter_v1_peer_proto protoreflect.FileDescriptor
 
 const file_otter_v1_peer_proto_rawDesc = "" +
 	"\n" +
-	"\x13otter/v1/peer.proto\x12\botter.v1\"\xbd\x04\n" +
+	"\x13otter/v1/peer.proto\x12\botter.v1\"\xb1\x06\n" +
 	"\tPeerFrame\x12+\n" +
 	"\x05hello\x18\x01 \x01(\v2\x13.otter.v1.PeerHelloH\x00R\x05hello\x12(\n" +
 	"\x04auth\x18\x02 \x01(\v2\x12.otter.v1.PeerAuthH\x00R\x04auth\x12/\n" +
@@ -885,7 +1152,14 @@ const file_otter_v1_peer_proto_rawDesc = "" +
 	"\vholds_query\x18\n" +
 	" \x01(\v2\x18.otter.v1.PeerHoldsQueryH\x00R\n" +
 	"holdsQuery\x12+\n" +
-	"\x05holds\x18\v \x01(\v2\x13.otter.v1.PeerHoldsH\x00R\x05holdsB\x06\n" +
+	"\x05holds\x18\v \x01(\v2\x13.otter.v1.PeerHoldsH\x00R\x05holds\x12;\n" +
+	"\vtunnel_open\x18\f \x01(\v2\x18.otter.v1.PeerTunnelOpenH\x00R\n" +
+	"tunnelOpen\x12;\n" +
+	"\vtunnel_data\x18\r \x01(\v2\x18.otter.v1.PeerTunnelDataH\x00R\n" +
+	"tunnelData\x128\n" +
+	"\n" +
+	"tunnel_ack\x18\x0e \x01(\v2\x17.otter.v1.PeerTunnelAckH\x00R\ttunnelAck\x12>\n" +
+	"\ftunnel_close\x18\x0f \x01(\v2\x19.otter.v1.PeerTunnelCloseH\x00R\vtunnelCloseB\x06\n" +
 	"\x04kind\"\x90\x01\n" +
 	"\tPeerHello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x17\n" +
@@ -926,7 +1200,18 @@ const file_otter_v1_peer_proto_rawDesc = "" +
 	"record_key\x18\x02 \x01(\fR\trecordKey\"1\n" +
 	"\tPeerHolds\x12\x10\n" +
 	"\x03req\x18\x01 \x01(\x04R\x03req\x12\x12\n" +
-	"\x04held\x18\x02 \x01(\bR\x04heldBI\n" +
+	"\x04held\x18\x02 \x01(\bR\x04held\"(\n" +
+	"\x0ePeerTunnelOpen\x12\x16\n" +
+	"\x06stream\x18\x01 \x01(\x04R\x06stream\"<\n" +
+	"\x0ePeerTunnelData\x12\x16\n" +
+	"\x06stream\x18\x01 \x01(\x04R\x06stream\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"?\n" +
+	"\rPeerTunnelAck\x12\x16\n" +
+	"\x06stream\x18\x01 \x01(\x04R\x06stream\x12\x16\n" +
+	"\x06chunks\x18\x02 \x01(\rR\x06chunks\"A\n" +
+	"\x0fPeerTunnelClose\x12\x16\n" +
+	"\x06stream\x18\x01 \x01(\x04R\x06stream\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reasonBI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -941,20 +1226,24 @@ func file_otter_v1_peer_proto_rawDescGZIP() []byte {
 	return file_otter_v1_peer_proto_rawDescData
 }
 
-var file_otter_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_otter_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_otter_v1_peer_proto_goTypes = []any{
-	(*PeerFrame)(nil),      // 0: otter.v1.PeerFrame
-	(*PeerHello)(nil),      // 1: otter.v1.PeerHello
-	(*PeerAuth)(nil),       // 2: otter.v1.PeerAuth
-	(*PeerAuthOk)(nil),     // 3: otter.v1.PeerAuthOk
-	(*PeerSubscribe)(nil),  // 4: otter.v1.PeerSubscribe
-	(*PeerBatch)(nil),      // 5: otter.v1.PeerBatch
-	(*PeerBatchAck)(nil),   // 6: otter.v1.PeerBatchAck
-	(*PeerError)(nil),      // 7: otter.v1.PeerError
-	(*PeerBlobGet)(nil),    // 8: otter.v1.PeerBlobGet
-	(*PeerBlobChunk)(nil),  // 9: otter.v1.PeerBlobChunk
-	(*PeerHoldsQuery)(nil), // 10: otter.v1.PeerHoldsQuery
-	(*PeerHolds)(nil),      // 11: otter.v1.PeerHolds
+	(*PeerFrame)(nil),       // 0: otter.v1.PeerFrame
+	(*PeerHello)(nil),       // 1: otter.v1.PeerHello
+	(*PeerAuth)(nil),        // 2: otter.v1.PeerAuth
+	(*PeerAuthOk)(nil),      // 3: otter.v1.PeerAuthOk
+	(*PeerSubscribe)(nil),   // 4: otter.v1.PeerSubscribe
+	(*PeerBatch)(nil),       // 5: otter.v1.PeerBatch
+	(*PeerBatchAck)(nil),    // 6: otter.v1.PeerBatchAck
+	(*PeerError)(nil),       // 7: otter.v1.PeerError
+	(*PeerBlobGet)(nil),     // 8: otter.v1.PeerBlobGet
+	(*PeerBlobChunk)(nil),   // 9: otter.v1.PeerBlobChunk
+	(*PeerHoldsQuery)(nil),  // 10: otter.v1.PeerHoldsQuery
+	(*PeerHolds)(nil),       // 11: otter.v1.PeerHolds
+	(*PeerTunnelOpen)(nil),  // 12: otter.v1.PeerTunnelOpen
+	(*PeerTunnelData)(nil),  // 13: otter.v1.PeerTunnelData
+	(*PeerTunnelAck)(nil),   // 14: otter.v1.PeerTunnelAck
+	(*PeerTunnelClose)(nil), // 15: otter.v1.PeerTunnelClose
 }
 var file_otter_v1_peer_proto_depIdxs = []int32{
 	1,  // 0: otter.v1.PeerFrame.hello:type_name -> otter.v1.PeerHello
@@ -968,11 +1257,15 @@ var file_otter_v1_peer_proto_depIdxs = []int32{
 	9,  // 8: otter.v1.PeerFrame.blob_chunk:type_name -> otter.v1.PeerBlobChunk
 	10, // 9: otter.v1.PeerFrame.holds_query:type_name -> otter.v1.PeerHoldsQuery
 	11, // 10: otter.v1.PeerFrame.holds:type_name -> otter.v1.PeerHolds
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 11: otter.v1.PeerFrame.tunnel_open:type_name -> otter.v1.PeerTunnelOpen
+	13, // 12: otter.v1.PeerFrame.tunnel_data:type_name -> otter.v1.PeerTunnelData
+	14, // 13: otter.v1.PeerFrame.tunnel_ack:type_name -> otter.v1.PeerTunnelAck
+	15, // 14: otter.v1.PeerFrame.tunnel_close:type_name -> otter.v1.PeerTunnelClose
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_peer_proto_init() }
@@ -992,6 +1285,10 @@ func file_otter_v1_peer_proto_init() {
 		(*PeerFrame_BlobChunk)(nil),
 		(*PeerFrame_HoldsQuery)(nil),
 		(*PeerFrame_Holds)(nil),
+		(*PeerFrame_TunnelOpen)(nil),
+		(*PeerFrame_TunnelData)(nil),
+		(*PeerFrame_TunnelAck)(nil),
+		(*PeerFrame_TunnelClose)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -999,7 +1296,7 @@ func file_otter_v1_peer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_peer_proto_rawDesc), len(file_otter_v1_peer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

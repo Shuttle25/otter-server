@@ -11,6 +11,7 @@ func TestSourceOf(t *testing.T) {
 		"[::1]:1":                    "local",
 		"not an address":             "unknown",
 		"":                           "unknown",
+		"tunnel:00112233":            "tunnel:00112233", // restore tunnel: the relaying node (D114)
 	} {
 		if got := SourceOf(in); got != want {
 			t.Errorf("SourceOf(%q) = %q, want %q", in, got, want)

@@ -50,17 +50,20 @@ var quiet = slog.New(slog.DiscardHandler)
 const path = "/x"
 
 type simNode struct {
-	label   string
-	key     ed25519.PrivateKey
-	id      []byte
-	dbPath  string
-	addr    string
-	noPull  bool         // test knob: no background chunk puller (proxy scenario)
-	sender  *recSender   // non-nil: the node has an FCM key (push_test.go)
-	clock   *fakeClock   // drives the pusher's coalescing window
-	reality *realityInfo // non-nil: the node also serves a REALITY endpoint (reality_test.go)
-	turnOn  bool         // the node runs the embedded TURN relay (turn_test.go)
-	turnKey []byte       // its TURN-REST secret, kept across restarts
+	label      string
+	key        ed25519.PrivateKey
+	id         []byte
+	dbPath     string
+	addr       string
+	noPull     bool         // test knob: no background chunk puller (proxy scenario)
+	sender     *recSender   // non-nil: the node has an FCM key (push_test.go)
+	clock      *fakeClock   // drives the pusher's coalescing window
+	reality    *realityInfo // non-nil: the node also serves a REALITY endpoint (reality_test.go)
+	turnOn     bool         // the node runs the embedded TURN relay (turn_test.go)
+	turnKey    []byte       // its TURN-REST secret, kept across restarts
+	tunnel     bool         // the node serves restore tunnel streams over TLS (tunnel_test.go)
+	tunnelCert tls.Certificate
+	tunnelPin  []byte // SPKI pin of tunnelCert
 
 	mu     sync.Mutex
 	st     *store.Store
@@ -72,6 +75,7 @@ type simNode struct {
 	rsrv   *reality.Server  // running REALITY inbound
 	isrv   *httptest.Server // internal plain-HTTP listener behind it
 	turn   *turnsrv.Server
+	tsrv   *http.Server // TLS server on the restore tunnel listener
 	// turnAddr serves UDP and TCP on the same port, turnTLSAddr TLS; both are re-picked on every start
 	turnAddr, turnTLSAddr string
 }
@@ -84,7 +88,7 @@ type realityInfo struct {
 }
 
 // nodeOpts are per-node knobs for newSimWith.
-type nodeOpts struct{ reality, dialOutOnly, noBackups, turn bool }
+type nodeOpts struct{ reality, dialOutOnly, noBackups, turn, tunnel bool }
 
 const (
 	realityUUID = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
@@ -134,7 +138,7 @@ func newSimWith(t *testing.T, opts map[string]nodeOpts, labels ...string) *sim {
 		_, k, _ := ed25519.GenerateKey(nil)
 		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freeTCPPort(t)))
 		n := &simNode{label: l, key: k, id: keys.ID16(k.Public().(ed25519.PublicKey)), dbPath: filepath.Join(t.TempDir(), l+".db"), addr: addr,
-			turnOn: opts[l].turn}
+			turnOn: opts[l].turn, tunnel: opts[l].tunnel}
 		_, port, _ := net.SplitHostPort(addr)
 		p, _ := strconv.Atoi(port)
 		info := &pb.NodeInfo{NodeId: n.id, NodePub: k.Public().(ed25519.PublicKey), Label: l, DialOutOnly: opts[l].dialOutOnly, NoBackups: opts[l].noBackups,
@@ -286,14 +290,30 @@ func (s *sim) start(n *simNode) {
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	srv := httptest.NewUnstartedServer(wss.NewServer(wss.Config{Path: path}, gw, repl).Handler)
+	srv := httptest.NewUnstartedServer(wss.NewServer(wss.Config{Path: path}, gw, repl, http.HandlerFunc(repl.ServeTunnel)).Handler)
 	srv.Listener.Close()
 	srv.Listener = ln
 	srv.Start()
+	var tsrv *http.Server
+	if n.tunnel { // as otter-node run with a WSS certificate (D114)
+		if n.tunnelPin == nil {
+			certPEM, keyPEM, pin, err := pinning.GenerateCert([]string{n.label + ".test"}, nil, 24*time.Hour)
+			if err != nil {
+				s.t.Fatal(err)
+			}
+			if n.tunnelCert, err = tls.X509KeyPair(certPEM, keyPEM); err != nil {
+				s.t.Fatal(err)
+			}
+			n.tunnelPin = pin
+		}
+		tsrv = wss.NewServer(wss.Config{Path: path}, gw, nil, nil)
+		tsrv.ErrorLog = log.New(io.Discard, "", 0)
+		go tsrv.Serve(tls.NewListener(repl.TunnelListener(), &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{n.tunnelCert}}))
+	}
 	var isrv *httptest.Server
 	var rsrv *reality.Server
 	if n.reality != nil {
-		isrv = httptest.NewServer(wss.NewServer(wss.Config{Path: path}, gw, replication.WithListener(repl, "reality")).Handler)
+		isrv = httptest.NewServer(wss.NewServer(wss.Config{Path: path}, gw, replication.WithListener(repl, "reality"), nil).Handler)
 		r := n.reality
 		for i := 0; i < 50; i++ { // the REALITY port may linger briefly after a stop
 			if rsrv, err = reality.StartServer(reality.ServerConfig{Listen: net.JoinHostPort(r.ep.Host, strconv.Itoa(int(r.ep.Port))),
@@ -310,6 +330,7 @@ func (s *sim) start(n *simNode) {
 	n.mu.Lock()
 	n.st, n.svc, n.repl, n.srv, n.cancel, n.isrv, n.rsrv = st, svc, repl, srv, cancel, isrv, rsrv
 	n.turn, n.turnAddr, n.turnTLSAddr = ts, turnAddr, turnTLSAddr
+	n.tsrv = tsrv
 	n.mu.Unlock()
 	s.part.register(n.id, repl)
 }
@@ -331,6 +352,10 @@ func (s *sim) stop(n *simNode) {
 	if n.turn != nil {
 		n.turn.Close()
 		n.turn = nil
+	}
+	if n.tsrv != nil {
+		n.tsrv.Close()
+		n.tsrv = nil
 	}
 	n.srv.CloseClientConnections()
 	n.srv.Close()

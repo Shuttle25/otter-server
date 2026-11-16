@@ -57,13 +57,18 @@ type session struct {
 	pending  map[uint64]chan *pb.PeerBlobChunk
 	serveSem chan struct{}
 	hpending map[uint64]chan bool // PeerHoldsQuery answers (D113)
+
+	// restore tunnel streams (D114)
+	tmu        sync.Mutex
+	tunnels    map[uint64]*tunnel
+	nextTunnel atomic.Uint64
 }
 
 func newSession(r *Replicator, c *websocket.Conn, peer, dialer []byte) *session {
 	ctx, cancel := context.WithCancel(r.baseCtx())
 	return &session{r: r, c: c, peer: peer, dialer: dialer, ctx: ctx, cancel: cancel,
 		out: make(chan *pb.PeerFrame, 16), acks: make(chan struct{}, window), in: make(chan *pb.PeerBatch, window), start: time.Now(),
-		pending: map[uint64]chan *pb.PeerBlobChunk{}, serveSem: make(chan struct{}, 4), hpending: map[uint64]chan bool{}}
+		pending: map[uint64]chan *pb.PeerBlobChunk{}, serveSem: make(chan struct{}, 4), hpending: map[uint64]chan bool{}, tunnels: map[uint64]*tunnel{}}
 }
 
 func (s *session) close() { s.cancel(); s.c.CloseNow() }
@@ -174,6 +179,8 @@ func (s *session) run() error {
 			if ch != nil {
 				ch <- k.Holds.Held // buffered 1
 			}
+		case *pb.PeerFrame_TunnelOpen, *pb.PeerFrame_TunnelData, *pb.PeerFrame_TunnelAck, *pb.PeerFrame_TunnelClose:
+			s.onTunnelFrame(f)
 		case *pb.PeerFrame_Error:
 			return fmt.Errorf("peer error: %s", k.Error.Message)
 		}

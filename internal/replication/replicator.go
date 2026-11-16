@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -29,6 +30,8 @@ type Replicator struct {
 	last   lastPeers
 	rank   *Ranker
 	nlog   netlog.Logger
+	tln    atomic.Pointer[tunnelListener] // restore tunnel streams end here (D114); nil: tunnels refused
+	tlim   tunnelLimits                   // phones relayed by this node (D114)
 
 	mu      sync.Mutex
 	backoff map[string]time.Duration
@@ -195,6 +198,7 @@ func SetTestTimings(dial, backoff time.Duration) {
 	peerPing, peerPingTimeout = 2*dial, 5*dial
 	handshakeTimeout = 5 * dial
 	handoffEvery = dial
+	tunnelIdle = 20 * backoff
 }
 
 func (r *Replicator) baseCtx() context.Context { r.mu.Lock(); defer r.mu.Unlock(); return r.ctx }

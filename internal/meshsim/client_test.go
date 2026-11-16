@@ -34,6 +34,12 @@ func (s *sim) dial(n *simNode) *client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s.wrap(c)
+}
+
+// wrap runs the client protocol on an open WebSocket: reads frames and waits for hello.
+func (s *sim) wrap(c *websocket.Conn) *client {
+	t := s.t
 	c.SetReadLimit(1 << 20)
 	cl := &client{t: t, c: c, resps: make(chan *pb.Response, 16), events: make(chan *pb.Event, 256)}
 	go func() {

@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -43,6 +44,8 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   user revoke NAME|NAME#TAG|USER_ID [--reason TEXT] [--yes] [--via LABEL]... [--allow-plain]
   user invite-rights NAME|NAME#TAG|USER_ID --on|--off [--via LABEL]... [--allow-plain]
   user found USER_ID...            (then 'manifest sign' and 'manifest publish')
+  user rekey USERNAME --old CODE [--yes] [--via LABEL]... [--allow-plain]   (lost phone, step 1: revoke + invite)
+  user rekey USERNAME --new CODE [--via LABEL]... [--allow-plain]   (step 2: CODE = «Код аккаунта» of the new install)
   node set-ip --label L --ip A [--ip B]...
   node rotate-tls --label L
   node drop-old-pins --label L
@@ -477,7 +480,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		fmt.Fprintf(out, "Invite for the first member (valid %s):\n%s\n\n", *ttl, res.Link)
 		qrterminal.GenerateHalfBlock(res.Link, qrterminal.L, out)
 		fmt.Fprintf(out, "\nRecord: %s\nThe link carries it; optionally copy it to a node and run:\n  otter-node import --config /etc/otter/node.toml %s\n", res.File, filepath.Base(res.File))
-	case "user list", "user revoke", "user invite-rights":
+	case "user list", "user revoke", "user invite-rights", "user rekey":
 		return userCmd(out, in, *dir, a[1], a[2:])
 	case "user found":
 		var ids [][]byte
@@ -676,6 +679,8 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	yes := fs.Bool("yes", false, "do not ask")
 	on := fs.Bool("on", false, "allow inviting")
 	off := fs.Bool("off", false, "withdraw the right to invite")
+	oldCode := fs.String("old", "", "rekey step 1: account code (user id) of the lost account, from 'user list'")
+	newCode := fs.String("new", "", "rekey step 2: «Код аккаунта» the person reads from the new install (Settings → Профиль)")
 	who := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		who, args = args[0], args[1:]
@@ -693,6 +698,26 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 		return fmt.Errorf("user %s: NAME, NAME#TAG or USER_ID", sub)
 	case sub == "invite-rights" && *on == *off:
 		return errors.New("user invite-rights: exactly one of --on, --off")
+	case sub == "rekey" && (*oldCode == "") == (*newCode == ""):
+		return errors.New("user rekey USERNAME (--old CODE | --new CODE)")
+	case sub != "rekey" && (*oldCode != "" || *newCode != ""):
+		return fmt.Errorf("user %s: --old and --new belong to 'user rekey'", sub)
+	}
+	var rekeyOld, rekeyNew []byte
+	if sub == "rekey" { // checked before the passphrase is asked
+		code := *oldCode + *newCode
+		id, err := admin.ParseUserCode(code)
+		if err != nil {
+			return err
+		}
+		if *oldCode != "" {
+			rekeyOld = id
+		} else {
+			rekeyNew = id
+			if rekeyOld, err = admin.RekeyPending(dir, who); err != nil {
+				return err
+			}
+		}
 	}
 	st, err := admin.LoadState(dir)
 	if err != nil {
@@ -731,10 +756,26 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 		return lastErr
 	}
 	if sub == "list" {
+		tags := map[string]string{}
+		for _, m := range ms {
+			tags[string(m.UserID)] = m.Tag()
+		}
+		tagOf := func(id []byte) string {
+			if t, ok := tags[string(id)]; ok {
+				return t
+			}
+			return fmt.Sprintf("%x (no entry yet)", id)
+		}
 		for _, m := range ms {
 			state := "active"
 			if m.Revoked {
 				state = "revoked: " + m.Reason
+			}
+			if m.RekeyedTo != nil {
+				state += ", re-keyed → " + tagOf(m.RekeyedTo)
+			}
+			if m.RekeyedFrom != nil {
+				state += " (admitted by REKEY of " + tagOf(m.RekeyedFrom) + ")"
 			}
 			if !m.Admitted {
 				state += " (not admitted: no invite chain; 'user found' if it predates 0.9.3)"
@@ -743,6 +784,9 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 				m.RightsVersion, state, m.Display)
 		}
 		return nil
+	}
+	if sub == "rekey" {
+		return userRekey(out, br, dir, priv, nodes, ms, who, rekeyOld, rekeyNew, *yes, *allowPlain)
 	}
 	m, err := admin.Find(ms, who)
 	if err != nil {
@@ -768,6 +812,75 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	if err := publishAll(out, nodes, "network.publish", rec, *allowPlain); err != nil {
 		return fmt.Errorf("%w (the record is saved in %s; retry later)", err, dir)
 	}
+	return nil
+}
+
+// userRekey re-keys a lost phone in two steps (D111). Step 1 (rekeyNew nil): REVOCATION{old, "rekey"} and a 7-day
+// network invite for the new install. Step 2: REKEY{old, new}, new being the «Код аккаунта» the person read aloud.
+// Each step is recorded only after every record reached at least one node.
+func userRekey(out io.Writer, br *bufio.Reader, dir string, priv ed25519.PrivateKey, nodes []*pb.NodeInfo, ms []admin.Member,
+	name string, old, nw []byte, yes, allowPlain bool) error {
+	member := func(id []byte) (admin.Member, bool) {
+		for _, m := range ms {
+			if bytes.Equal(m.UserID, id) {
+				return m, true
+			}
+		}
+		return admin.Member{}, false
+	}
+	o, ok := member(old)
+	switch {
+	case !ok:
+		return fmt.Errorf("no account %x on the node (check the code with 'user list', or try --via another node)", old)
+	case o.Username != name:
+		return fmt.Errorf("account %x is %s, not %s", old, o.Tag(), name)
+	}
+	if nw == nil {
+		if !yes && !confirm(br, fmt.Sprintf("Revoke %s «%s» (%x) and invite a new install? This cannot be undone. [y/N] ",
+			o.Tag(), o.Display, o.UserID)) {
+			return errors.New("cancelled")
+		}
+		res, err := admin.RekeyStart(dir, priv, name, old, time.Now())
+		if err != nil {
+			return err
+		}
+		for _, r := range []*pb.Record{res.Revocation, res.Invite.Record} {
+			if err := publishAll(out, nodes, "network.publish", r, allowPlain); err != nil {
+				return fmt.Errorf("%w (nothing is marked started; run the command again later)", err)
+			}
+		}
+		if err := admin.RekeyStarted(dir, name, old, res.Invite.InviteID, time.Now()); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s is revoked. Invite for the new install (valid %s; register as %q, the app shows %s#… until step 2):\n%s\n\n",
+			o.Tag(), admin.RekeyInviteTTL, name, name, res.Invite.Link)
+		qrterminal.GenerateHalfBlock(res.Invite.Link, qrterminal.L, out)
+		fmt.Fprintf(out, "\nThen ask the person to read Settings → Профиль → «Код аккаунта» to you (by phone or in person, not by\n"+
+			"a message that anyone could send) and run:\n  otter-admin user rekey %s --new CODE\n", name)
+		return nil
+	}
+	n, ok := member(nw)
+	switch {
+	case bytes.Equal(nw, old):
+		return errors.New("the code is the lost account's: ask for the code shown by the new install")
+	case !ok:
+		return fmt.Errorf("no account %x on the node yet: check the code, or wait until the new install registered (try --via another node)", nw)
+	case n.Username != name:
+		return fmt.Errorf("account %x registered as %s, not %s: ask for the code again", nw, n.Tag(), name)
+	case n.Revoked:
+		return fmt.Errorf("account %x is revoked (%s)", nw, n.Reason)
+	}
+	rec, err := admin.RekeyFinish(dir, priv, name, nw, time.Now())
+	if err != nil {
+		return err
+	}
+	if err := publishAll(out, nodes, "network.publish", rec, allowPlain); err != nil {
+		return fmt.Errorf("%w (the REKEY is saved in %s; run the command again later)", err, dir)
+	}
+	if err := admin.RekeyDone(dir, name, nw, time.Now()); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s now belongs to %x («%s»). Contacts see «Ключ безопасности изменился».\n", name, nw, n.Display)
 	return nil
 }
 

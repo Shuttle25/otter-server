@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -41,15 +42,29 @@ func DecodeInviteLink(link string) (*pb.InviteBundle, error) {
 }
 
 type BootstrapResult struct {
-	Record *pb.Record
-	Link   string
-	File   string
+	Record   *pb.Record
+	Link     string
+	File     string
+	InviteID []byte // SHA-256 of the link's secret
 }
 
 // BootstrapInvite creates a network-signed invite for the first member. The link carries the signed INVITE, so any
 // node registers it; importing the record file on a node is optional.
 func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) (*BootstrapResult, error) {
 	if ttl <= 0 || ttl > records.MaxInviteTTL { // C8: every node refuses a longer-lived invite
+		return nil, fmt.Errorf("invite ttl must be between 1s and %s", records.MaxInviteTTL)
+	}
+	priv, err := keys.ReadEncryptedKey(filepath.Join(dir, "network.key.enc"), pass)
+	if err != nil {
+		return nil, err
+	}
+	return NetworkInvite(dir, priv, now, ttl)
+}
+
+// NetworkInvite signs an INVITE by the network key valid for ttl and builds its link (bootstrap and re-key invites).
+// A copy of the record is kept in DIR/invites.
+func NetworkInvite(dir string, priv ed25519.PrivateKey, now time.Time, ttl time.Duration) (*BootstrapResult, error) {
+	if ttl <= 0 || ttl > records.MaxInviteTTL {
 		return nil, fmt.Errorf("invite ttl must be between 1s and %s", records.MaxInviteTTL)
 	}
 	st, err := LoadState(dir)
@@ -62,10 +77,6 @@ func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) 
 	}
 	var manifest pb.Record
 	if err := proto.Unmarshal(mraw, &manifest); err != nil {
-		return nil, err
-	}
-	priv, err := keys.ReadEncryptedKey(filepath.Join(dir, "network.key.enc"), pass)
-	if err != nil {
 		return nil, err
 	}
 	secret := make([]byte, 32)
@@ -99,5 +110,5 @@ func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) 
 	if err := os.WriteFile(file, raw, 0o600); err != nil {
 		return nil, err
 	}
-	return &BootstrapResult{Record: rec, Link: link, File: file}, nil
+	return &BootstrapResult{Record: rec, Link: link, File: file, InviteID: sum[:]}, nil
 }

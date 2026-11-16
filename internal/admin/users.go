@@ -30,6 +30,9 @@ type Member struct {
 	Admitted, Founding bool
 	CanInvite          bool
 	RightsVersion      uint64
+	// D111: RekeyedTo is the account that replaced this one (winning REKEY; this one is revoked), RekeyedFrom the
+	// account this one replaced (admitted by that REKEY without an invite chain).
+	RekeyedTo, RekeyedFrom []byte
 }
 
 func (m Member) Tag() string { return m.Username + "#" + hex.EncodeToString(m.UserID[:4]) }
@@ -44,6 +47,8 @@ type entry struct {
 // made up has no verifiable invite chain and shows as not admitted. Duplicate redemptions (C5) and node-side clash
 // names are not reproduced here; the list shows each account's own entry. Invite rights follow D101 as changed by
 // the owner: every member may invite unless the newest INVITE_RIGHTS says no (equal versions: "no" wins).
+// A REKEY{old, new} revokes old (reason "rekey" unless a REVOCATION gives one) and admits new; of several REKEYs of
+// one account the later created_ms wins, then the lower record id (as on the nodes, D111).
 // Signatures are checked under D109: v2 for this network, or v1 for a record created before v1Until (0 = no cut-over).
 func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1Until int64) []Member {
 	netID := keys.ID16(netPub)
@@ -54,6 +59,12 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1
 	}
 	rs := map[string]rights{}
 	revoked := map[string]string{}
+	type rekey struct {
+		nw      []byte
+		created int64
+		id      []byte
+	}
+	rekeys := map[string]rekey{} // old → winning REKEY
 	for _, r := range batch {
 		var b pb.RecordBody
 		if r == nil || proto.Unmarshal(r.Body, &b) != nil {
@@ -70,8 +81,19 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1
 			if cur, ok := entries[string(e.UserId)]; !ok || e.Version > cur.version {
 				entries[string(e.UserId)] = entry{&e, e.Version}
 			}
-		case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
+		case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS, pb.RecordType_REKEY:
 			if !bytes.Equal(b.Author, netID) || !records.VerifySig(netPub, netID, r.Body, r.Signature, b.CreatedMs, v1Until) {
+				continue
+			}
+			if b.Type == pb.RecordType_REKEY {
+				var k pb.Rekey
+				if proto.Unmarshal(b.Payload, &k) == nil && len(k.OldUserId) == 16 && len(k.NewUserId) == 16 &&
+					!bytes.Equal(k.OldUserId, k.NewUserId) {
+					cur, ok := rekeys[string(k.OldUserId)]
+					if !ok || b.CreatedMs > cur.created || (b.CreatedMs == cur.created && bytes.Compare(b.Id, cur.id) < 0) {
+						rekeys[string(k.OldUserId)] = rekey{k.NewUserId, b.CreatedMs, b.Id}
+					}
+				}
 				continue
 			}
 			if b.Type == pb.RecordType_REVOCATION {
@@ -96,9 +118,14 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1
 		isFounding[string(f)] = true
 	}
 	// admitted: founding, or invited (proof valid) by the network key or by an admitted member; repeat until stable
+	// and the new account of a winning REKEY: the admin confirmed it (D111)
+	rekeyedFrom := map[string][]byte{}
+	for old, k := range rekeys {
+		rekeyedFrom[string(k.nw)] = []byte(old)
+	}
 	admitted := map[string]bool{}
 	for id := range entries {
-		if isFounding[id] {
+		if isFounding[id] || rekeyedFrom[id] != nil {
 			admitted[id] = true
 		}
 	}
@@ -119,6 +146,13 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1
 			m.CanInvite, m.RightsVersion = r.can, r.v
 		}
 		m.Reason, m.Revoked = revoked[id]
+		if k, ok := rekeys[id]; ok {
+			m.RekeyedTo = k.nw
+			if !m.Revoked {
+				m.Reason, m.Revoked = "rekey", true
+			}
+		}
+		m.RekeyedFrom = rekeyedFrom[id]
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool {

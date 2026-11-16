@@ -550,3 +550,148 @@ func TestUserCommands(t *testing.T) {
 		t.Fatal("boris not revoked")
 	}
 }
+
+// D111 end to end on an in-process node: step 1 revokes the lost account and prints the invite, the new install
+// registers with it under the same name, step 2 signs REKEY with the code read aloud and the name moves.
+func TestUserRekey(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	var out bytes.Buffer
+	runIn := func(in string, args ...string) (string, error) {
+		out.Reset()
+		err := run(append([]string{"--dir", dir}, args...), &out, strings.NewReader(in))
+		return out.String(), err
+	}
+	runOK := func(args ...string) string {
+		t.Helper()
+		o, err := runIn("", args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, o)
+		}
+		return o
+	}
+	linkIn := func(o string) string {
+		t.Helper()
+		for _, l := range strings.Split(o, "\n") {
+			if strings.HasPrefix(l, admin.InvitePrefix) {
+				return l
+			}
+		}
+		t.Fatalf("no link in %s", o)
+		return ""
+	}
+	runOK("network", "init")
+	runOK("node", "add", "--label", "dev", "--plain", "--wss-host", "127.0.0.1", "--wss-port", strconv.Itoa(port), "--wss-path", "/devpath")
+	runOK("manifest", "sign")
+	svc := devNode(t, dir, ln)
+	ctx := context.Background()
+	old := joinWithLink(t, svc, linkIn(runOK("invite", "bootstrap", "--ttl", "1h")), "anna")
+	boris := joinWithLink(t, svc, linkIn(runOK("invite", "bootstrap", "--ttl", "1h")), "boris")
+	oldHex, newCode := fmt.Sprintf("%x", old), strings.Repeat("ab", 16)
+
+	// usage and code errors come before the passphrase
+	for _, args := range [][]string{
+		{"user", "rekey", "anna", "--allow-plain"},
+		{"user", "rekey", "anna", "--old", oldHex, "--new", newCode, "--allow-plain"},
+		{"user", "rekey", "anna", "--old", oldHex[:30], "--yes", "--allow-plain"},
+		{"user", "rekey", "anna", "--new", newCode, "--allow-plain"},          // step 2 before step 1
+		{"user", "rekey", "boris", "--old", oldHex, "--yes", "--allow-plain"}, // the code is anna's
+		{"user", "revoke", "anna", "--old", oldHex, "--allow-plain"},
+	} {
+		if o, err := runIn("", args...); err == nil {
+			t.Fatalf("%v accepted:\n%s", args, o)
+		}
+	}
+	if _, err := runIn("n\n", "user", "rekey", "anna", "--old", oldHex, "--allow-plain"); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("rekey without confirmation: %v", err)
+	}
+	if u, _ := svc.Store.UserByID(ctx, old); u.Revoked {
+		t.Fatal("revoked without confirmation")
+	}
+
+	// step 1
+	o, err := runIn("y\n", "user", "rekey", "anna", "--old", strings.ToUpper(oldHex), "--allow-plain")
+	if err != nil || strings.Count(o, "dev          ok") != 2 || !strings.Contains(o, "--new CODE") || !strings.Contains(o, "Код аккаунта") {
+		t.Fatalf("step 1: %v\n%s", err, o)
+	}
+	if u, _ := svc.Store.UserByID(ctx, old); !u.Revoked {
+		t.Fatal("old account not revoked on the node")
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "rekeys", "anna.json")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("state file: %v", err)
+	}
+	link := linkIn(o)
+	if b, _ := admin.DecodeInviteLink(link); b.Invite == nil {
+		t.Fatal("re-key link without INVITE")
+	}
+
+	// a misheard code, a code of someone else, the lost account's code: refused, nothing done
+	if _, err := runIn("", "user", "rekey", "anna", "--new", newCode, "--allow-plain"); err == nil || !strings.Contains(err.Error(), "no account") {
+		t.Fatalf("unknown new account: %v", err)
+	}
+	if _, err := runIn("", "user", "rekey", "anna", "--new", fmt.Sprintf("%x", boris), "--allow-plain"); err == nil {
+		t.Fatal("boris's account accepted as anna's new install")
+	}
+	if _, err := runIn("", "user", "rekey", "anna", "--new", oldHex, "--allow-plain"); err == nil {
+		t.Fatal("new == old accepted")
+	}
+
+	// the new install registers with the re-key invite under the same name (anna#tag until step 2)
+	nw := joinWithLink(t, svc, link, "anna")
+	if owner, _ := svc.Store.UsernameOwner(ctx, "anna"); !bytes.Equal(owner, old) {
+		t.Fatalf("name moved before the REKEY: %x", owner)
+	}
+	code := fmt.Sprintf("%x", nw)
+	spaced := strings.Join([]string{code[:4], code[4:8], code[8:12], code[12:16], code[16:20], code[20:24], code[24:28], code[28:]}, " ")
+	o = runOK("user", "rekey", "anna", "--new", spaced, "--allow-plain")
+	if !strings.Contains(o, "dev          ok") || !strings.Contains(o, "anna now belongs to "+code) {
+		t.Fatalf("step 2: %s", o)
+	}
+	if owner, _ := svc.Store.UsernameOwner(ctx, "anna"); !bytes.Equal(owner, nw) {
+		t.Fatalf("anna owned by %x after the REKEY, want %x", owner, nw)
+	}
+	if ok, _ := svc.Store.IsRekeyTarget(ctx, nw); !ok {
+		t.Fatal("no REKEY stored on the node")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rekeys", "anna.done.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rekeys", "anna.json")); !os.IsNotExist(err) {
+		t.Fatalf("pending file left: %v", err)
+	}
+	if _, err := runIn("", "user", "rekey", "anna", "--new", code, "--allow-plain"); err == nil {
+		t.Fatal("step 2 ran twice")
+	}
+
+	// user list understands the REKEY
+	o = runOK("user", "list", "--allow-plain")
+	oldTag, newTag := fmt.Sprintf("anna#%x", old[:4]), fmt.Sprintf("anna#%x", nw[:4])
+	if !strings.Contains(o, "revoked: rekey, re-keyed → "+newTag) || !strings.Contains(o, "active (admitted by REKEY of "+oldTag+")") ||
+		strings.Contains(o, "not admitted") {
+		t.Fatalf("list: %s", o)
+	}
+}
+
+// Step 1 fails without a reachable node and leaves nothing marked as started.
+func TestUserRekeyUnreachable(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	for _, s := range [][]string{{"network", "init"}, {"node", "add", "--label", "dev", "--plain", "--wss-host", "127.0.0.1",
+		"--wss-port", "1", "--wss-path", "/devpath"}, {"manifest", "sign"}} {
+		if err := run(append([]string{"--dir", dir}, s...), &out, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run([]string{"--dir", dir, "user", "rekey", "anna", "--old", strings.Repeat("01", 16), "--yes", "--allow-plain"}, &out, nil); err == nil {
+		t.Fatal("rekey without a node succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rekeys", "anna.json")); !os.IsNotExist(err) {
+		t.Fatalf("marked started: %v", err)
+	}
+}

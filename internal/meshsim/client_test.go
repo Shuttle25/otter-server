@@ -34,6 +34,12 @@ func (s *sim) dial(n *simNode) *client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return s.wrap(c)
+}
+
+// wrap runs the client protocol on an open WebSocket: reads frames and waits for hello.
+func (s *sim) wrap(c *websocket.Conn) *client {
+	t := s.t
 	c.SetReadLimit(1 << 20)
 	cl := &client{t: t, c: c, resps: make(chan *pb.Response, 16), events: make(chan *pb.Event, 256)}
 	go func() {
@@ -146,6 +152,11 @@ type account struct {
 
 func (s *sim) signAs(a *account, typ pb.RecordType, payload proto.Message) *pb.Record {
 	return s.sign(typ, a.id, payload, a.priv)
+}
+
+// signAsWith is signAs with an explicit created_ms and signature context (D109).
+func (s *sim) signAsWith(a *account, typ pb.RecordType, payload proto.Message, created int64, sc records.SigContext) *pb.Record {
+	return s.signCtx(typ, a.id, payload, a.priv, created, sc)
 }
 
 // register creates an account through node n's client API with a fresh bootstrap invite; owners get 11 one-time keys each.

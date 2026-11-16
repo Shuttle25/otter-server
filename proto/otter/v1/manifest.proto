@@ -12,6 +12,7 @@ message Manifest {
   repeated NodeInfo nodes = 4;
   uint32 min_app_version = 5;
   repeated bytes news_keys = 6; // Ed25519 public keys allowed to sign announcements (D65)
+  int64 sig_v1_until_ms = 7; // M9.3 (D109): v1 record signatures valid only for created_ms < this; 0 = v1 still valid for all
   repeated bytes founding_members = 8; // M9.2 (D100): user_ids admitted without an invite chain
 }
 
@@ -22,6 +23,7 @@ message NodeInfo {
   bool push_capable = 4;
   repeated Endpoint endpoints = 5;
   bool dial_out_only = 6;            // M7 (D71): inside a censored network; dials peers, is never dialed by them
+  bool no_backups = 7;               // M9.3 (D113): never stores backups at rest; hands phone uploads to the other nodes
 }
 
 message Endpoint {

@@ -45,15 +45,15 @@ func SignManifest(dir string, pass []byte, now time.Time) (*pb.Record, error) {
 	}
 	version := readVersion(dir) + 1
 	m := &pb.Manifest{Version: version, IssuedMs: now.UnixMilli(), NetworkPub: st.NetworkPub, Nodes: st.Nodes, NewsKeys: newsKeys,
-		FoundingMembers: founding}
+		FoundingMembers: founding, SigV1UntilMs: SigV1Until(dir)}
 	payload, err := proto.MarshalOptions{Deterministic: true}.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
 	id := make([]byte, 16)
 	rand.Read(id)
-	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: pb.RecordType_MANIFEST, Author: keys.ID16(st.NetworkPub),
-		CreatedMs: now.UnixMilli(), Payload: payload}, priv)
+	rec, err := records.SignWith(&pb.RecordBody{Id: id, Type: pb.RecordType_MANIFEST, Author: keys.ID16(st.NetworkPub),
+		CreatedMs: now.UnixMilli(), Payload: payload}, priv, adminSig(st, dir))
 	if err != nil {
 		return nil, err
 	}

@@ -37,6 +37,9 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 	case err != nil:
 		return false, invalid(err)
 	}
+	if IsBackupRecord(body) && s.NoBackups() {
+		return false, nil // D113: an older peer still sends backups; they never rest on a node with no_backups
+	}
 	var adm *store.Admission
 	if body.Type == pb.RecordType_DIRECTORY_ENTRY {
 		if adm, err = s.admitIfNew(ctx, body); err != nil {
@@ -74,7 +77,8 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []by
 	case pb.RecordType_DIRECTORY_ENTRY:
 		s.RefreshRevoked(ctx) // an entry may arrive after its revocation, or a double redemption may disable one (D102)
 		s.Notify.Directory()
-	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
+	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS, pb.RecordType_REKEY:
+		// a REKEY revokes the old account like a REVOCATION ("revocation applied", reason rekey) (D111)
 		s.RefreshRevoked(ctx)
 		s.Notify.Directory() // phones re-sync and verify the record themselves (D104)
 	case pb.RecordType_BLOB_FETCHED:

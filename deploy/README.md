@@ -45,6 +45,7 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
 | Push wake-ups | `deploy/push-key.sh fi-1 ~/fcm.json` → `otter-admin node set-push --label fi-1` → `manifest sign` + `manifest publish` |
+| No backups at rest (e.g. a node in Russia, D113) | `otter-admin node set-no-backups --label L [--off]` → `manifest sign` + `manifest publish` (nodes ≥ 0.10.0). The node then answers restores with "unavailable", gets no backups from peers, and deletes what phones upload to it once `min(2, other nodes)` nodes without the flag hold it |
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` (7 copies, 0600 in the 0700 `/var/backups/otter`) |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 

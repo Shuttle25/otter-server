@@ -78,6 +78,7 @@ type Manifest struct {
 	Nodes           []*NodeInfo            `protobuf:"bytes,4,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	MinAppVersion   uint32                 `protobuf:"varint,5,opt,name=min_app_version,json=minAppVersion,proto3" json:"min_app_version,omitempty"`
 	NewsKeys        [][]byte               `protobuf:"bytes,6,rep,name=news_keys,json=newsKeys,proto3" json:"news_keys,omitempty"`                      // Ed25519 public keys allowed to sign announcements (D65)
+	SigV1UntilMs    int64                  `protobuf:"varint,7,opt,name=sig_v1_until_ms,json=sigV1UntilMs,proto3" json:"sig_v1_until_ms,omitempty"`     // M9.3 (D109): v1 record signatures valid only for created_ms < this; 0 = v1 still valid for all
 	FoundingMembers [][]byte               `protobuf:"bytes,8,rep,name=founding_members,json=foundingMembers,proto3" json:"founding_members,omitempty"` // M9.2 (D100): user_ids admitted without an invite chain
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -155,6 +156,13 @@ func (x *Manifest) GetNewsKeys() [][]byte {
 	return nil
 }
 
+func (x *Manifest) GetSigV1UntilMs() int64 {
+	if x != nil {
+		return x.SigV1UntilMs
+	}
+	return 0
+}
+
 func (x *Manifest) GetFoundingMembers() [][]byte {
 	if x != nil {
 		return x.FoundingMembers
@@ -170,6 +178,7 @@ type NodeInfo struct {
 	PushCapable   bool                   `protobuf:"varint,4,opt,name=push_capable,json=pushCapable,proto3" json:"push_capable,omitempty"`
 	Endpoints     []*Endpoint            `protobuf:"bytes,5,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
 	DialOutOnly   bool                   `protobuf:"varint,6,opt,name=dial_out_only,json=dialOutOnly,proto3" json:"dial_out_only,omitempty"` // M7 (D71): inside a censored network; dials peers, is never dialed by them
+	NoBackups     bool                   `protobuf:"varint,7,opt,name=no_backups,json=noBackups,proto3" json:"no_backups,omitempty"`         // M9.3 (D113): never stores backups at rest; hands phone uploads to the other nodes
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -242,6 +251,13 @@ func (x *NodeInfo) GetEndpoints() []*Endpoint {
 func (x *NodeInfo) GetDialOutOnly() bool {
 	if x != nil {
 		return x.DialOutOnly
+	}
+	return false
+}
+
+func (x *NodeInfo) GetNoBackups() bool {
+	if x != nil {
+		return x.NoBackups
 	}
 	return false
 }
@@ -382,7 +398,7 @@ var File_otter_v1_manifest_proto protoreflect.FileDescriptor
 
 const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\n" +
-	"\x17otter/v1/manifest.proto\x12\botter.v1\"\xfc\x01\n" +
+	"\x17otter/v1/manifest.proto\x12\botter.v1\"\xa3\x02\n" +
 	"\bManifest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x1b\n" +
 	"\tissued_ms\x18\x02 \x01(\x03R\bissuedMs\x12\x1f\n" +
@@ -390,15 +406,18 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"networkPub\x12(\n" +
 	"\x05nodes\x18\x04 \x03(\v2\x12.otter.v1.NodeInfoR\x05nodes\x12&\n" +
 	"\x0fmin_app_version\x18\x05 \x01(\rR\rminAppVersion\x12\x1b\n" +
-	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\x12)\n" +
-	"\x10founding_members\x18\b \x03(\fR\x0ffoundingMembers\"\xcd\x01\n" +
+	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\x12%\n" +
+	"\x0fsig_v1_until_ms\x18\a \x01(\x03R\fsigV1UntilMs\x12)\n" +
+	"\x10founding_members\x18\b \x03(\fR\x0ffoundingMembers\"\xec\x01\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\fR\x06nodeId\x12\x19\n" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12!\n" +
 	"\fpush_capable\x18\x04 \x01(\bR\vpushCapable\x120\n" +
 	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\x12\"\n" +
-	"\rdial_out_only\x18\x06 \x01(\bR\vdialOutOnly\"\x9a\x03\n" +
+	"\rdial_out_only\x18\x06 \x01(\bR\vdialOutOnly\x12\x1d\n" +
+	"\n" +
+	"no_backups\x18\a \x01(\bR\tnoBackups\"\x9a\x03\n" +
 	"\bEndpoint\x12+\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x17.otter.v1.Endpoint.KindR\x04kind\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +

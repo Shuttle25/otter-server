@@ -18,6 +18,12 @@ message PeerFrame {
     PeerError error = 7;
     PeerBlobGet blob_get = 8;
     PeerBlobChunk blob_chunk = 9;
+    PeerHoldsQuery holds_query = 10;
+    PeerHolds holds = 11;
+    PeerTunnelOpen tunnel_open = 12;
+    PeerTunnelData tunnel_data = 13;
+    PeerTunnelAck tunnel_ack = 14;
+    PeerTunnelClose tunnel_close = 15;
   }
 }
 
@@ -72,4 +78,38 @@ message PeerBlobChunk {
   uint64 req = 1;
   bytes data = 2;
   bool missing = 3;
+}
+
+// A node marked no_backups asks whether the peer holds a backup record it wants to hand off (D113). For a BLOB_META
+// "held" means every chunk is stored as well; a record this node received and later deleted as superseded also counts.
+message PeerHoldsQuery {
+  uint64 req = 1;
+  bytes record_key = 2;
+}
+
+message PeerHolds {
+  uint64 req = 1;
+  bool held = 2;
+}
+
+// Restore tunnel (D114): opened by a node marked no_backups for a phone; the bytes are the phone's TLS stream to the
+// receiving node. It rides on the existing peer session, whichever side dialed it (D132).
+message PeerTunnelOpen {
+  uint64 stream = 1;
+}
+
+message PeerTunnelData {
+  uint64 stream = 1;
+  bytes data = 2; // 1..32768 bytes
+}
+
+// The receiver consumed `chunks` data frames; the sender may have at most 32 unacknowledged.
+message PeerTunnelAck {
+  uint64 stream = 1;
+  uint32 chunks = 2;
+}
+
+message PeerTunnelClose {
+  uint64 stream = 1;
+  string reason = 2;
 }

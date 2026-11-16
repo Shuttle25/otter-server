@@ -42,6 +42,7 @@ const (
 	RecordType_ANNOUNCEMENT            RecordType = 15
 	RecordType_ANNOUNCEMENT_DELETED    RecordType = 16
 	RecordType_INSTALL                 RecordType = 17 // M9.1 (C14): the account's current install, signed by the account key
+	RecordType_REKEY                   RecordType = 18 // M9.3 (D111): network-signed, a lost account replaced by a new one
 )
 
 // Enum value maps for RecordType.
@@ -65,6 +66,7 @@ var (
 		15: "ANNOUNCEMENT",
 		16: "ANNOUNCEMENT_DELETED",
 		17: "INSTALL",
+		18: "REKEY",
 	}
 	RecordType_value = map[string]int32{
 		"RECORD_TYPE_UNSPECIFIED": 0,
@@ -85,6 +87,7 @@ var (
 		"ANNOUNCEMENT":            15,
 		"ANNOUNCEMENT_DELETED":    16,
 		"INSTALL":                 17,
+		"REKEY":                   18,
 	}
 )
 
@@ -158,7 +161,7 @@ func (x PushToken_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PushToken_Kind.Descriptor instead.
 func (PushToken_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{13, 0}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{14, 0}
 }
 
 // Signature is Ed25519 over the exact `body` bytes.
@@ -474,6 +477,60 @@ func (x *Revocation) GetReason() string {
 	return ""
 }
 
+// REKEY payload (M9.3, D111): signed by the network key. old_user_id is revoked; new_user_id takes over its username
+// and clash rank, and contacts move their chats to it. Two REKEYs of one old_user_id: the later created_ms wins.
+type Rekey struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OldUserId     []byte                 `protobuf:"bytes,1,opt,name=old_user_id,json=oldUserId,proto3" json:"old_user_id,omitempty"`
+	NewUserId     []byte                 `protobuf:"bytes,2,opt,name=new_user_id,json=newUserId,proto3" json:"new_user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Rekey) Reset() {
+	*x = Rekey{}
+	mi := &file_otter_v1_records_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Rekey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Rekey) ProtoMessage() {}
+
+func (x *Rekey) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_records_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Rekey.ProtoReflect.Descriptor instead.
+func (*Rekey) Descriptor() ([]byte, []int) {
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Rekey) GetOldUserId() []byte {
+	if x != nil {
+		return x.OldUserId
+	}
+	return nil
+}
+
+func (x *Rekey) GetNewUserId() []byte {
+	if x != nil {
+		return x.NewUserId
+	}
+	return nil
+}
+
 type InviteRights struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        []byte                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -485,7 +542,7 @@ type InviteRights struct {
 
 func (x *InviteRights) Reset() {
 	*x = InviteRights{}
-	mi := &file_otter_v1_records_proto_msgTypes[4]
+	mi := &file_otter_v1_records_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +554,7 @@ func (x *InviteRights) String() string {
 func (*InviteRights) ProtoMessage() {}
 
 func (x *InviteRights) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[4]
+	mi := &file_otter_v1_records_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +567,7 @@ func (x *InviteRights) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteRights.ProtoReflect.Descriptor instead.
 func (*InviteRights) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{4}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InviteRights) GetUserId() []byte {
@@ -545,7 +602,7 @@ type Invite struct {
 
 func (x *Invite) Reset() {
 	*x = Invite{}
-	mi := &file_otter_v1_records_proto_msgTypes[5]
+	mi := &file_otter_v1_records_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -557,7 +614,7 @@ func (x *Invite) String() string {
 func (*Invite) ProtoMessage() {}
 
 func (x *Invite) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[5]
+	mi := &file_otter_v1_records_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -570,7 +627,7 @@ func (x *Invite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Invite.ProtoReflect.Descriptor instead.
 func (*Invite) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{5}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *Invite) GetInviteId() []byte {
@@ -604,7 +661,7 @@ type InviteUsed struct {
 
 func (x *InviteUsed) Reset() {
 	*x = InviteUsed{}
-	mi := &file_otter_v1_records_proto_msgTypes[6]
+	mi := &file_otter_v1_records_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +673,7 @@ func (x *InviteUsed) String() string {
 func (*InviteUsed) ProtoMessage() {}
 
 func (x *InviteUsed) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[6]
+	mi := &file_otter_v1_records_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +686,7 @@ func (x *InviteUsed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InviteUsed.ProtoReflect.Descriptor instead.
 func (*InviteUsed) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{6}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *InviteUsed) GetInviteId() []byte {
@@ -658,7 +715,7 @@ type PrekeyConsumed struct {
 
 func (x *PrekeyConsumed) Reset() {
 	*x = PrekeyConsumed{}
-	mi := &file_otter_v1_records_proto_msgTypes[7]
+	mi := &file_otter_v1_records_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -670,7 +727,7 @@ func (x *PrekeyConsumed) String() string {
 func (*PrekeyConsumed) ProtoMessage() {}
 
 func (x *PrekeyConsumed) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[7]
+	mi := &file_otter_v1_records_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -683,7 +740,7 @@ func (x *PrekeyConsumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrekeyConsumed.ProtoReflect.Descriptor instead.
 func (*PrekeyConsumed) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{7}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PrekeyConsumed) GetUserId() []byte {
@@ -718,7 +775,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_otter_v1_records_proto_msgTypes[8]
+	mi := &file_otter_v1_records_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -730,7 +787,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[8]
+	mi := &file_otter_v1_records_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -743,7 +800,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{8}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Ack) GetEnvelopeIds() [][]byte {
@@ -774,7 +831,7 @@ type BlobMeta struct {
 
 func (x *BlobMeta) Reset() {
 	*x = BlobMeta{}
-	mi := &file_otter_v1_records_proto_msgTypes[9]
+	mi := &file_otter_v1_records_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -786,7 +843,7 @@ func (x *BlobMeta) String() string {
 func (*BlobMeta) ProtoMessage() {}
 
 func (x *BlobMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[9]
+	mi := &file_otter_v1_records_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -799,7 +856,7 @@ func (x *BlobMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobMeta.ProtoReflect.Descriptor instead.
 func (*BlobMeta) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{9}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *BlobMeta) GetSize() uint64 {
@@ -847,7 +904,7 @@ type BlobFetched struct {
 
 func (x *BlobFetched) Reset() {
 	*x = BlobFetched{}
-	mi := &file_otter_v1_records_proto_msgTypes[10]
+	mi := &file_otter_v1_records_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -859,7 +916,7 @@ func (x *BlobFetched) String() string {
 func (*BlobFetched) ProtoMessage() {}
 
 func (x *BlobFetched) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[10]
+	mi := &file_otter_v1_records_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -872,7 +929,7 @@ func (x *BlobFetched) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobFetched.ProtoReflect.Descriptor instead.
 func (*BlobFetched) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{10}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *BlobFetched) GetBlobKey() []byte {
@@ -899,7 +956,7 @@ type BackupMeta struct {
 
 func (x *BackupMeta) Reset() {
 	*x = BackupMeta{}
-	mi := &file_otter_v1_records_proto_msgTypes[11]
+	mi := &file_otter_v1_records_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -911,7 +968,7 @@ func (x *BackupMeta) String() string {
 func (*BackupMeta) ProtoMessage() {}
 
 func (x *BackupMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[11]
+	mi := &file_otter_v1_records_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -924,7 +981,7 @@ func (x *BackupMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupMeta.ProtoReflect.Descriptor instead.
 func (*BackupMeta) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{11}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *BackupMeta) GetVersion() uint64 {
@@ -995,7 +1052,7 @@ type Install struct {
 
 func (x *Install) Reset() {
 	*x = Install{}
-	mi := &file_otter_v1_records_proto_msgTypes[12]
+	mi := &file_otter_v1_records_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1007,7 +1064,7 @@ func (x *Install) String() string {
 func (*Install) ProtoMessage() {}
 
 func (x *Install) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[12]
+	mi := &file_otter_v1_records_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1020,7 +1077,7 @@ func (x *Install) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Install.ProtoReflect.Descriptor instead.
 func (*Install) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{12}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *Install) GetRegistrationId() uint32 {
@@ -1051,7 +1108,7 @@ type PushToken struct {
 
 func (x *PushToken) Reset() {
 	*x = PushToken{}
-	mi := &file_otter_v1_records_proto_msgTypes[13]
+	mi := &file_otter_v1_records_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1063,7 +1120,7 @@ func (x *PushToken) String() string {
 func (*PushToken) ProtoMessage() {}
 
 func (x *PushToken) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[13]
+	mi := &file_otter_v1_records_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1076,7 +1133,7 @@ func (x *PushToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushToken.ProtoReflect.Descriptor instead.
 func (*PushToken) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{13}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PushToken) GetDeviceId() uint32 {
@@ -1126,7 +1183,7 @@ type Announcement struct {
 
 func (x *Announcement) Reset() {
 	*x = Announcement{}
-	mi := &file_otter_v1_records_proto_msgTypes[14]
+	mi := &file_otter_v1_records_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1138,7 +1195,7 @@ func (x *Announcement) String() string {
 func (*Announcement) ProtoMessage() {}
 
 func (x *Announcement) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[14]
+	mi := &file_otter_v1_records_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1151,7 +1208,7 @@ func (x *Announcement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Announcement.ProtoReflect.Descriptor instead.
 func (*Announcement) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{14}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Announcement) GetTextRu() string {
@@ -1187,7 +1244,7 @@ type AppUpdate struct {
 
 func (x *AppUpdate) Reset() {
 	*x = AppUpdate{}
-	mi := &file_otter_v1_records_proto_msgTypes[15]
+	mi := &file_otter_v1_records_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1199,7 +1256,7 @@ func (x *AppUpdate) String() string {
 func (*AppUpdate) ProtoMessage() {}
 
 func (x *AppUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[15]
+	mi := &file_otter_v1_records_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1212,7 +1269,7 @@ func (x *AppUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppUpdate.ProtoReflect.Descriptor instead.
 func (*AppUpdate) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{15}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AppUpdate) GetVersionName() string {
@@ -1253,7 +1310,7 @@ type AnnouncementDeleted struct {
 
 func (x *AnnouncementDeleted) Reset() {
 	*x = AnnouncementDeleted{}
-	mi := &file_otter_v1_records_proto_msgTypes[16]
+	mi := &file_otter_v1_records_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1265,7 +1322,7 @@ func (x *AnnouncementDeleted) String() string {
 func (*AnnouncementDeleted) ProtoMessage() {}
 
 func (x *AnnouncementDeleted) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_records_proto_msgTypes[16]
+	mi := &file_otter_v1_records_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1278,7 +1335,7 @@ func (x *AnnouncementDeleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnouncementDeleted.ProtoReflect.Descriptor instead.
 func (*AnnouncementDeleted) Descriptor() ([]byte, []int) {
-	return file_otter_v1_records_proto_rawDescGZIP(), []int{16}
+	return file_otter_v1_records_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AnnouncementDeleted) GetTarget() []byte {
@@ -1324,7 +1381,10 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\n" +
 	"Revocation\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"`\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"G\n" +
+	"\x05Rekey\x12\x1e\n" +
+	"\vold_user_id\x18\x01 \x01(\fR\toldUserId\x12\x1e\n" +
+	"\vnew_user_id\x18\x02 \x01(\fR\tnewUserId\"`\n" +
 	"\fInviteRights\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1d\n" +
 	"\n" +
@@ -1390,7 +1450,7 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\x06sha256\x18\x03 \x01(\fR\x06sha256\x12\x12\n" +
 	"\x04size\x18\x04 \x01(\x04R\x04size\"-\n" +
 	"\x13AnnouncementDeleted\x12\x16\n" +
-	"\x06target\x18\x01 \x01(\fR\x06target*\xc0\x02\n" +
+	"\x06target\x18\x01 \x01(\fR\x06target*\xcb\x02\n" +
 	"\n" +
 	"RecordType\x12\x1b\n" +
 	"\x17RECORD_TYPE_UNSPECIFIED\x10\x00\x12\x13\n" +
@@ -1414,7 +1474,8 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\fBLOB_FETCHED\x10\x0e\x12\x10\n" +
 	"\fANNOUNCEMENT\x10\x0f\x12\x18\n" +
 	"\x14ANNOUNCEMENT_DELETED\x10\x10\x12\v\n" +
-	"\aINSTALL\x10\x11BI\n" +
+	"\aINSTALL\x10\x11\x12\t\n" +
+	"\x05REKEY\x10\x12BI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -1430,7 +1491,7 @@ func file_otter_v1_records_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_records_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_otter_v1_records_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_otter_v1_records_proto_goTypes = []any{
 	(RecordType)(0),             // 0: otter.v1.RecordType
 	(PushToken_Kind)(0),         // 1: otter.v1.PushToken.Kind
@@ -1438,24 +1499,25 @@ var file_otter_v1_records_proto_goTypes = []any{
 	(*RecordBody)(nil),          // 3: otter.v1.RecordBody
 	(*DirectoryEntry)(nil),      // 4: otter.v1.DirectoryEntry
 	(*Revocation)(nil),          // 5: otter.v1.Revocation
-	(*InviteRights)(nil),        // 6: otter.v1.InviteRights
-	(*Invite)(nil),              // 7: otter.v1.Invite
-	(*InviteUsed)(nil),          // 8: otter.v1.InviteUsed
-	(*PrekeyConsumed)(nil),      // 9: otter.v1.PrekeyConsumed
-	(*Ack)(nil),                 // 10: otter.v1.Ack
-	(*BlobMeta)(nil),            // 11: otter.v1.BlobMeta
-	(*BlobFetched)(nil),         // 12: otter.v1.BlobFetched
-	(*BackupMeta)(nil),          // 13: otter.v1.BackupMeta
-	(*Install)(nil),             // 14: otter.v1.Install
-	(*PushToken)(nil),           // 15: otter.v1.PushToken
-	(*Announcement)(nil),        // 16: otter.v1.Announcement
-	(*AppUpdate)(nil),           // 17: otter.v1.AppUpdate
-	(*AnnouncementDeleted)(nil), // 18: otter.v1.AnnouncementDeleted
+	(*Rekey)(nil),               // 6: otter.v1.Rekey
+	(*InviteRights)(nil),        // 7: otter.v1.InviteRights
+	(*Invite)(nil),              // 8: otter.v1.Invite
+	(*InviteUsed)(nil),          // 9: otter.v1.InviteUsed
+	(*PrekeyConsumed)(nil),      // 10: otter.v1.PrekeyConsumed
+	(*Ack)(nil),                 // 11: otter.v1.Ack
+	(*BlobMeta)(nil),            // 12: otter.v1.BlobMeta
+	(*BlobFetched)(nil),         // 13: otter.v1.BlobFetched
+	(*BackupMeta)(nil),          // 14: otter.v1.BackupMeta
+	(*Install)(nil),             // 15: otter.v1.Install
+	(*PushToken)(nil),           // 16: otter.v1.PushToken
+	(*Announcement)(nil),        // 17: otter.v1.Announcement
+	(*AppUpdate)(nil),           // 18: otter.v1.AppUpdate
+	(*AnnouncementDeleted)(nil), // 19: otter.v1.AnnouncementDeleted
 }
 var file_otter_v1_records_proto_depIdxs = []int32{
 	0,  // 0: otter.v1.RecordBody.type:type_name -> otter.v1.RecordType
 	1,  // 1: otter.v1.PushToken.kind:type_name -> otter.v1.PushToken.Kind
-	17, // 2: otter.v1.Announcement.update:type_name -> otter.v1.AppUpdate
+	18, // 2: otter.v1.Announcement.update:type_name -> otter.v1.AppUpdate
 	3,  // [3:3] is the sub-list for method output_type
 	3,  // [3:3] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
@@ -1474,7 +1536,7 @@ func file_otter_v1_records_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_records_proto_rawDesc), len(file_otter_v1_records_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   17,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

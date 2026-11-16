@@ -24,6 +24,7 @@ enum RecordType {
   ANNOUNCEMENT = 15;
   ANNOUNCEMENT_DELETED = 16;
   INSTALL = 17;               // M9.1 (C14): the account's current install, signed by the account key
+  REKEY = 18;                 // M9.3 (D111): network-signed, a lost account replaced by a new one
 }
 
 // Signature is Ed25519 over the exact `body` bytes.
@@ -58,6 +59,13 @@ message DirectoryEntry {
 message Revocation {
   bytes user_id = 1;
   string reason = 2;
+}
+
+// REKEY payload (M9.3, D111): signed by the network key. old_user_id is revoked; new_user_id takes over its username
+// and clash rank, and contacts move their chats to it. Two REKEYs of one old_user_id: the later created_ms wins.
+message Rekey {
+  bytes old_user_id = 1;
+  bytes new_user_id = 2;
 }
 
 message InviteRights {

@@ -71,10 +71,14 @@ type Validator struct {
 	Nodes      NodeResolver // nil: node-authored records are rejected
 	News       NewsResolver // nil: announcements are rejected
 	Now        func() time.Time
+	// V1Until returns the manifest's sig_v1_until_ms (D109): records created at or after it need a v2 signature.
+	// nil or 0: v1 signatures are accepted for every record.
+	V1Until func() int64
 }
 
 func networkAuthored(t pb.RecordType) bool {
-	return t == pb.RecordType_MANIFEST || t == pb.RecordType_REVOCATION || t == pb.RecordType_INVITE_RIGHTS
+	return t == pb.RecordType_MANIFEST || t == pb.RecordType_REVOCATION || t == pb.RecordType_INVITE_RIGHTS ||
+		t == pb.RecordType_REKEY
 }
 
 // Validate checks structure, author binding, signature and type-specific payload rules.
@@ -100,13 +104,22 @@ func (v *Validator) Validate(r *pb.Record) (*pb.RecordBody, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !ed25519.Verify(key, r.Body, r.Signature) {
+	if !v.verifySig(key, r.Body, r.Signature, body.CreatedMs) {
 		return nil, ErrBadSignature
 	}
 	if err := v.checkPayload(&body); err != nil {
 		return nil, err
 	}
 	return &body, nil
+}
+
+// verifySig accepts a v2 signature for this network, or a v1 signature for a record created before the cut-over.
+func (v *Validator) verifySig(key ed25519.PublicKey, body, sig []byte, createdMs int64) bool {
+	var until int64
+	if v.V1Until != nil {
+		until = v.V1Until()
+	}
+	return VerifySig(key, keys.ID16(v.NetworkPub), body, sig, createdMs, until)
 }
 
 func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {
@@ -202,6 +215,12 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		var r pb.Revocation
 		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || !utf8.ValidString(r.Reason) ||
 			utf8.RuneCountInString(r.Reason) > 200 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
+	case pb.RecordType_REKEY: // D111: permanent, two distinct accounts
+		var k pb.Rekey
+		if err := proto.Unmarshal(b.Payload, &k); err != nil || len(k.OldUserId) != 16 || len(k.NewUserId) != 16 ||
+			bytes.Equal(k.OldUserId, k.NewUserId) || b.ExpiresMs != 0 {
 			return ErrBadPayload
 		}
 	case pb.RecordType_INVITE_RIGHTS:

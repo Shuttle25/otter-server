@@ -169,7 +169,16 @@ func (s *Service) validator(res records.UserResolver) *records.Validator {
 	if res == nil {
 		res = s.Store
 	}
-	return &records.Validator{NetworkPub: s.NetworkPub, Users: res, Nodes: s, News: s, Now: s.Now}
+	return &records.Validator{NetworkPub: s.NetworkPub, Users: res, Nodes: s, News: s, Now: s.Now, V1Until: s.v1Until}
+}
+
+// v1Until is the current manifest's sig_v1_until_ms: v1 record signatures are valid only for records created before
+// it (D109; 0 = no cut-over yet).
+func (s *Service) v1Until() int64 { return s.CurrentManifest().GetSigV1UntilMs() }
+
+// sigContext is how this node signs its own records (PREKEY_CONSUMED) under the current manifest (D109).
+func (s *Service) sigContext() records.SigContext {
+	return records.ContextFor(s.NetworkPub, s.CurrentManifest())
 }
 
 func (s *Service) networkID() []byte { return keys.ID16(s.NetworkPub) }
@@ -246,6 +255,12 @@ func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {
 		return nil, err
 	}
 	raws = append(raws, more...)
+	// and the winning REKEYs, after the entries they refer to (D111)
+	rekeys, err := s.Store.Rekeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	raws = append(raws, rekeys...)
 	out := make([]*pb.Record, 0, len(raws))
 	for _, raw := range raws {
 		r := &pb.Record{}
@@ -346,8 +361,8 @@ func (s *Service) emitConsumed(ctx context.Context, user []byte, dev, keyID uint
 	p, _ := proto.Marshal(&pb.PrekeyConsumed{UserId: user, DeviceId: dev, KeyIds: []uint32{keyID}})
 	id := make([]byte, 16)
 	rand.Read(id)
-	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: pb.RecordType_PREKEY_CONSUMED, Author: s.NodeID,
-		CreatedMs: s.Now().UnixMilli(), Payload: p}, s.NodeKeyPriv)
+	rec, err := records.SignWith(&pb.RecordBody{Id: id, Type: pb.RecordType_PREKEY_CONSUMED, Author: s.NodeID,
+		CreatedMs: s.Now().UnixMilli(), Payload: p}, s.NodeKeyPriv, s.sigContext())
 	if err != nil {
 		return err
 	}

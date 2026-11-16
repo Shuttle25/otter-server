@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -35,7 +36,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node add --label L --wss-host H [--ip A]... [--wss-port 27443] [--wss-path /p] [--cdn] [--push] [--plain]
   node list
   node remove --label L
-  manifest sign
+  manifest sign [--sig-v1-until RFC3339]   (once, after every node and phone runs 0.10.0: publish time + 48h)
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
   invite bootstrap [--ttl 168h]    (at most 720h)
@@ -43,11 +44,14 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   user revoke NAME|NAME#TAG|USER_ID [--reason TEXT] [--yes] [--via LABEL]... [--allow-plain]
   user invite-rights NAME|NAME#TAG|USER_ID --on|--off [--via LABEL]... [--allow-plain]
   user found USER_ID...            (then 'manifest sign' and 'manifest publish')
+  user rekey USERNAME --old CODE [--yes] [--via LABEL]... [--allow-plain]   (lost phone, step 1: revoke + invite)
+  user rekey USERNAME --new CODE [--via LABEL]... [--allow-plain]   (step 2: CODE = «Код аккаунта» of the new install)
   node set-ip --label L --ip A [--ip B]...
   node rotate-tls --label L
   node drop-old-pins --label L
   node set-push --label L [--off]
   node set-dial-out-only --label L [--off]
+  node set-no-backups --label L [--off]   (never keeps backups at rest; hands phone uploads to the other nodes)
   node add-reality --label L --host H --port 443 --pub B64URL --server-name S [--short-id HEX] [--uuid UUID]
   node add-wss --label L --host H [--port 443] [--cdn] [--priority 10]
   node remove-endpoint --label L --host H --port P
@@ -178,7 +182,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 				if e.Kind == pb.Endpoint_REALITY && len(e.ServerNames) > 0 {
 					extra = " sni=" + e.ServerNames[0]
 				}
-				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s dial_out_only=%v%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin, n.DialOutOnly, extra)
+				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s dial_out_only=%v no_backups=%v%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin, n.DialOutOnly, n.NoBackups, extra)
 			}
 		}
 	case "node remove":
@@ -248,6 +252,17 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		fmt.Fprintf(out, "node %s: dial_out_only=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
+	case "node set-no-backups":
+		fs := flag.NewFlagSet("node set-no-backups", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		off := fs.Bool("off", false, "the node may keep backups again")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if err := admin.SetNoBackups(*dir, *label, !*off); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: no_backups=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
 	case "node add-reality":
 		fs := flag.NewFlagSet("node add-reality", flag.ContinueOnError)
 		var s admin.RealitySpec
@@ -394,9 +409,36 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		fmt.Fprintf(out, "news key %s removed. Run 'manifest sign' and 'manifest publish': nodes and phones then drop everything it signed.\n", strings.ToLower(*pub))
 	case "manifest sign":
+		fs := flag.NewFlagSet("manifest sign", flag.ContinueOnError)
+		cut := fs.String("sig-v1-until", "", "RFC 3339 time: v1 record signatures stop being valid for records created after it (D110, once)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		var cutAt time.Time
+		if *cut != "" {
+			t, err := time.Parse(time.RFC3339, *cut)
+			if err != nil {
+				return fmt.Errorf("--sig-v1-until: %w", err)
+			}
+			if !t.After(time.Now()) {
+				return errors.New("--sig-v1-until must be in the future (publish time + 48h): queued v1 messages need it")
+			}
+			cutAt = t
+		}
 		p, err := passphrase(in, false)
 		if err != nil {
 			return err
+		}
+		if !cutAt.IsZero() {
+			// check the passphrase before the one-time cut-over is stored
+			if _, err := keys.ReadEncryptedKey(filepath.Join(*dir, "network.key.enc"), p); err != nil {
+				return err
+			}
+			if err := admin.SetSigV1Until(*dir, cutAt.UnixMilli()); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "v1 signatures end at %s; this and every later manifest, invite, network record and announcement is signed v2.\n",
+				cutAt.UTC().Format(time.RFC3339))
 		}
 		rec, err := admin.SignManifest(*dir, p, time.Now())
 		if err != nil {
@@ -450,7 +492,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		fmt.Fprintf(out, "Invite for the first member (valid %s):\n%s\n\n", *ttl, res.Link)
 		qrterminal.GenerateHalfBlock(res.Link, qrterminal.L, out)
 		fmt.Fprintf(out, "\nRecord: %s\nThe link carries it; optionally copy it to a node and run:\n  otter-node import --config /etc/otter/node.toml %s\n", res.File, filepath.Base(res.File))
-	case "user list", "user revoke", "user invite-rights":
+	case "user list", "user revoke", "user invite-rights", "user rekey":
 		return userCmd(out, in, *dir, a[1], a[2:])
 	case "user found":
 		var ids [][]byte
@@ -479,7 +521,8 @@ func show(out io.Writer, dir string, rec *pb.Record) error {
 	if err != nil {
 		return err
 	}
-	v := &records.Validator{NetworkPub: st.NetworkPub, Users: noUsers{}, Now: time.Now}
+	v := &records.Validator{NetworkPub: st.NetworkPub, Users: noUsers{}, Now: time.Now,
+		V1Until: func() int64 { return admin.SigV1Until(dir) }}
 	body, err := v.Validate(rec)
 	if err != nil {
 		return fmt.Errorf("manifest does not verify: %w", err)
@@ -490,6 +533,10 @@ func show(out io.Writer, dir string, rec *pb.Record) error {
 	}
 	b, _ := protojson.MarshalOptions{Multiline: true}.Marshal(&m)
 	fmt.Fprintf(out, "signature OK\n%s\n", b)
+	if m.SigV1UntilMs != 0 {
+		fmt.Fprintf(out, "sig_v1_until: %s (records created after it need a v2 signature)\n",
+			time.UnixMilli(m.SigV1UntilMs).UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 
@@ -644,6 +691,8 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	yes := fs.Bool("yes", false, "do not ask")
 	on := fs.Bool("on", false, "allow inviting")
 	off := fs.Bool("off", false, "withdraw the right to invite")
+	oldCode := fs.String("old", "", "rekey step 1: account code (user id) of the lost account, from 'user list'")
+	newCode := fs.String("new", "", "rekey step 2: «Код аккаунта» the person reads from the new install (Settings → Профиль)")
 	who := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		who, args = args[0], args[1:]
@@ -661,6 +710,26 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 		return fmt.Errorf("user %s: NAME, NAME#TAG or USER_ID", sub)
 	case sub == "invite-rights" && *on == *off:
 		return errors.New("user invite-rights: exactly one of --on, --off")
+	case sub == "rekey" && (*oldCode == "") == (*newCode == ""):
+		return errors.New("user rekey USERNAME (--old CODE | --new CODE)")
+	case sub != "rekey" && (*oldCode != "" || *newCode != ""):
+		return fmt.Errorf("user %s: --old and --new belong to 'user rekey'", sub)
+	}
+	var rekeyOld, rekeyNew []byte
+	if sub == "rekey" { // checked before the passphrase is asked
+		code := *oldCode + *newCode
+		id, err := admin.ParseUserCode(code)
+		if err != nil {
+			return err
+		}
+		if *oldCode != "" {
+			rekeyOld = id
+		} else {
+			rekeyNew = id
+			if rekeyOld, err = admin.RekeyPending(dir, who); err != nil {
+				return err
+			}
+		}
 	}
 	st, err := admin.LoadState(dir)
 	if err != nil {
@@ -691,7 +760,7 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	var ms []admin.Member
 	lastErr := errors.New("no node selected")
 	for _, n := range nodes {
-		if ms, lastErr = fetchMembers(n, priv, st.NetworkPub, founding, allowPlain); lastErr == nil {
+		if ms, lastErr = fetchMembers(n, priv, st.NetworkPub, founding, admin.SigV1Until(dir), allowPlain); lastErr == nil {
 			break
 		}
 	}
@@ -699,10 +768,26 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 		return lastErr
 	}
 	if sub == "list" {
+		tags := map[string]string{}
+		for _, m := range ms {
+			tags[string(m.UserID)] = m.Tag()
+		}
+		tagOf := func(id []byte) string {
+			if t, ok := tags[string(id)]; ok {
+				return t
+			}
+			return fmt.Sprintf("%x (no entry yet)", id)
+		}
 		for _, m := range ms {
 			state := "active"
 			if m.Revoked {
 				state = "revoked: " + m.Reason
+			}
+			if m.RekeyedTo != nil {
+				state += ", re-keyed → " + tagOf(m.RekeyedTo)
+			}
+			if m.RekeyedFrom != nil {
+				state += " (admitted by REKEY of " + tagOf(m.RekeyedFrom) + ")"
 			}
 			if !m.Admitted {
 				state += " (not admitted: no invite chain; 'user found' if it predates 0.9.3)"
@@ -711,6 +796,9 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 				m.RightsVersion, state, m.Display)
 		}
 		return nil
+	}
+	if sub == "rekey" {
+		return userRekey(out, br, dir, priv, nodes, ms, who, rekeyOld, rekeyNew, *yes, *allowPlain)
 	}
 	m, err := admin.Find(ms, who)
 	if err != nil {
@@ -739,7 +827,76 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	return nil
 }
 
-func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.PublicKey, founding [][]byte, allowPlain *bool) ([]admin.Member, error) {
+// userRekey re-keys a lost phone in two steps (D111). Step 1 (rekeyNew nil): REVOCATION{old, "rekey"} and a 7-day
+// network invite for the new install. Step 2: REKEY{old, new}, new being the «Код аккаунта» the person read aloud.
+// Each step is recorded only after every record reached at least one node.
+func userRekey(out io.Writer, br *bufio.Reader, dir string, priv ed25519.PrivateKey, nodes []*pb.NodeInfo, ms []admin.Member,
+	name string, old, nw []byte, yes, allowPlain bool) error {
+	member := func(id []byte) (admin.Member, bool) {
+		for _, m := range ms {
+			if bytes.Equal(m.UserID, id) {
+				return m, true
+			}
+		}
+		return admin.Member{}, false
+	}
+	o, ok := member(old)
+	switch {
+	case !ok:
+		return fmt.Errorf("no account %x on the node (check the code with 'user list', or try --via another node)", old)
+	case o.Username != name:
+		return fmt.Errorf("account %x is %s, not %s", old, o.Tag(), name)
+	}
+	if nw == nil {
+		if !yes && !confirm(br, fmt.Sprintf("Revoke %s «%s» (%x) and invite a new install? This cannot be undone. [y/N] ",
+			o.Tag(), o.Display, o.UserID)) {
+			return errors.New("cancelled")
+		}
+		res, err := admin.RekeyStart(dir, priv, name, old, time.Now())
+		if err != nil {
+			return err
+		}
+		for _, r := range []*pb.Record{res.Revocation, res.Invite.Record} {
+			if err := publishAll(out, nodes, "network.publish", r, allowPlain); err != nil {
+				return fmt.Errorf("%w (nothing is marked started; run the command again later)", err)
+			}
+		}
+		if err := admin.RekeyStarted(dir, name, old, res.Invite.InviteID, time.Now()); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s is revoked. Invite for the new install (valid %s; register as %q, the app shows %s#… until step 2):\n%s\n\n",
+			o.Tag(), admin.RekeyInviteTTL, name, name, res.Invite.Link)
+		qrterminal.GenerateHalfBlock(res.Invite.Link, qrterminal.L, out)
+		fmt.Fprintf(out, "\nThen ask the person to read Settings → Профиль → «Код аккаунта» to you (by phone or in person, not by\n"+
+			"a message that anyone could send) and run:\n  otter-admin user rekey %s --new CODE\n", name)
+		return nil
+	}
+	n, ok := member(nw)
+	switch {
+	case bytes.Equal(nw, old):
+		return errors.New("the code is the lost account's: ask for the code shown by the new install")
+	case !ok:
+		return fmt.Errorf("no account %x on the node yet: check the code, or wait until the new install registered (try --via another node)", nw)
+	case n.Username != name:
+		return fmt.Errorf("account %x registered as %s, not %s: ask for the code again", nw, n.Tag(), name)
+	case n.Revoked:
+		return fmt.Errorf("account %x is revoked (%s)", nw, n.Reason)
+	}
+	rec, err := admin.RekeyFinish(dir, priv, name, nw, time.Now())
+	if err != nil {
+		return err
+	}
+	if err := publishAll(out, nodes, "network.publish", rec, allowPlain); err != nil {
+		return fmt.Errorf("%w (the REKEY is saved in %s; run the command again later)", err, dir)
+	}
+	if err := admin.RekeyDone(dir, name, nw, time.Now()); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s now belongs to %x («%s»). Contacts see «Ключ безопасности изменился».\n", name, nw, n.Display)
+	return nil
+}
+
+func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.PublicKey, founding [][]byte, v1Until int64, allowPlain *bool) ([]admin.Member, error) {
 	var lastErr error = errors.New("no usable endpoint")
 	for _, ep := range n.Endpoints {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -756,7 +913,7 @@ func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.Public
 		c.Close()
 		cancel()
 		if err == nil {
-			return admin.Members(batch.Records, netPub, founding), nil
+			return admin.Members(batch.Records, netPub, founding, v1Until), nil
 		}
 		lastErr = err
 	}

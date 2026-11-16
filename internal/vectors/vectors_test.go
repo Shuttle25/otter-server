@@ -43,6 +43,10 @@ type V1 struct {
 	InviteSecretHex         string `json:"invite_secret_hex"`
 	InviteRedeemPubHex      string `json:"invite_redeem_pub_hex"`
 	InviteProofHex          string `json:"invite_proof_hex"`
+	// D109: v2 signatures over "otter-v2\x00" ‖ network_id ‖ body. The v2 manifest is version 8 with sig_v1_until_ms
+	// set; the v2 directory entry has the same body as directory_entry_record_hex.
+	ManifestV2RecordHex       string `json:"manifest_v2_record_hex"`
+	DirectoryEntryV2RecordHex string `json:"directory_entry_v2_record_hex"`
 }
 
 func seq(n int, start byte) []byte {
@@ -74,6 +78,23 @@ func generate(t *testing.T) []byte {
 	ep, _ := proto.MarshalOptions{Deterministic: true}.Marshal(e)
 	drec, _ := records.Sign(&pb.RecordBody{Id: seq(16, 2), Type: pb.RecordType_DIRECTORY_ENTRY, Author: keys.ID16(accPub), CreatedMs: 1_800_000_000_000, Payload: ep}, acc)
 
+	v2 := records.SigContext{NetworkID: keys.ID16(netPub), V2: true}
+	m2 := proto.Clone(m).(*pb.Manifest)
+	m2.Version, m2.SigV1UntilMs = 8, 1_800_000_000_000+48*3600*1000
+	mp2, _ := proto.MarshalOptions{Deterministic: true}.Marshal(m2)
+	mrec2, _ := records.SignWith(&pb.RecordBody{Id: seq(16, 3), Type: pb.RecordType_MANIFEST, Author: keys.ID16(netPub), CreatedMs: 1_800_000_000_000, Payload: mp2}, netPriv, v2)
+	drec2, _ := records.SignWith(&pb.RecordBody{Id: seq(16, 2), Type: pb.RecordType_DIRECTORY_ENTRY, Author: keys.ID16(accPub), CreatedMs: 1_800_000_000_000, Payload: ep}, acc, v2)
+	for _, r := range []*pb.Record{mrec2, drec2} {
+		val := &records.Validator{NetworkPub: netPub, Users: noUsers{}, Now: func() time.Time { return time.UnixMilli(1_800_000_000_000) },
+			V1Until: func() int64 { return 1_800_000_000_000 }}
+		if _, err := val.Validate(r); err != nil {
+			t.Fatalf("v2 vector does not verify: %v", err)
+		}
+		if ed25519.Verify(netPub, r.Body, r.Signature) || ed25519.Verify(accPub, r.Body, r.Signature) {
+			t.Fatal("v2 vector verifies as v1")
+		}
+	}
+
 	bad := proto.Clone(mrec).(*pb.Record)
 	bad.Signature = append([]byte(nil), bad.Signature...)
 	bad.Signature[0] ^= 0xFF
@@ -83,6 +104,7 @@ func generate(t *testing.T) []byte {
 		SeedHex: hex.EncodeToString(seed), AccountPubHex: hex.EncodeToString(accPub), UserIDHex: hex.EncodeToString(keys.ID16(accPub)),
 		NetworkSeedHex: hex.EncodeToString(seq(32, 100)), NetworkPubHex: hex.EncodeToString(netPub), NetworkIDHex: hex.EncodeToString(keys.ID16(netPub)),
 		ManifestVersion: 7, ManifestRecordHex: enc(mrec), DirectoryEntryRecordHex: enc(drec), BadSignatureRecordHex: enc(bad),
+		ManifestV2RecordHex: enc(mrec2), DirectoryEntryV2RecordHex: enc(drec2),
 	}
 	idPriv, err := hkdf.Key(sha256.New, seed, nil, "otter/identity/v1", 32)
 	if err != nil {
@@ -157,3 +179,7 @@ func tlsCertDER(t *testing.T) []byte {
 	}
 	return der
 }
+
+type noUsers struct{}
+
+func (noUsers) UserKey([]byte) (records.UserKey, bool) { return records.UserKey{}, false }

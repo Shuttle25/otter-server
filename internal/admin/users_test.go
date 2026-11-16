@@ -63,7 +63,7 @@ func TestMembersVerifiesEverything(t *testing.T) {
 	off := signed(t, pb.RecordType_INVITE_RIGHTS, keys.ID16(netPub), &pb.InviteRights{UserId: veraID, CanInvite: false, Version: 2}, netPriv)
 	on := signed(t, pb.RecordType_INVITE_RIGHTS, keys.ID16(netPub), &pb.InviteRights{UserId: veraID, CanInvite: true, Version: 2}, netPriv)
 	fakeOff := signed(t, pb.RecordType_INVITE_RIGHTS, keys.ID16(netPub), &pb.InviteRights{UserId: annaID, CanInvite: false, Version: 9}, nodePriv)
-	ms := Members([]*pb.Record{anna, tampered, forged, boris, rev, fakeRev, rights, vera, on, off, fakeOff, ghost, fake}, netPub, [][]byte{annaID})
+	ms := Members([]*pb.Record{anna, tampered, forged, boris, rev, fakeRev, rights, vera, on, off, fakeOff, ghost, fake}, netPub, [][]byte{annaID}, 0)
 	if len(ms) != 5 {
 		t.Fatalf("%d members: %+v", len(ms), ms)
 	}

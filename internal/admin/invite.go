@@ -82,8 +82,8 @@ func BootstrapInvite(dir string, pass []byte, now time.Time, ttl time.Duration) 
 	}
 	id := make([]byte, 16)
 	rand.Read(id)
-	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: pb.RecordType_INVITE, Author: keys.ID16(st.NetworkPub),
-		CreatedMs: now.UnixMilli(), ExpiresMs: exp, Payload: payload}, priv)
+	rec, err := records.SignWith(&pb.RecordBody{Id: id, Type: pb.RecordType_INVITE, Author: keys.ID16(st.NetworkPub),
+		CreatedMs: now.UnixMilli(), ExpiresMs: exp, Payload: payload}, priv, adminSig(st, dir))
 	if err != nil {
 		return nil, err
 	}

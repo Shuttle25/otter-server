@@ -44,7 +44,8 @@ type entry struct {
 // made up has no verifiable invite chain and shows as not admitted. Duplicate redemptions (C5) and node-side clash
 // names are not reproduced here; the list shows each account's own entry. Invite rights follow D101 as changed by
 // the owner: every member may invite unless the newest INVITE_RIGHTS says no (equal versions: "no" wins).
-func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte) []Member {
+// Signatures are checked under D109: v2 for this network, or v1 for a record created before v1Until (0 = no cut-over).
+func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte, v1Until int64) []Member {
 	netID := keys.ID16(netPub)
 	entries := map[string]entry{}
 	type rights struct {
@@ -63,14 +64,14 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte) []
 			var e pb.DirectoryEntry
 			if proto.Unmarshal(b.Payload, &e) != nil || len(e.AccountPub) != ed25519.PublicKeySize ||
 				!bytes.Equal(e.UserId, keys.ID16(e.AccountPub)) || !bytes.Equal(b.Author, e.UserId) ||
-				!ed25519.Verify(e.AccountPub, r.Body, r.Signature) {
+				!records.VerifySig(e.AccountPub, netID, r.Body, r.Signature, b.CreatedMs, v1Until) {
 				continue
 			}
 			if cur, ok := entries[string(e.UserId)]; !ok || e.Version > cur.version {
 				entries[string(e.UserId)] = entry{&e, e.Version}
 			}
 		case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
-			if !bytes.Equal(b.Author, netID) || !ed25519.Verify(netPub, r.Body, r.Signature) {
+			if !bytes.Equal(b.Author, netID) || !records.VerifySig(netPub, netID, r.Body, r.Signature, b.CreatedMs, v1Until) {
 				continue
 			}
 			if b.Type == pb.RecordType_REVOCATION {
@@ -104,7 +105,7 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte) []
 	for changed := true; changed; {
 		changed = false
 		for id, en := range entries {
-			if !admitted[id] && chainOK(en.e, netPub, netID, entries, admitted) {
+			if !admitted[id] && chainOK(en.e, netPub, netID, entries, admitted, v1Until) {
 				admitted[id], changed = true, true
 			}
 		}
@@ -128,7 +129,7 @@ func Members(batch []*pb.Record, netPub ed25519.PublicKey, founding [][]byte) []
 }
 
 // chainOK: the entry's INVITE is signed by the network key or an admitted member and its proof matches (D100).
-func chainOK(e *pb.DirectoryEntry, netPub ed25519.PublicKey, netID []byte, entries map[string]entry, admitted map[string]bool) bool {
+func chainOK(e *pb.DirectoryEntry, netPub ed25519.PublicKey, netID []byte, entries map[string]entry, admitted map[string]bool, v1Until int64) bool {
 	var rec pb.Record
 	var b pb.RecordBody
 	var inv pb.Invite
@@ -145,7 +146,7 @@ func chainOK(e *pb.DirectoryEntry, netPub ed25519.PublicKey, netID []byte, entri
 		}
 		signer = inviter.e.AccountPub
 	}
-	return ed25519.Verify(signer, rec.Body, rec.Signature) &&
+	return records.VerifySig(signer, netID, rec.Body, rec.Signature, b.CreatedMs, v1Until) &&
 		ed25519.Verify(inv.RedeemPub, keys.RedeemMessage(inv.InviteId, e.UserId, e.AccountPub), e.InviteProof)
 }
 
@@ -187,8 +188,10 @@ func signNetwork(dir, sub string, priv ed25519.PrivateKey, typ pb.RecordType, us
 	}
 	id := make([]byte, 16)
 	rand.Read(id)
-	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: typ, Author: keys.ID16(priv.Public().(ed25519.PublicKey)),
-		CreatedMs: now.UnixMilli(), Payload: p}, priv)
+	netPub := priv.Public().(ed25519.PublicKey)
+	sc := records.SigContext{NetworkID: keys.ID16(netPub), V2: SigV1Until(dir) != 0} // D109
+	rec, err := records.SignWith(&pb.RecordBody{Id: id, Type: typ, Author: keys.ID16(netPub),
+		CreatedMs: now.UnixMilli(), Payload: p}, priv, sc)
 	if err != nil {
 		return nil, err
 	}

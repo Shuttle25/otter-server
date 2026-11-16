@@ -35,7 +35,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node add --label L --wss-host H [--ip A]... [--wss-port 27443] [--wss-path /p] [--cdn] [--push] [--plain]
   node list
   node remove --label L
-  manifest sign
+  manifest sign [--sig-v1-until RFC3339]   (once, after every node and phone runs 0.10.0: publish time + 48h)
   manifest show [--file F]
   manifest publish [--via LABEL]... [--allow-plain]
   invite bootstrap [--ttl 168h]    (at most 720h)
@@ -394,9 +394,36 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		fmt.Fprintf(out, "news key %s removed. Run 'manifest sign' and 'manifest publish': nodes and phones then drop everything it signed.\n", strings.ToLower(*pub))
 	case "manifest sign":
+		fs := flag.NewFlagSet("manifest sign", flag.ContinueOnError)
+		cut := fs.String("sig-v1-until", "", "RFC 3339 time: v1 record signatures stop being valid for records created after it (D110, once)")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		var cutAt time.Time
+		if *cut != "" {
+			t, err := time.Parse(time.RFC3339, *cut)
+			if err != nil {
+				return fmt.Errorf("--sig-v1-until: %w", err)
+			}
+			if !t.After(time.Now()) {
+				return errors.New("--sig-v1-until must be in the future (publish time + 48h): queued v1 messages need it")
+			}
+			cutAt = t
+		}
 		p, err := passphrase(in, false)
 		if err != nil {
 			return err
+		}
+		if !cutAt.IsZero() {
+			// check the passphrase before the one-time cut-over is stored
+			if _, err := keys.ReadEncryptedKey(filepath.Join(*dir, "network.key.enc"), p); err != nil {
+				return err
+			}
+			if err := admin.SetSigV1Until(*dir, cutAt.UnixMilli()); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "v1 signatures end at %s; this and every later manifest, invite, network record and announcement is signed v2.\n",
+				cutAt.UTC().Format(time.RFC3339))
 		}
 		rec, err := admin.SignManifest(*dir, p, time.Now())
 		if err != nil {
@@ -479,7 +506,8 @@ func show(out io.Writer, dir string, rec *pb.Record) error {
 	if err != nil {
 		return err
 	}
-	v := &records.Validator{NetworkPub: st.NetworkPub, Users: noUsers{}, Now: time.Now}
+	v := &records.Validator{NetworkPub: st.NetworkPub, Users: noUsers{}, Now: time.Now,
+		V1Until: func() int64 { return admin.SigV1Until(dir) }}
 	body, err := v.Validate(rec)
 	if err != nil {
 		return fmt.Errorf("manifest does not verify: %w", err)
@@ -490,6 +518,10 @@ func show(out io.Writer, dir string, rec *pb.Record) error {
 	}
 	b, _ := protojson.MarshalOptions{Multiline: true}.Marshal(&m)
 	fmt.Fprintf(out, "signature OK\n%s\n", b)
+	if m.SigV1UntilMs != 0 {
+		fmt.Fprintf(out, "sig_v1_until: %s (records created after it need a v2 signature)\n",
+			time.UnixMilli(m.SigV1UntilMs).UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 
@@ -691,7 +723,7 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	var ms []admin.Member
 	lastErr := errors.New("no node selected")
 	for _, n := range nodes {
-		if ms, lastErr = fetchMembers(n, priv, st.NetworkPub, founding, allowPlain); lastErr == nil {
+		if ms, lastErr = fetchMembers(n, priv, st.NetworkPub, founding, admin.SigV1Until(dir), allowPlain); lastErr == nil {
 			break
 		}
 	}
@@ -739,7 +771,7 @@ func userCmd(out io.Writer, in io.Reader, dir, sub string, args []string) error 
 	return nil
 }
 
-func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.PublicKey, founding [][]byte, allowPlain *bool) ([]admin.Member, error) {
+func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.PublicKey, founding [][]byte, v1Until int64, allowPlain *bool) ([]admin.Member, error) {
 	var lastErr error = errors.New("no usable endpoint")
 	for _, ep := range n.Endpoints {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -756,7 +788,7 @@ func fetchMembers(n *pb.NodeInfo, priv ed25519.PrivateKey, netPub ed25519.Public
 		c.Close()
 		cancel()
 		if err == nil {
-			return admin.Members(batch.Records, netPub, founding), nil
+			return admin.Members(batch.Records, netPub, founding, v1Until), nil
 		}
 		lastErr = err
 	}

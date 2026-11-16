@@ -213,10 +213,20 @@ func (s *sim) publishManifest(v uint64, infos []*pb.NodeInfo) {
 }
 
 func (s *sim) sign(typ pb.RecordType, author []byte, payload proto.Message, k ed25519.PrivateKey) *pb.Record {
+	return s.signWith(typ, author, payload, k, records.SigContext{})
+}
+
+// signWith is sign with a signature context (v1 or v2, D109).
+func (s *sim) signWith(typ pb.RecordType, author []byte, payload proto.Message, k ed25519.PrivateKey, sc records.SigContext) *pb.Record {
+	return s.signCtx(typ, author, payload, k, time.Now().UnixMilli(), sc)
+}
+
+// signCtx is signWith with an explicit created_ms.
+func (s *sim) signCtx(typ pb.RecordType, author []byte, payload proto.Message, k ed25519.PrivateKey, created int64, sc records.SigContext) *pb.Record {
 	p, _ := proto.Marshal(payload)
 	id := make([]byte, 16)
 	rand.Read(id)
-	r, err := records.Sign(&pb.RecordBody{Id: id, Type: typ, Author: author, CreatedMs: time.Now().UnixMilli(), Payload: p}, k)
+	r, err := records.SignWith(&pb.RecordBody{Id: id, Type: typ, Author: author, CreatedMs: created, Payload: p}, k, sc)
 	if err != nil {
 		s.t.Fatal(err)
 	}

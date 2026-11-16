@@ -173,11 +173,13 @@ func signNews(dir string, typ pb.RecordType, payload proto.Message, now time.Tim
 	id := make([]byte, 16)
 	rand.Read(id)
 	pub := priv.Public().(ed25519.PublicKey)
-	rec, err := records.Sign(&pb.RecordBody{Id: id, Type: typ, Author: keys.ID16(pub), CreatedMs: now.UnixMilli(), Payload: p}, priv)
+	rec, err := records.SignWith(&pb.RecordBody{Id: id, Type: typ, Author: keys.ID16(pub), CreatedMs: now.UnixMilli(), Payload: p}, priv,
+		adminSig(st, dir))
 	if err != nil {
 		return nil, err
 	}
-	v := &records.Validator{NetworkPub: st.NetworkPub, News: oneNewsKey{pub}, Now: func() time.Time { return now }}
+	v := &records.Validator{NetworkPub: st.NetworkPub, News: oneNewsKey{pub}, Now: func() time.Time { return now },
+		V1Until: func() int64 { return SigV1Until(dir) }}
 	if _, err := v.Validate(rec); err != nil {
 		return nil, fmt.Errorf("invalid news record (texts ≤ %d characters, at least one non-blank): %w", records.MaxNewsText, err)
 	}

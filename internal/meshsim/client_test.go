@@ -148,6 +148,11 @@ func (s *sim) signAs(a *account, typ pb.RecordType, payload proto.Message) *pb.R
 	return s.sign(typ, a.id, payload, a.priv)
 }
 
+// signAsWith is signAs with an explicit created_ms and signature context (D109).
+func (s *sim) signAsWith(a *account, typ pb.RecordType, payload proto.Message, created int64, sc records.SigContext) *pb.Record {
+	return s.signCtx(typ, a.id, payload, a.priv, created, sc)
+}
+
 // register creates an account through node n's client API with a fresh bootstrap invite; owners get 11 one-time keys each.
 func (s *sim) register(n *simNode, name string, owners ...*simNode) *account {
 	return s.registerWith(n, name, s.invite(n), owners...)

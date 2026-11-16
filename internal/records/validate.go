@@ -71,6 +71,9 @@ type Validator struct {
 	Nodes      NodeResolver // nil: node-authored records are rejected
 	News       NewsResolver // nil: announcements are rejected
 	Now        func() time.Time
+	// V1Until returns the manifest's sig_v1_until_ms (D109): records created at or after it need a v2 signature.
+	// nil or 0: v1 signatures are accepted for every record.
+	V1Until func() int64
 }
 
 func networkAuthored(t pb.RecordType) bool {
@@ -100,13 +103,22 @@ func (v *Validator) Validate(r *pb.Record) (*pb.RecordBody, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !ed25519.Verify(key, r.Body, r.Signature) {
+	if !v.verifySig(key, r.Body, r.Signature, body.CreatedMs) {
 		return nil, ErrBadSignature
 	}
 	if err := v.checkPayload(&body); err != nil {
 		return nil, err
 	}
 	return &body, nil
+}
+
+// verifySig accepts a v2 signature for this network, or a v1 signature for a record created before the cut-over.
+func (v *Validator) verifySig(key ed25519.PublicKey, body, sig []byte, createdMs int64) bool {
+	var until int64
+	if v.V1Until != nil {
+		until = v.V1Until()
+	}
+	return VerifySig(key, keys.ID16(v.NetworkPub), body, sig, createdMs, until)
 }
 
 func (v *Validator) signerKey(b *pb.RecordBody) (ed25519.PublicKey, error) {

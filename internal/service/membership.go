@@ -170,7 +170,7 @@ func (s *Service) admitChain(ctx context.Context, e *pb.DirectoryEntry, strict b
 		}
 		signer = k.Pub
 	}
-	if !ed25519.Verify(signer, rec.Body, rec.Signature) {
+	if !records.VerifySig(signer, s.networkID(), rec.Body, rec.Signature, ib.CreatedMs, s.v1Until()) {
 		return nil, fmt.Errorf("%w: invite signature", ErrInvalid)
 	}
 	if !ed25519.Verify(inv.RedeemPub, keys.RedeemMessage(inv.InviteId, e.UserId, e.AccountPub), e.InviteProof) {

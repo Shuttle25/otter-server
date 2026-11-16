@@ -16,14 +16,18 @@ import (
 	"ottermsg/server/internal/turnsrv"
 )
 
-// PublishNetworkRecord accepts an admin-signed REVOCATION or INVITE_RIGHTS (otter-admin user …), the only records
-// network.publish takes (D99). Idempotent: a record already stored is OK.
+// PublishNetworkRecord accepts an admin-signed REVOCATION, INVITE_RIGHTS or REKEY, or an INVITE authored by the
+// network key (otter-admin user …), the only records network.publish takes (D99, D111). Idempotent: a record already
+// stored is OK.
 func (s *Service) PublishNetworkRecord(ctx context.Context, rec *pb.Record) error {
 	body, err := s.validator(nil).Validate(rec)
 	if err != nil {
 		return invalid(err)
 	}
-	if body.Type != pb.RecordType_REVOCATION && body.Type != pb.RecordType_INVITE_RIGHTS {
+	switch {
+	case body.Type == pb.RecordType_REVOCATION, body.Type == pb.RecordType_INVITE_RIGHTS, body.Type == pb.RecordType_REKEY:
+	case body.Type == pb.RecordType_INVITE && bytes.Equal(body.Author, s.networkID()): // the re-key invite (D111)
+	default:
 		return fmt.Errorf("%w: %v is not published here", ErrInvalid, body.Type)
 	}
 	_, applied, err := s.Store.ApplyFrom(ctx, rec, body, s.NodeID)
@@ -124,14 +128,24 @@ func (s *Service) admitIfNew(ctx context.Context, body *pb.RecordBody) (*store.A
 	if _, known := s.Store.UserKey(e.UserId); known {
 		return nil, nil
 	}
+	rank := body.CreatedMs
+	if e.RegisteredMs > 0 {
+		rank = e.RegisteredMs
+	}
 	if s.founding(e.UserId) {
-		rank := body.CreatedMs
-		if e.RegisteredMs > 0 {
-			rank = e.RegisteredMs
-		}
 		return &store.Admission{RankMs: rank}, nil
 	}
-	return s.admitChain(ctx, &e, false)
+	adm, err := s.admitChain(ctx, &e, false)
+	if err != nil {
+		// D111: the admin's REKEY names this account (the code read aloud), which admits it without a chain; its clash
+		// rank comes from the replaced account (store)
+		if target, terr := s.Store.IsRekeyTarget(ctx, e.UserId); terr != nil {
+			return nil, terr
+		} else if target {
+			return &store.Admission{RankMs: rank}, nil
+		}
+	}
+	return adm, err
 }
 
 // parseInvite unpacks DirectoryEntry.invite_record: the inviter's signed INVITE (structure only, no signature check).

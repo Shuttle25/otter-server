@@ -361,6 +361,13 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		}
 		return applyRevocation(ctx, tx, b, &r)
 
+	case pb.RecordType_REKEY: // network-signed (D111)
+		var k pb.Rekey
+		if err := proto.Unmarshal(b.Payload, &k); err != nil {
+			return err
+		}
+		return applyRekey(ctx, tx, it.key, k.OldUserId, k.NewUserId, b.CreatedMs)
+
 	case pb.RecordType_INVITE_RIGHTS: // network-signed (D99, D101)
 		var r pb.InviteRights
 		if err := proto.Unmarshal(b.Payload, &r); err != nil {
@@ -534,12 +541,15 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 	name, conflict := e.Username, 0
 	var owner []byte
 	var ownerCreated int64
-	err = tx.QueryRowContext(ctx, `SELECT user_id, entry_created_ms FROM users WHERE username=?`, e.Username).Scan(&owner, &ownerCreated)
+	var ownerRevoked bool
+	err = tx.QueryRowContext(ctx, `SELECT user_id, entry_created_ms, revoked FROM users WHERE username=?`, e.Username).
+		Scan(&owner, &ownerCreated, &ownerRevoked)
 	switch {
 	case errors.Is(err, sql.ErrNoRows) || (err == nil && bytes.Equal(owner, e.UserId)):
 	case err != nil:
 		return err
-	case !it.fromPeer && !lostBefore:
+	case !it.fromPeer && !lostBefore && !ownerRevoked:
+		// a revoked owner's name can be registered (lost phone, D111): the new account is name#tag until the REKEY
 		return ErrUsernameTaken
 	default:
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO username_clashes(username) VALUES(?)`, e.Username); err != nil {
@@ -555,11 +565,14 @@ func applyDirectoryEntry(ctx context.Context, tx *sql.Tx, it item, e *pb.Directo
 		}
 	}
 	if !exists {
-		return insertUser(ctx, tx, it, e, name, conflict, rank, now)
+		if err := insertUser(ctx, tx, it, e, name, conflict, rank, now); err != nil {
+			return err
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, username_conflict=? WHERE user_id=?`,
+		name, it.key, e.Version, conflict, e.UserId); err != nil {
+		return err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE users SET username=?, entry_key=?, version=?, username_conflict=? WHERE user_id=?`,
-		name, it.key, e.Version, conflict, e.UserId)
-	return err
+	return rekeyTouched(ctx, tx, e.UserId) // D111: a REKEY that arrived earlier takes effect now
 }
 
 // putOneTime stores a PREKEYS record's one-time keys under the budget (C8, D107), for local and replicated records

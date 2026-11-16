@@ -200,12 +200,15 @@ func redeem(ctx context.Context, tx *sql.Tx, it item, user []byte) error {
 // accounts that redeemed one invite, all but the lowest rank (SHA-256(invite_proof), then user_id) lose; and an account
 // whose inviter lost, or was itself invited through a loser, never counts as admitted. All redeemers of one invite share
 // its inviter, so this never changes who wins another invite, and it depends only on the stored redemptions: every
-// node reaches the same set in any arrival order. Rows only ever get added, so the set only grows.
+// node reaches the same set in any arrival order. Rows only ever get added, so the set only grows — except for the
+// new account of a winning REKEY (D111), which the admin confirmed and which is never part of the set.
 const duplicates = `WITH RECURSIVE bad(user_id, dup) AS (
 	SELECT r.user_id, 1 FROM redemptions r WHERE EXISTS (SELECT 1 FROM redemptions o WHERE o.invite_id=r.invite_id
 	  AND (o.rank < r.rank OR (o.rank = r.rank AND o.user_id < r.user_id)))
+	  AND NOT EXISTS (SELECT 1 FROM rekeys k WHERE k.new_user_id = r.user_id)
 	UNION
-	SELECT r.user_id, 0 FROM redemptions r JOIN bad b ON r.inviter = b.user_id)
+	SELECT r.user_id, 0 FROM redemptions r JOIN bad b ON r.inviter = b.user_id
+	  WHERE NOT EXISTS (SELECT 1 FROM rekeys k WHERE k.new_user_id = r.user_id))
 SELECT b.user_id, MAX(b.dup) FROM bad b JOIN users u ON u.user_id = b.user_id WHERE u.revoked = 0 GROUP BY b.user_id`
 
 // disableDuplicates disables every account of the duplicates set not disabled yet.

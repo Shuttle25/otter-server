@@ -255,6 +255,12 @@ func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {
 		return nil, err
 	}
 	raws = append(raws, more...)
+	// and the winning REKEYs, after the entries they refer to (D111)
+	rekeys, err := s.Store.Rekeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	raws = append(raws, rekeys...)
 	out := make([]*pb.Record, 0, len(raws))
 	for _, raw := range raws {
 		r := &pb.Record{}

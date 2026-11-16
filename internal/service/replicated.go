@@ -74,7 +74,8 @@ func (s *Service) afterApply(ctx context.Context, body *pb.RecordBody, from []by
 	case pb.RecordType_DIRECTORY_ENTRY:
 		s.RefreshRevoked(ctx) // an entry may arrive after its revocation, or a double redemption may disable one (D102)
 		s.Notify.Directory()
-	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS:
+	case pb.RecordType_REVOCATION, pb.RecordType_INVITE_RIGHTS, pb.RecordType_REKEY:
+		// a REKEY revokes the old account like a REVOCATION ("revocation applied", reason rekey) (D111)
 		s.RefreshRevoked(ctx)
 		s.Notify.Directory() // phones re-sync and verify the record themselves (D104)
 	case pb.RecordType_BLOB_FETCHED:

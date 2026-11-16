@@ -77,7 +77,8 @@ type Validator struct {
 }
 
 func networkAuthored(t pb.RecordType) bool {
-	return t == pb.RecordType_MANIFEST || t == pb.RecordType_REVOCATION || t == pb.RecordType_INVITE_RIGHTS
+	return t == pb.RecordType_MANIFEST || t == pb.RecordType_REVOCATION || t == pb.RecordType_INVITE_RIGHTS ||
+		t == pb.RecordType_REKEY
 }
 
 // Validate checks structure, author binding, signature and type-specific payload rules.
@@ -214,6 +215,12 @@ func (v *Validator) checkPayload(b *pb.RecordBody) error {
 		var r pb.Revocation
 		if err := proto.Unmarshal(b.Payload, &r); err != nil || len(r.UserId) != 16 || !utf8.ValidString(r.Reason) ||
 			utf8.RuneCountInString(r.Reason) > 200 || b.ExpiresMs != 0 {
+			return ErrBadPayload
+		}
+	case pb.RecordType_REKEY: // D111: permanent, two distinct accounts
+		var k pb.Rekey
+		if err := proto.Unmarshal(b.Payload, &k); err != nil || len(k.OldUserId) != 16 || len(k.NewUserId) != 16 ||
+			bytes.Equal(k.OldUserId, k.NewUserId) || b.ExpiresMs != 0 {
 			return ErrBadPayload
 		}
 	case pb.RecordType_INVITE_RIGHTS:

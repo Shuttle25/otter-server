@@ -190,6 +190,30 @@ func TestValidate(t *testing.T) {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REVOCATION, Author: userID,
 				Payload: payload(&pb.Revocation{UserId: revID})}, userPriv)
 		}, ErrBadAuthor},
+		{"rekey ok", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: netID,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: keys.ID16(newPub)})}, netPriv)
+		}, nil},
+		{"rekey by the old account (thief)", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: userID,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: keys.ID16(newPub)})}, userPriv)
+		}, ErrBadAuthor},
+		{"rekey network author, user signature", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: netID,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: keys.ID16(newPub)})}, userPriv)
+		}, ErrBadSignature},
+		{"rekey to itself", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: netID,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: userID})}, netPriv)
+		}, ErrBadPayload},
+		{"rekey short new id", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: netID,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: make([]byte, 15)})}, netPriv)
+		}, ErrBadPayload},
+		{"rekey expiring", func() *pb.Record {
+			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_REKEY, Author: netID, ExpiresMs: now.UnixMilli() + 1000,
+				Payload: payload(&pb.Rekey{OldUserId: userID, NewUserId: keys.ID16(newPub)})}, netPriv)
+		}, ErrBadPayload},
 		{"invite_rights ok", func() *pb.Record {
 			return mustSign(t, &pb.RecordBody{Id: rid(), Type: pb.RecordType_INVITE_RIGHTS, Author: netID,
 				Payload: payload(&pb.InviteRights{UserId: userID, Version: 1})}, netPriv)

@@ -37,7 +37,11 @@ func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) ([]byte
 	if owner, err := s.Store.UsernameOwner(ctx, e.Username); err != nil {
 		return nil, err
 	} else if owner != nil {
-		return nil, fmt.Errorf("%w: username taken", ErrConflict)
+		if u, err := s.Store.UserByID(ctx, owner); err != nil {
+			return nil, err
+		} else if u == nil || !u.Revoked {
+			return nil, fmt.Errorf("%w: username taken", ErrConflict)
+		} // revoked owner (lost phone, D111): the new account is name#tag until the admin's REKEY
 	}
 
 	adm, err := s.admitChain(ctx, &e, true)

@@ -178,6 +178,7 @@ type NodeInfo struct {
 	PushCapable   bool                   `protobuf:"varint,4,opt,name=push_capable,json=pushCapable,proto3" json:"push_capable,omitempty"`
 	Endpoints     []*Endpoint            `protobuf:"bytes,5,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
 	DialOutOnly   bool                   `protobuf:"varint,6,opt,name=dial_out_only,json=dialOutOnly,proto3" json:"dial_out_only,omitempty"` // M7 (D71): inside a censored network; dials peers, is never dialed by them
+	NoBackups     bool                   `protobuf:"varint,7,opt,name=no_backups,json=noBackups,proto3" json:"no_backups,omitempty"`         // M9.3 (D113): never stores backups at rest; hands phone uploads to the other nodes
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -250,6 +251,13 @@ func (x *NodeInfo) GetEndpoints() []*Endpoint {
 func (x *NodeInfo) GetDialOutOnly() bool {
 	if x != nil {
 		return x.DialOutOnly
+	}
+	return false
+}
+
+func (x *NodeInfo) GetNoBackups() bool {
+	if x != nil {
+		return x.NoBackups
 	}
 	return false
 }
@@ -400,14 +408,16 @@ const file_otter_v1_manifest_proto_rawDesc = "" +
 	"\x0fmin_app_version\x18\x05 \x01(\rR\rminAppVersion\x12\x1b\n" +
 	"\tnews_keys\x18\x06 \x03(\fR\bnewsKeys\x12%\n" +
 	"\x0fsig_v1_until_ms\x18\a \x01(\x03R\fsigV1UntilMs\x12)\n" +
-	"\x10founding_members\x18\b \x03(\fR\x0ffoundingMembers\"\xcd\x01\n" +
+	"\x10founding_members\x18\b \x03(\fR\x0ffoundingMembers\"\xec\x01\n" +
 	"\bNodeInfo\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\fR\x06nodeId\x12\x19\n" +
 	"\bnode_pub\x18\x02 \x01(\fR\anodePub\x12\x14\n" +
 	"\x05label\x18\x03 \x01(\tR\x05label\x12!\n" +
 	"\fpush_capable\x18\x04 \x01(\bR\vpushCapable\x120\n" +
 	"\tendpoints\x18\x05 \x03(\v2\x12.otter.v1.EndpointR\tendpoints\x12\"\n" +
-	"\rdial_out_only\x18\x06 \x01(\bR\vdialOutOnly\"\x9a\x03\n" +
+	"\rdial_out_only\x18\x06 \x01(\bR\vdialOutOnly\x12\x1d\n" +
+	"\n" +
+	"no_backups\x18\a \x01(\bR\tnoBackups\"\x9a\x03\n" +
 	"\bEndpoint\x12+\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x17.otter.v1.Endpoint.KindR\x04kind\x12\x12\n" +
 	"\x04host\x18\x02 \x01(\tR\x04host\x12\x12\n" +

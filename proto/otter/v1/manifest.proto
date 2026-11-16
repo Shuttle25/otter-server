@@ -23,6 +23,7 @@ message NodeInfo {
   bool push_capable = 4;
   repeated Endpoint endpoints = 5;
   bool dial_out_only = 6;            // M7 (D71): inside a censored network; dials peers, is never dialed by them
+  bool no_backups = 7;               // M9.3 (D113): never stores backups at rest; hands phone uploads to the other nodes
 }
 
 message Endpoint {

@@ -335,6 +335,7 @@ func serve(ctx context.Context, a *app) error {
 	go repl.Run(ctx)     // before serving, so accepted peer sessions use the run context
 	a.svc.Fetcher = repl // readers asking for a chunk this node lacks are served from a peer (D45)
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
+	go repl.RunBackupHandoff(ctx) // D113: only acts while this node is marked no_backups
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
 	// before serving: sessions read svc.Turn without a lock
 	if a.cfg.TurnEnabled() {

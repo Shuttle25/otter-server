@@ -194,6 +194,7 @@ func SetTestTimings(dial, backoff time.Duration) {
 	pullRetryMin, pullRetryMax, pullIdle = backoff, 10*backoff, 10*backoff
 	peerPing, peerPingTimeout = 2*dial, 5*dial
 	handshakeTimeout = 5 * dial
+	handoffEvery = dial
 }
 
 func (r *Replicator) baseCtx() context.Context { r.mu.Lock(); defer r.mu.Unlock(); return r.ctx }
@@ -286,6 +287,16 @@ func (r *Replicator) selfDialOutOnly(m *pb.Manifest) bool {
 		}
 	}
 	return false
+}
+
+// peerNoBackups reports whether node id is marked no_backups in the current manifest (D113).
+func (r *Replicator) peerNoBackups(id []byte) bool {
+	return service.NodeNoBackups(r.svc.CurrentManifest(), id)
+}
+
+// backupEntry: a BACKUP_META or a persistent BLOB_META oplog entry.
+func backupEntry(e store.LogEntry) bool {
+	return e.Type == int32(pb.RecordType_BACKUP_META) || (e.Type == int32(pb.RecordType_BLOB_META) && e.Persistent)
 }
 
 func (r *Replicator) pruneSessions(m *pb.Manifest) {

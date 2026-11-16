@@ -51,6 +51,7 @@ const usage = `usage: otter-admin [--dir DIR] <command>
   node drop-old-pins --label L
   node set-push --label L [--off]
   node set-dial-out-only --label L [--off]
+  node set-no-backups --label L [--off]   (never keeps backups at rest; hands phone uploads to the other nodes)
   node add-reality --label L --host H --port 443 --pub B64URL --server-name S [--short-id HEX] [--uuid UUID]
   node add-wss --label L --host H [--port 443] [--cdn] [--priority 10]
   node remove-endpoint --label L --host H --port P
@@ -181,7 +182,7 @@ func run(args []string, out io.Writer, in io.Reader) error {
 				if e.Kind == pb.Endpoint_REALITY && len(e.ServerNames) > 0 {
 					extra = " sni=" + e.ServerNames[0]
 				}
-				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s dial_out_only=%v%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin, n.DialOutOnly, extra)
+				fmt.Fprintf(out, "%-12s %x  %s %s:%d%s cdn=%v pin=%s dial_out_only=%v no_backups=%v%s\n", n.Label, n.NodeId, e.Kind, e.Host, e.Port, e.Path, e.ViaCdn, pin, n.DialOutOnly, n.NoBackups, extra)
 			}
 		}
 	case "node remove":
@@ -251,6 +252,17 @@ func run(args []string, out io.Writer, in io.Reader) error {
 			return err
 		}
 		fmt.Fprintf(out, "node %s: dial_out_only=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
+	case "node set-no-backups":
+		fs := flag.NewFlagSet("node set-no-backups", flag.ContinueOnError)
+		label := fs.String("label", "", "node label")
+		off := fs.Bool("off", false, "the node may keep backups again")
+		if err := fs.Parse(a[2:]); err != nil {
+			return err
+		}
+		if err := admin.SetNoBackups(*dir, *label, !*off); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "node %s: no_backups=%v. Run 'manifest sign' and 'manifest publish'.\n", *label, !*off)
 	case "node add-reality":
 		fs := flag.NewFlagSet("node add-reality", flag.ContinueOnError)
 		var s admin.RealitySpec

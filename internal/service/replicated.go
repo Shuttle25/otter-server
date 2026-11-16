@@ -37,6 +37,9 @@ func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Reco
 	case err != nil:
 		return false, invalid(err)
 	}
+	if IsBackupRecord(body) && s.NoBackups() {
+		return false, nil // D113: an older peer still sends backups; they never rest on a node with no_backups
+	}
 	var adm *store.Admission
 	if body.Type == pb.RecordType_DIRECTORY_ENTRY {
 		if adm, err = s.admitIfNew(ctx, body); err != nil {

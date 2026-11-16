@@ -320,3 +320,26 @@ func TestRemoveEndpoint(t *testing.T) {
 		t.Fatalf("endpoints: %+v", st.Nodes[0].Endpoints)
 	}
 }
+
+func TestSetNoBackups(t *testing.T) {
+	dir := newNet(t)
+	get := func() bool {
+		st, err := LoadState(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Nodes[0].NoBackups
+	}
+	if get() {
+		t.Fatal("no_backups must default to false")
+	}
+	if err := SetNoBackups(dir, "fi-1", true); err != nil || !get() {
+		t.Fatalf("set: %v %v", err, get())
+	}
+	if err := SetNoBackups(dir, "fi-1", false); err != nil || get() {
+		t.Fatalf("off: %v %v", err, get())
+	}
+	if err := SetNoBackups(dir, "nope", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown label: %v", err)
+	}
+}

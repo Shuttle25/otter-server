@@ -18,6 +18,8 @@ message PeerFrame {
     PeerError error = 7;
     PeerBlobGet blob_get = 8;
     PeerBlobChunk blob_chunk = 9;
+    PeerHoldsQuery holds_query = 10;
+    PeerHolds holds = 11;
   }
 }
 
@@ -72,4 +74,16 @@ message PeerBlobChunk {
   uint64 req = 1;
   bytes data = 2;
   bool missing = 3;
+}
+
+// A node marked no_backups asks whether the peer holds a backup record it wants to hand off (D113). For a BLOB_META
+// "held" means every chunk is stored as well; a record this node received and later deleted as superseded also counts.
+message PeerHoldsQuery {
+  uint64 req = 1;
+  bytes record_key = 2;
+}
+
+message PeerHolds {
+  uint64 req = 1;
+  bool held = 2;
 }

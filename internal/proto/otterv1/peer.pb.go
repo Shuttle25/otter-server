@@ -36,6 +36,8 @@ type PeerFrame struct {
 	//	*PeerFrame_Error
 	//	*PeerFrame_BlobGet
 	//	*PeerFrame_BlobChunk
+	//	*PeerFrame_HoldsQuery
+	//	*PeerFrame_Holds
 	Kind          isPeerFrame_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -159,6 +161,24 @@ func (x *PeerFrame) GetBlobChunk() *PeerBlobChunk {
 	return nil
 }
 
+func (x *PeerFrame) GetHoldsQuery() *PeerHoldsQuery {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_HoldsQuery); ok {
+			return x.HoldsQuery
+		}
+	}
+	return nil
+}
+
+func (x *PeerFrame) GetHolds() *PeerHolds {
+	if x != nil {
+		if x, ok := x.Kind.(*PeerFrame_Holds); ok {
+			return x.Holds
+		}
+	}
+	return nil
+}
+
 type isPeerFrame_Kind interface {
 	isPeerFrame_Kind()
 }
@@ -199,6 +219,14 @@ type PeerFrame_BlobChunk struct {
 	BlobChunk *PeerBlobChunk `protobuf:"bytes,9,opt,name=blob_chunk,json=blobChunk,proto3,oneof"`
 }
 
+type PeerFrame_HoldsQuery struct {
+	HoldsQuery *PeerHoldsQuery `protobuf:"bytes,10,opt,name=holds_query,json=holdsQuery,proto3,oneof"`
+}
+
+type PeerFrame_Holds struct {
+	Holds *PeerHolds `protobuf:"bytes,11,opt,name=holds,proto3,oneof"`
+}
+
 func (*PeerFrame_Hello) isPeerFrame_Kind() {}
 
 func (*PeerFrame_Auth) isPeerFrame_Kind() {}
@@ -216,6 +244,10 @@ func (*PeerFrame_Error) isPeerFrame_Kind() {}
 func (*PeerFrame_BlobGet) isPeerFrame_Kind() {}
 
 func (*PeerFrame_BlobChunk) isPeerFrame_Kind() {}
+
+func (*PeerFrame_HoldsQuery) isPeerFrame_Kind() {}
+
+func (*PeerFrame_Holds) isPeerFrame_Kind() {}
 
 type PeerHello struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
@@ -728,11 +760,117 @@ func (x *PeerBlobChunk) GetMissing() bool {
 	return false
 }
 
+// A node marked no_backups asks whether the peer holds a backup record it wants to hand off (D113). For a BLOB_META
+// "held" means every chunk is stored as well; a record this node received and later deleted as superseded also counts.
+type PeerHoldsQuery struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Req           uint64                 `protobuf:"varint,1,opt,name=req,proto3" json:"req,omitempty"`
+	RecordKey     []byte                 `protobuf:"bytes,2,opt,name=record_key,json=recordKey,proto3" json:"record_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerHoldsQuery) Reset() {
+	*x = PeerHoldsQuery{}
+	mi := &file_otter_v1_peer_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerHoldsQuery) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerHoldsQuery) ProtoMessage() {}
+
+func (x *PeerHoldsQuery) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerHoldsQuery.ProtoReflect.Descriptor instead.
+func (*PeerHoldsQuery) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PeerHoldsQuery) GetReq() uint64 {
+	if x != nil {
+		return x.Req
+	}
+	return 0
+}
+
+func (x *PeerHoldsQuery) GetRecordKey() []byte {
+	if x != nil {
+		return x.RecordKey
+	}
+	return nil
+}
+
+type PeerHolds struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Req           uint64                 `protobuf:"varint,1,opt,name=req,proto3" json:"req,omitempty"`
+	Held          bool                   `protobuf:"varint,2,opt,name=held,proto3" json:"held,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PeerHolds) Reset() {
+	*x = PeerHolds{}
+	mi := &file_otter_v1_peer_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PeerHolds) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PeerHolds) ProtoMessage() {}
+
+func (x *PeerHolds) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_peer_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PeerHolds.ProtoReflect.Descriptor instead.
+func (*PeerHolds) Descriptor() ([]byte, []int) {
+	return file_otter_v1_peer_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PeerHolds) GetReq() uint64 {
+	if x != nil {
+		return x.Req
+	}
+	return 0
+}
+
+func (x *PeerHolds) GetHeld() bool {
+	if x != nil {
+		return x.Held
+	}
+	return false
+}
+
 var File_otter_v1_peer_proto protoreflect.FileDescriptor
 
 const file_otter_v1_peer_proto_rawDesc = "" +
 	"\n" +
-	"\x13otter/v1/peer.proto\x12\botter.v1\"\xd3\x03\n" +
+	"\x13otter/v1/peer.proto\x12\botter.v1\"\xbd\x04\n" +
 	"\tPeerFrame\x12+\n" +
 	"\x05hello\x18\x01 \x01(\v2\x13.otter.v1.PeerHelloH\x00R\x05hello\x12(\n" +
 	"\x04auth\x18\x02 \x01(\v2\x12.otter.v1.PeerAuthH\x00R\x04auth\x12/\n" +
@@ -743,7 +881,11 @@ const file_otter_v1_peer_proto_rawDesc = "" +
 	"\x05error\x18\a \x01(\v2\x13.otter.v1.PeerErrorH\x00R\x05error\x122\n" +
 	"\bblob_get\x18\b \x01(\v2\x15.otter.v1.PeerBlobGetH\x00R\ablobGet\x128\n" +
 	"\n" +
-	"blob_chunk\x18\t \x01(\v2\x17.otter.v1.PeerBlobChunkH\x00R\tblobChunkB\x06\n" +
+	"blob_chunk\x18\t \x01(\v2\x17.otter.v1.PeerBlobChunkH\x00R\tblobChunk\x12;\n" +
+	"\vholds_query\x18\n" +
+	" \x01(\v2\x18.otter.v1.PeerHoldsQueryH\x00R\n" +
+	"holdsQuery\x12+\n" +
+	"\x05holds\x18\v \x01(\v2\x13.otter.v1.PeerHoldsH\x00R\x05holdsB\x06\n" +
 	"\x04kind\"\x90\x01\n" +
 	"\tPeerHello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x17\n" +
@@ -777,7 +919,14 @@ const file_otter_v1_peer_proto_rawDesc = "" +
 	"\rPeerBlobChunk\x12\x10\n" +
 	"\x03req\x18\x01 \x01(\x04R\x03req\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x18\n" +
-	"\amissing\x18\x03 \x01(\bR\amissingBI\n" +
+	"\amissing\x18\x03 \x01(\bR\amissing\"A\n" +
+	"\x0ePeerHoldsQuery\x12\x10\n" +
+	"\x03req\x18\x01 \x01(\x04R\x03req\x12\x1d\n" +
+	"\n" +
+	"record_key\x18\x02 \x01(\fR\trecordKey\"1\n" +
+	"\tPeerHolds\x12\x10\n" +
+	"\x03req\x18\x01 \x01(\x04R\x03req\x12\x12\n" +
+	"\x04held\x18\x02 \x01(\bR\x04heldBI\n" +
 	"\x15app.ottermsg.proto.v1P\x01Z.ottermsg/server/internal/proto/otterv1;otterv1b\x06proto3"
 
 var (
@@ -792,34 +941,38 @@ func file_otter_v1_peer_proto_rawDescGZIP() []byte {
 	return file_otter_v1_peer_proto_rawDescData
 }
 
-var file_otter_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_otter_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_otter_v1_peer_proto_goTypes = []any{
-	(*PeerFrame)(nil),     // 0: otter.v1.PeerFrame
-	(*PeerHello)(nil),     // 1: otter.v1.PeerHello
-	(*PeerAuth)(nil),      // 2: otter.v1.PeerAuth
-	(*PeerAuthOk)(nil),    // 3: otter.v1.PeerAuthOk
-	(*PeerSubscribe)(nil), // 4: otter.v1.PeerSubscribe
-	(*PeerBatch)(nil),     // 5: otter.v1.PeerBatch
-	(*PeerBatchAck)(nil),  // 6: otter.v1.PeerBatchAck
-	(*PeerError)(nil),     // 7: otter.v1.PeerError
-	(*PeerBlobGet)(nil),   // 8: otter.v1.PeerBlobGet
-	(*PeerBlobChunk)(nil), // 9: otter.v1.PeerBlobChunk
+	(*PeerFrame)(nil),      // 0: otter.v1.PeerFrame
+	(*PeerHello)(nil),      // 1: otter.v1.PeerHello
+	(*PeerAuth)(nil),       // 2: otter.v1.PeerAuth
+	(*PeerAuthOk)(nil),     // 3: otter.v1.PeerAuthOk
+	(*PeerSubscribe)(nil),  // 4: otter.v1.PeerSubscribe
+	(*PeerBatch)(nil),      // 5: otter.v1.PeerBatch
+	(*PeerBatchAck)(nil),   // 6: otter.v1.PeerBatchAck
+	(*PeerError)(nil),      // 7: otter.v1.PeerError
+	(*PeerBlobGet)(nil),    // 8: otter.v1.PeerBlobGet
+	(*PeerBlobChunk)(nil),  // 9: otter.v1.PeerBlobChunk
+	(*PeerHoldsQuery)(nil), // 10: otter.v1.PeerHoldsQuery
+	(*PeerHolds)(nil),      // 11: otter.v1.PeerHolds
 }
 var file_otter_v1_peer_proto_depIdxs = []int32{
-	1, // 0: otter.v1.PeerFrame.hello:type_name -> otter.v1.PeerHello
-	2, // 1: otter.v1.PeerFrame.auth:type_name -> otter.v1.PeerAuth
-	3, // 2: otter.v1.PeerFrame.auth_ok:type_name -> otter.v1.PeerAuthOk
-	4, // 3: otter.v1.PeerFrame.subscribe:type_name -> otter.v1.PeerSubscribe
-	5, // 4: otter.v1.PeerFrame.batch:type_name -> otter.v1.PeerBatch
-	6, // 5: otter.v1.PeerFrame.batch_ack:type_name -> otter.v1.PeerBatchAck
-	7, // 6: otter.v1.PeerFrame.error:type_name -> otter.v1.PeerError
-	8, // 7: otter.v1.PeerFrame.blob_get:type_name -> otter.v1.PeerBlobGet
-	9, // 8: otter.v1.PeerFrame.blob_chunk:type_name -> otter.v1.PeerBlobChunk
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	1,  // 0: otter.v1.PeerFrame.hello:type_name -> otter.v1.PeerHello
+	2,  // 1: otter.v1.PeerFrame.auth:type_name -> otter.v1.PeerAuth
+	3,  // 2: otter.v1.PeerFrame.auth_ok:type_name -> otter.v1.PeerAuthOk
+	4,  // 3: otter.v1.PeerFrame.subscribe:type_name -> otter.v1.PeerSubscribe
+	5,  // 4: otter.v1.PeerFrame.batch:type_name -> otter.v1.PeerBatch
+	6,  // 5: otter.v1.PeerFrame.batch_ack:type_name -> otter.v1.PeerBatchAck
+	7,  // 6: otter.v1.PeerFrame.error:type_name -> otter.v1.PeerError
+	8,  // 7: otter.v1.PeerFrame.blob_get:type_name -> otter.v1.PeerBlobGet
+	9,  // 8: otter.v1.PeerFrame.blob_chunk:type_name -> otter.v1.PeerBlobChunk
+	10, // 9: otter.v1.PeerFrame.holds_query:type_name -> otter.v1.PeerHoldsQuery
+	11, // 10: otter.v1.PeerFrame.holds:type_name -> otter.v1.PeerHolds
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_otter_v1_peer_proto_init() }
@@ -837,6 +990,8 @@ func file_otter_v1_peer_proto_init() {
 		(*PeerFrame_Error)(nil),
 		(*PeerFrame_BlobGet)(nil),
 		(*PeerFrame_BlobChunk)(nil),
+		(*PeerFrame_HoldsQuery)(nil),
+		(*PeerFrame_Holds)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -844,7 +999,7 @@ func file_otter_v1_peer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_peer_proto_rawDesc), len(file_otter_v1_peer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

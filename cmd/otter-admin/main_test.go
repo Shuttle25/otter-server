@@ -344,6 +344,7 @@ func TestDialOutOnlyAndRealityCLI(t *testing.T) {
 		{"--dir", dir, "network", "init"},
 		{"--dir", dir, "node", "add", "--label", "fi-1", "--wss-host", "chat.example.org"},
 		{"--dir", dir, "node", "set-dial-out-only", "--label", "fi-1"},
+		{"--dir", dir, "node", "set-no-backups", "--label", "fi-1"},
 		{"--dir", dir, "node", "add-reality", "--label", "fi-1", "--host", "203.0.113.10", "--port", "443", "--pub", pub,
 			"--server-name", "www.example.com", "--short-id", "abcd0123"},
 		{"--dir", dir, "node", "list"},
@@ -354,7 +355,8 @@ func TestDialOutOnlyAndRealityCLI(t *testing.T) {
 	}
 	for _, want := range []string{"node fi-1: dial_out_only=true. Run 'manifest sign' and 'manifest publish'.",
 		"node fi-1: REALITY 203.0.113.10:443 server_name=www.example.com", `short_ids = ["abcd0123"]`,
-		"REALITY 203.0.113.10:443", "dial_out_only=true sni=www.example.com"} {
+		"node fi-1: no_backups=true. Run 'manifest sign' and 'manifest publish'.",
+		"REALITY 203.0.113.10:443", "dial_out_only=true no_backups=true sni=www.example.com"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in\n%s", want, out.String())
 		}
@@ -366,6 +368,13 @@ func TestDialOutOnlyAndRealityCLI(t *testing.T) {
 	}
 	if err := run([]string{"--dir", dir, "node", "set-dial-out-only", "--label", "nope"}, &out, strings.NewReader("")); err == nil {
 		t.Fatal("set-dial-out-only accepted an unknown label")
+	}
+	if err := run([]string{"--dir", dir, "node", "set-no-backups", "--label", "fi-1", "--off"}, &out, strings.NewReader("")); err != nil ||
+		!strings.Contains(out.String(), "no_backups=false") {
+		t.Fatalf("set-no-backups --off: %v %s", err, out.String())
+	}
+	if err := run([]string{"--dir", dir, "node", "set-no-backups", "--label", "nope"}, &out, strings.NewReader("")); err == nil {
+		t.Fatal("set-no-backups accepted an unknown label")
 	}
 	if err := run([]string{"--dir", dir, "node", "add-reality", "--label", "fi-1", "--host", "h", "--pub", "short", "--server-name", "s"}, &out, strings.NewReader("")); err == nil {
 		t.Fatal("add-reality accepted a bad public key")

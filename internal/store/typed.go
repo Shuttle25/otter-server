@@ -151,7 +151,7 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 			return err
 		}
 		if curKey != nil {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, curKey); err != nil {
+			if err := compact(ctx, tx, curKey, now); err != nil {
 				return err
 			}
 		}
@@ -314,15 +314,14 @@ func applyTyped(ctx context.Context, tx *sql.Tx, it item, now int64) error {
 		newer := errors.Is(err, sql.ErrNoRows) || int64(m.Version) > curVer ||
 			(int64(m.Version) == curVer && (b.CreatedMs > curCreated || (b.CreatedMs == curCreated && bytes.Compare(it.key, curKey) > 0)))
 		if !newer { // an older or equal-but-losing version (e.g. from a lagging peer): drop it again
-			_, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, it.key)
-			return err
+			return compact(ctx, tx, it.key, now) // remembered as superseded: PeerHolds counts it (D113)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO backups(user_id,record_key,version,created_ms,blob_key) VALUES(?,?,?,?,?)`,
 			b.Author, it.key, m.Version, b.CreatedMs, m.BlobKey); err != nil {
 			return err
 		}
 		if curKey != nil {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE record_key=?`, curKey); err != nil {
+			if err := compact(ctx, tx, curKey, now); err != nil {
 				return err
 			}
 			if !bytes.Equal(curBlob, m.BlobKey) {

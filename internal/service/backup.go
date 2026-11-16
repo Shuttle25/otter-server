@@ -58,6 +58,9 @@ func (s *Service) currentBackup(ctx context.Context, username string) (*store.Ba
 // BackupAuth returns the KDF salt and parameters for a username; a stable fake salt when there is no backup. A name
 // shared after a clash returns only the candidates "name#tag" (D103): the phone tries each with the typed password.
 func (s *Service) BackupAuth(ctx context.Context, username string) (*pb.BackupAuthResponse, error) {
+	if s.NoBackups() { // D113: no backups at rest here; phones restore through a node abroad
+		return nil, fmt.Errorf("%w: restore through another node", ErrUnavailable)
+	}
 	name, cands, err := s.Store.ResolveUsername(ctx, username)
 	if err != nil {
 		return nil, err
@@ -79,6 +82,9 @@ func (s *Service) BackupAuth(ctx context.Context, username string) (*pb.BackupAu
 // A name shared after a clash is refused (D103). The attempt is reserved as a failure per (account, source) before
 // the comparison and cleared when the secret is right or this node failed (D105, C4, C10).
 func (s *Service) BackupFetch(ctx context.Context, username, source string, secret []byte) (*pb.BackupFetchResponse, []byte, error) {
+	if s.NoBackups() { // D113, before the attempt is counted
+		return nil, nil, fmt.Errorf("%w: restore through another node", ErrUnavailable)
+	}
 	name, cands, err := s.Store.ResolveUsername(ctx, username)
 	if err != nil {
 		return nil, nil, err

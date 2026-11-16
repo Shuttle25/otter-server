@@ -84,7 +84,7 @@ type realityInfo struct {
 }
 
 // nodeOpts are per-node knobs for newSimWith.
-type nodeOpts struct{ reality, dialOutOnly, turn bool }
+type nodeOpts struct{ reality, dialOutOnly, noBackups, turn bool }
 
 const (
 	realityUUID = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
@@ -137,7 +137,7 @@ func newSimWith(t *testing.T, opts map[string]nodeOpts, labels ...string) *sim {
 			turnOn: opts[l].turn}
 		_, port, _ := net.SplitHostPort(addr)
 		p, _ := strconv.Atoi(port)
-		info := &pb.NodeInfo{NodeId: n.id, NodePub: k.Public().(ed25519.PublicKey), Label: l, DialOutOnly: opts[l].dialOutOnly,
+		info := &pb.NodeInfo{NodeId: n.id, NodePub: k.Public().(ed25519.PublicKey), Label: l, DialOutOnly: opts[l].dialOutOnly, NoBackups: opts[l].noBackups,
 			Endpoints: []*pb.Endpoint{{Kind: pb.Endpoint_WS_PLAIN, Host: "127.0.0.1", Port: uint32(p), Path: path}}}
 		if opts[l].reality {
 			n.reality = newReality(t)
@@ -275,6 +275,7 @@ func (s *sim) start(n *simNode) {
 	if !n.noPull {
 		go repl.RunPuller(ctx, 0)
 	}
+	go repl.RunBackupHandoff(ctx)
 	var ln net.Listener
 	for i := 0; i < 50; i++ { // the port may linger briefly after a stop
 		if ln, err = net.Listen("tcp", n.addr); err == nil {

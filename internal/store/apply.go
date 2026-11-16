@@ -47,8 +47,10 @@ type applyRes struct {
 }
 
 type LogEntry struct {
-	Seq int64
-	Raw []byte // serialized pb.Record
+	Seq        int64
+	Raw        []byte // serialized pb.Record
+	Type       int32  // pb.RecordType
+	Persistent bool   // a BLOB_META of a backup blob (D50)
 }
 
 func toItem(it Item, origin []byte) (item, error) {
@@ -292,7 +294,8 @@ func applyOne(ctx context.Context, tx *sql.Tx, it item, now int64) (int64, bool,
 // Since returns log entries with seq > cursor, oldest first. Deleted records are skipped.
 func (s *Store) Since(ctx context.Context, cursor int64, limit int) ([]LogEntry, error) {
 	rows, err := s.r.QueryContext(ctx,
-		`SELECT o.seq, r.raw FROM oplog o JOIN records r ON r.record_key=o.record_key WHERE o.seq>? ORDER BY o.seq LIMIT ?`,
+		`SELECT o.seq, r.raw, r.type, COALESCE(b.persistent, 0) FROM oplog o JOIN records r ON r.record_key=o.record_key
+		 LEFT JOIN blobs b ON b.blob_key=o.record_key WHERE o.seq>? ORDER BY o.seq LIMIT ?`,
 		cursor, limit)
 	if err != nil {
 		return nil, err
@@ -301,7 +304,7 @@ func (s *Store) Since(ctx context.Context, cursor int64, limit int) ([]LogEntry,
 	var out []LogEntry
 	for rows.Next() {
 		var e LogEntry
-		if err := rows.Scan(&e.Seq, &e.Raw); err != nil {
+		if err := rows.Scan(&e.Seq, &e.Raw, &e.Type, &e.Persistent); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

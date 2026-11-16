@@ -262,6 +262,21 @@ func SetDialOutOnly(dir, label string, on bool) error {
 	return saveNodes(dir, st.Nodes)
 }
 
+// SetNoBackups marks a node that must never keep backups at rest (D113, owner Q7): it serves no restore, receives no
+// backups from peers and hands what phones upload to it over to the other nodes.
+func SetNoBackups(dir, label string, on bool) error {
+	st, err := LoadState(dir)
+	if err != nil {
+		return err
+	}
+	n, err := findNode(st, label)
+	if err != nil {
+		return err
+	}
+	n.NoBackups = on
+	return saveNodes(dir, st.Nodes)
+}
+
 type RealitySpec struct {
 	Label, Host, Pub, ServerName, ShortID string
 	UUID                                  string // the node's [reality].vless_uuid; generated when empty

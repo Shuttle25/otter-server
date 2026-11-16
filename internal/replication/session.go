@@ -56,13 +56,14 @@ type session struct {
 	pmu      sync.Mutex
 	pending  map[uint64]chan *pb.PeerBlobChunk
 	serveSem chan struct{}
+	hpending map[uint64]chan bool // PeerHoldsQuery answers (D113)
 }
 
 func newSession(r *Replicator, c *websocket.Conn, peer, dialer []byte) *session {
 	ctx, cancel := context.WithCancel(r.baseCtx())
 	return &session{r: r, c: c, peer: peer, dialer: dialer, ctx: ctx, cancel: cancel,
 		out: make(chan *pb.PeerFrame, 16), acks: make(chan struct{}, window), in: make(chan *pb.PeerBatch, window), start: time.Now(),
-		pending: map[uint64]chan *pb.PeerBlobChunk{}, serveSem: make(chan struct{}, 4)}
+		pending: map[uint64]chan *pb.PeerBlobChunk{}, serveSem: make(chan struct{}, 4), hpending: map[uint64]chan bool{}}
 }
 
 func (s *session) close() { s.cancel(); s.c.CloseNow() }
@@ -132,6 +133,12 @@ func (s *session) run() error {
 						s.send(blobChunk(g.Req, nil))
 					}
 				}()
+				if s.r.peerNoBackups(s.peer) { // D113: no backup chunks to a node with no_backups
+					if p, err := s.r.st.BlobPersistent(s.ctx, g.BlobKey); err != nil || p {
+						s.send(blobChunk(g.Req, nil))
+						return
+					}
+				}
 				data, ok, err := s.r.svc.LocalChunk(s.ctx, g.BlobKey, g.Index)
 				if err != nil || !ok {
 					data = nil
@@ -145,6 +152,27 @@ func (s *session) run() error {
 			s.pmu.Unlock()
 			if ch != nil {
 				ch <- k.BlobChunk // buffered 1
+			}
+		case *pb.PeerFrame_HoldsQuery:
+			q := k.HoldsQuery
+			select {
+			case s.serveSem <- struct{}{}:
+			default: // busy: "not held" only delays a handoff
+				s.send(holdsFrame(q.Req, false))
+				continue
+			}
+			go func() {
+				defer func() { <-s.serveSem }()
+				held, err := s.r.svc.Holds(s.ctx, q.RecordKey)
+				s.send(holdsFrame(q.Req, err == nil && held))
+			}()
+		case *pb.PeerFrame_Holds:
+			s.pmu.Lock()
+			ch := s.hpending[k.Holds.Req]
+			delete(s.hpending, k.Holds.Req)
+			s.pmu.Unlock()
+			if ch != nil {
+				ch <- k.Holds.Held // buffered 1
 			}
 		case *pb.PeerFrame_Error:
 			return fmt.Errorf("peer error: %s", k.Error.Message)
@@ -235,20 +263,26 @@ func (s *session) serve(from int64) {
 			}
 			continue
 		}
+		toNoBackups := s.r.peerNoBackups(s.peer)
 		b := &pb.PeerBatch{}
 		size := 0
 		for _, e := range entries {
 			if size+len(e.Raw) > maxBatchBytes && len(b.Records) > 0 {
 				break
 			}
+			b.LastSeq = e.Seq
+			if toNoBackups && backupEntry(e) {
+				continue // D113: the cursor moves past it; the record never goes to a node with no_backups
+			}
 			b.Records = append(b.Records, e.Raw)
 			size += len(e.Raw)
-			b.LastSeq = e.Seq
 		}
-		select {
-		case s.acks <- struct{}{}: // take a window slot (released by BatchAck)
-		case <-s.ctx.Done():
-			return
+		if len(b.Records) > 0 { // the peer acks only a batch with records: an empty one takes no window slot
+			select {
+			case s.acks <- struct{}{}: // take a window slot (released by BatchAck)
+			case <-s.ctx.Done():
+				return
+			}
 		}
 		s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Batch{Batch: b}})
 		cursor = b.LastSeq

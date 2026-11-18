@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Rolling upgrade of every node (or --only LABEL...) to VERSION; stops at the first failure.
-# For VERSION 0.8.0+ each node then gets the TURN relay for calls (turn-setup.sh --if-missing), unless --no-turn.
+# For VERSION 0.8.0+ each node then gets the TURN relay for calls (turn-setup.sh --if-missing), unless --no-turn,
+# and for 0.10.1+ the sandboxed systemd units (sandbox-setup.sh --if-older, D120), unless --no-sandbox.
 # Then offers the news dialog (news-dialog.sh) when run from a terminal, unless --no-news.
-# Usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news] [--no-turn]
+# Usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news] [--no-turn] [--no-sandbox]
 # Exit: 0 all done, 2 rolled back, 3 manual action needed.
 source "$(dirname "$0")/lib.sh"
-usage="usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news] [--no-turn]"
+usage="usage: upgrade-all.sh VERSION [--only LABEL]... [--no-news] [--no-turn] [--no-sandbox]"
 version=${1:?$usage}; shift
-only=() news=1 no_turn=0
+only=() news=1 no_turn=0 no_sandbox=0
 while (( $# )); do case "$1" in
   --only) only+=("${2:?$usage}"); shift 2 ;;
   --no-news) news=0; shift ;;
   --no-turn) no_turn=1; shift ;;
+  --no-sandbox) no_sandbox=1; shift ;;
   *) die "$usage" ;;
 esac; done
 all=$(node_labels)
@@ -41,17 +43,27 @@ turn_on() {
     result[$1]+=", TURN NOT ENABLED"
   fi
 }
+# sandbox_on LABEL: the 0.10.1 units (D120); a failure (rolled back on the node) is reported, the rollout goes on
+sandbox_on() {
+  (( no_sandbox == 0 )) && version_ge "$version" 0.10.1 || return 0
+  if "$ROOT/deploy/sandbox-setup.sh" "$1" --if-older; then
+    result[$1]+=", sandbox ok"
+  else
+    say "WARNING: $1: sandbox not installed (see above); the node runs its previous units. Retry: deploy/sandbox-setup.sh $1"
+    result[$1]+=", SANDBOX NOT INSTALLED"
+  fi
+}
 for l in "${labels[@]}"; do
   host_lookup "$l"
   export OTTER_SSH_PORT=$TARGET_PORT SSH_PORT=$TARGET_PORT
   m=$(remote "$TARGET" uname -m) || { result[$l]="unreachable"; summary; exit 3; }
   case "$m" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) die "node $l: unsupported CPU type $m" ;; esac
   cur=$(remote "$TARGET" /usr/local/bin/otter-node version 2>/dev/null || echo unknown)
-  if [[ "$cur" == "$version" ]]; then result[$l]="already $version"; turn_on "$l"; continue; fi
+  if [[ "$cur" == "$version" ]]; then result[$l]="already $version"; turn_on "$l"; sandbox_on "$l"; continue; fi
   say "upgrading $l ($TARGET, $arch) from $cur to $version"
   set +e; "$ROOT/deploy/upgrade.sh" "$TARGET" "$ROOT/dist/otter-node_${version}_linux_$arch"; rc=$?; set -e
   case $rc in
-    0) result[$l]="upgraded $cur → $version"; turn_on "$l" ;;
+    0) result[$l]="upgraded $cur → $version"; turn_on "$l"; sandbox_on "$l" ;;
     2) result[$l]="ROLLED BACK (still $cur)"; summary; exit 2 ;;
     *) result[$l]="FAILED — check the server now"; summary; exit 3 ;;
   esac

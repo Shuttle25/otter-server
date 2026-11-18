@@ -394,7 +394,7 @@ esac
 STUB
 printf '#!/bin/sh\nexit 0\n' > "$b/health.sh"
 chmod +x "$b/otter-node-amd64" "$b/health.sh" "$b/install.sh"
-for f in node.key tls.key manifest.bin tls.crt uninstall.sh backup.sh otter-node.service otter-backup.service otter-backup.timer; do echo "$f" > "$b/$f"; done
+for f in node.key tls.key manifest.bin tls.crt uninstall.sh backup.sh harden-report.sh otter-node.service otter-backup.service otter-backup.timer; do echo "$f" > "$b/$f"; done
 printf 'data_dir = "/var/lib/otter"\n' > "$b/node.toml"
 printf 'OTTER_PORT=27443\nOTTER_PROBE_URL=https://192.0.2.1:27443/\n' > "$b/probe.env"
 echo '<html>decoy</html>' > "$b/site/index.html"; echo 'body{}' > "$b/site/css/a.css"
@@ -615,4 +615,126 @@ out=$(PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || true
 grep -qE '^n1 .* on +off$' <<< "$out" || fail "status TURN off: $out"
 grep -q 'grep -q "^\\\[turn\\\]" /etc/otter/node.toml' deploy/status.sh || fail "status.sh does not check [turn]"
 
+
+# --- status.sh health block (otter-node status --line, 0.10.1+) inside the single SSH call; problems fail the run.
+# A probe stub answers the hello so the exit code reflects the health block alone.
+printf '#!/bin/sh\nexit 0\n' > "$work/stub/node-ok"; chmod +x "$work/stub/node-ok"
+grep -q 'echo --status--; runuser -u otter -- /usr/local/bin/otter-node status --config /etc/otter/node.toml --line' deploy/status.sh ||
+  fail "status.sh does not run otter-node status in its SSH call"
+[[ "$(grep -c 'remote "\$TARGET"' deploy/status.sh)" == 1 ]] || fail "status.sh must keep one SSH call per node"
+cat > "$work/stub/ssh" <<'STUB'
+#!/bin/sh
+printf '0.10.1\nactive\nusers=1\n1M\non\non\n--status--\npeers=1/2 lag=15m backlog=40 disk=ok free=9GiB sessions=2 push=3/0 turn=0 rejected=0\n! peer n2 lag 15m (40 records)\n--netlog--\n'
+STUB
+if out=$(OTTER_NODE_BIN="$work/stub/node-ok" PATH="$work/stub:$PATH" deploy/status.sh 2>&1); then fail "status must fail on a problem: $out"; fi
+grep -q '^  n1  peers=1/2 lag=15m' <<< "$out" || fail "status health line: $out"
+grep -q '^  n1  ! peer n2 lag 15m (40 records)$' <<< "$out" || fail "status problem line: $out"
+grep -qE '^n1 .* on +on$' <<< "$out" || fail "status row with health block: $out"
+grep -q '^health (otter-node status' <<< "$out" || fail "status health header: $out"
+# healthy: exit 0
+cat > "$work/stub/ssh" <<'STUB'
+#!/bin/sh
+printf '0.10.1\nactive\nusers=1\n1M\non\non\n--status--\npeers=2/2 lag=0s backlog=0 disk=ok free=9GiB sessions=2 push=3/0 turn=0 rejected=0\n--netlog--\n'
+STUB
+out=$(OTTER_NODE_BIN="$work/stub/node-ok" PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || fail "healthy status failed: $out"
+grep -q '^  n1  peers=2/2 lag=0s' <<< "$out" || fail "status healthy line: $out"
+# a node below 0.10.1 (no status command, nothing between the markers, no TURN line): a note, not a failure
+printf '#!/bin/sh\nprintf "0.10.0\\nactive\\nusers=1\\n1M\\non\\n--status--\\n--netlog--\\n"\n' > "$work/stub/ssh"
+out=$(OTTER_NODE_BIN="$work/stub/node-ok" PATH="$work/stub:$PATH" deploy/status.sh 2>&1) || fail "old node failed the status run: $out"
+grep -qE '^n1 .* 1M +on +-$' <<< "$out" || fail "old node row: $out"
+grep -q '^  n1  - no health line: otter-node 0.10.0 has no status command (0.10.1+)$' <<< "$out" || fail "old node note: $out"
+# a 0.10.1 node whose status is missing (status.json not written): a problem
+printf '#!/bin/sh\nprintf "0.10.1\\nactive\\nusers=1\\n1M\\non\\non\\n--status--\\n--netlog--\\n"\n' > "$work/stub/ssh"
+if out=$(OTTER_NODE_BIN="$work/stub/node-ok" PATH="$work/stub:$PATH" deploy/status.sh 2>&1); then fail "missing status passed: $out"; fi
+grep -q '^  n1  ! no status from the running node' <<< "$out" || fail "missing status line: $out"
+
+# --- harden-report.sh: read-only checks with stubbed system commands
+hr="$work/hr"; hroot="$work/hroot"; mkdir -p "$hr" "$hroot/etc/otter" "$hroot/usr/local/bin" "$hroot/var/lib/otter"
+cat > "$hr/sshd" <<'STUB'
+#!/bin/sh
+printf 'passwordauthentication yes\nkbdinteractiveauthentication no\npermitrootlogin prohibit-password\npubkeyauthentication yes\nx11forwarding no\nmaxauthtries 6\n'
+STUB
+cat > "$hr/ss" <<'STUB'
+#!/bin/sh
+printf 'tcp LISTEN 0 4096 0.0.0.0:27443 0.0.0.0:* users:(("otter-node",pid=10,fd=7))\ntcp LISTEN 0 4096 127.0.0.1:9477 0.0.0.0:* users:(("otter-node",pid=10,fd=9))\ntcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))\ntcp LISTEN 0 128 [::]:22 [::]:* users:(("sshd",pid=1,fd=4))\ntcp LISTEN 0 511 0.0.0.0:8080 0.0.0.0:* users:(("someapp",pid=20,fd=5))\nudp UNCONN 0 0 127.0.0.53%%lo:53 0.0.0.0:* users:(("resolver",pid=30,fd=1))\nudp UNCONN 0 0 [::]:3478 [::]:* users:(("otter-node",pid=10,fd=11))\n'
+STUB
+cat > "$hr/systemd-analyze" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$HR_LOG"
+echo "→ Overall exposure level for otter-node.service: 1.5 OK"
+STUB
+printf '#!/bin/sh\necho "install ok installed"\n' > "$hr/dpkg-query"
+printf '#!/bin/sh\necho '"'"'APT::Periodic::Unattended-Upgrade "1";'"'"'\n' > "$hr/apt-config"
+# systemctl and ufw log every call: the report may only ask for state
+printf '#!/bin/sh\necho "systemctl $*" >> "$HR_LOG"\ncase "$*" in *is-enabled*) echo enabled;; *) exit 0;; esac\n' > "$hr/systemctl"
+printf '#!/bin/sh\necho "ufw $*" >> "$HR_LOG"\necho "Status: active"\n' > "$hr/ufw"
+printf '#!/bin/sh\necho yes\n' > "$hr/timedatectl"
+printf '#!/bin/sh\necho "otter:x:999:999::/var/lib/otter:/usr/sbin/nologin"\n' > "$hr/getent"
+printf '#!/bin/sh\necho otter\n' > "$hr/id"
+chmod +x "$hr/"*
+echo key > "$hroot/etc/otter/node.key"; chmod 0644 "$hroot/etc/otter/node.key"   # owned by the test user, world-readable
+chmod 0700 "$hroot/var/lib/otter"
+before=$(cd "$hroot" && find . -printf '%p %m %s %T@\n' | sort)
+hrun() { HR_LOG="$work/hr.log" PATH="$hr:$PATH" HARDEN_ROOT="$hroot" bash deploy/bundle/harden-report.sh 2>&1 || true; }
+rm -f "$work/hr.log"; out=$(hrun)
+grep -q '^FAIL ssh-password: PasswordAuthentication yes$' <<< "$out" || fail "harden ssh: $out"
+grep -q '^PASS ssh-root: prohibit-password$' <<< "$out" || fail "harden root: $out"
+grep -q '^PASS ssh-tries: 6$' <<< "$out" || fail "harden tries: $out"
+grep -q '^PASS updates: unattended-upgrades on$' <<< "$out" || fail "harden updates: $out"
+grep -q '^PASS firewall: ufw active$' <<< "$out" || fail "harden firewall: $out"
+grep -qF 'WARN listener: 0.0.0.0:8080 (someapp, tcp)' <<< "$out" || fail "harden listener: $out"
+if grep -q 'listener: .*:27443\|listener: .*:22 \|listener: .*:3478\|listener: .*:53 ' <<< "$out"; then fail "otter/sshd/loopback listener flagged: $out"; fi
+[[ "$(grep -c '^WARN listener' <<< "$out")" == 1 ]] || fail "harden listeners: $out"
+grep -q '^PASS metrics: 127.0.0.1:9477$' <<< "$out" || fail "harden metrics: $out"
+grep -q '^PASS sandbox: exposure 1.5$' <<< "$out" || fail "harden sandbox: $out"
+if grep -q 'sandbox-backup' <<< "$out"; then fail "backup unit checked though not installed: $out"; fi
+grep -q '^PASS otter-user: no shell, no admin groups$' <<< "$out" || fail "harden user: $out"
+grep -q "^FAIL file: $hroot/etc/otter/node.key is 644 " <<< "$out" || fail "harden key file: $out"
+grep -q "^WARN data-dir: $hroot/var/lib/otter is [a-z]* 700 (want otter 700)$" <<< "$out" || fail "harden data dir: $out"
+grep -q '^PASS clock: NTP synchronized$' <<< "$out" || fail "harden clock: $out"
+if grep -vE '^(PASS|WARN|FAIL) [a-z0-9-]+: ' <<< "$out"; then fail "harden lines must be PASS|WARN|FAIL check: detail"; fi
+# metrics on a public address is a FAIL; an exposed backup unit and a sudoers entry for otter are reported
+cat > "$hr/ss" <<'STUB'
+#!/bin/sh
+printf 'tcp LISTEN 0 4096 0.0.0.0:9477 0.0.0.0:* users:(("otter-node",pid=10,fd=9))\n'
+STUB
+mkdir -p "$hroot/etc/systemd/system" "$hroot/etc/sudoers.d"; echo unit > "$hroot/etc/systemd/system/otter-backup.service"
+echo 'otter ALL=(ALL) NOPASSWD: ALL' > "$hroot/etc/sudoers.d/x"
+before=$(cd "$hroot" && find . -printf '%p %m %s %T@\n' | sort)
+rm -f "$work/hr.log"; out=$(hrun)
+grep -q '^FAIL metrics: /metrics listens on 0.0.0.0:9477$' <<< "$out" || fail "harden public metrics: $out"
+grep -q '^WARN sandbox-backup: systemd-analyze security not available for otter-backup.service$' <<< "$out" || fail "harden backup unit: $out"
+grep -q '^FAIL otter-user: .*listed in sudoers' <<< "$out" || fail "harden sudoers: $out"
+# read-only, as executed: nothing under the root changed, systemctl/ufw/systemd-analyze were only asked for state
+[[ "$(cd "$hroot" && find . -printf '%p %m %s %T@\n' | sort)" == "$before" ]] || fail "harden-report changed files"
+if grep -vE '^(systemctl is-enabled [a-z.-]+|ufw status|security otter-(node|backup)\.service --no-pager)$' "$work/hr.log"; then
+  fail "harden-report ran a changing command"
+fi
+# read-only, as written: no command in the report changes the host (redirections to /dev/null removed first)
+if sed -E 's#[0-9&]*>[[:space:]]*/dev/null##g' deploy/bundle/harden-report.sh | grep -nE '(^|[;&|(`]|\$\()[[:space:]]*(rm|rmdir|chmod|chown|chgrp|mv|cp|ln|tee|touch|mkdir|truncate|dd|install|apt|apt-get|dpkg|dpkg-reconfigure|useradd|usermod|userdel|passwd|kill|pkill|reboot|shutdown|sysctl|mount|crontab)( |$)|sed +-i|ufw +(allow|deny|enable|disable|reset|delete|reload|limit)|systemctl +(start|stop|restart|reload|enable|disable|mask|unmask|daemon-reload|kill|edit|set-property)|ss +-K|>[[:space:]]*[A-Za-z/$~"'"'"']'; then
+  fail "harden-report.sh must not change the host"
+fi
+
+# --- harden-check.sh: one SSH call per node streams the repo's report (bash -s); FAIL lines fail the run
+cat > "$work/stub/ssh" <<STUB
+#!/bin/sh
+echo "ssh \$*" >> "$work/ssh.log"
+cat > "$work/hc.stdin"
+printf 'PASS ssh-root: no\n%s\n' "\${HC_LINE:-PASS clock: NTP synchronized}"
+STUB
+deploy/hosts.sh set n2 root@n2.example 2222 >/dev/null
+rm -f "$work/ssh.log"
+out=$(PATH="$work/stub:$PATH" deploy/harden-check.sh n1 2>&1) || fail "harden-check without FAIL: $out"
+grep -q '^== n1$' <<< "$out" && grep -q '^  PASS ssh-root: no$' <<< "$out" || fail "harden-check table: $out"
+[[ "$(wc -l < "$work/ssh.log")" == 1 ]] && grep -q 'root@n1.example bash -s$' "$work/ssh.log" || fail "harden-check ssh: $(cat "$work/ssh.log")"
+cmp -s "$work/hc.stdin" deploy/bundle/harden-report.sh || fail "harden-check did not stream harden-report.sh"
+rm -f "$work/ssh.log"
+if out=$(HC_LINE='FAIL ssh-password: PasswordAuthentication yes' PATH="$work/stub:$PATH" deploy/harden-check.sh 2>&1); then
+  fail "harden-check must fail on FAIL: $out"
+fi
+grep -q '^== n1$' <<< "$out" && grep -q '^== n2$' <<< "$out" || fail "harden-check all nodes: $out"
+[[ "$(wc -l < "$work/ssh.log")" == 2 ]] || fail "harden-check one call per node: $(cat "$work/ssh.log")"
+grep -q 'ssh -p 2222 .*root@n2.example bash -s$' "$work/ssh.log" || fail "harden-check port: $(cat "$work/ssh.log")"
+if out=$(PATH="$work/stub:$PATH" deploy/harden-check.sh nope 2>&1); then fail "harden-check unknown label: $out"; fi
+grep -q 'no SSH target' <<< "$out" || fail "harden-check unknown label message: $out"
 echo "scripts test: ok"

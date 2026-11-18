@@ -80,6 +80,14 @@ const DefaultTurnSecretFile = "/etc/otter/turn.secret"
 // MaxBlobLimit equals records.MaxBlobSize (kept here to avoid an import cycle).
 const MaxBlobLimit = 100 << 20
 
+// Metrics: Prometheus text on a loopback address only (D119); "off" disables it.
+type Metrics struct {
+	Listen string `toml:"listen"`
+}
+
+// DefaultMetricsListen is used when [metrics] listen is not set.
+const DefaultMetricsListen = "127.0.0.1:9477"
+
 type Config struct {
 	DataDir      string      `toml:"data_dir"`
 	NodeKey      string      `toml:"node_key"`
@@ -93,6 +101,7 @@ type Config struct {
 	Push         Push        `toml:"push"`
 	Reality      Reality     `toml:"reality"`
 	Turn         Turn        `toml:"turn"`
+	Metrics      Metrics     `toml:"metrics"`
 
 	// parsed by Load
 	UserQuotaBytes   int64 `toml:"-"`
@@ -175,10 +184,32 @@ func (c *Config) validate() error {
 	if err := c.validateTurn(); err != nil {
 		return err
 	}
+	if err := c.validateMetrics(); err != nil {
+		return err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("config: log_level %q (debug|info|warn|error)", c.LogLevel)
+	}
+	return nil
+}
+
+// validateMetrics: /metrics only ever listens on a loopback IP (D119); a config that would open it elsewhere is
+// refused rather than started. "off" disables it.
+func (c *Config) validateMetrics() error {
+	l := strings.TrimSpace(c.Metrics.Listen)
+	if l == "" {
+		l = DefaultMetricsListen
+	}
+	c.Metrics.Listen = l
+	if l == "off" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(l)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil || !ip.IsLoopback() || port == "" {
+		return fmt.Errorf("config: metrics.listen must be a loopback address (127.0.0.1:PORT or [::1]:PORT) or \"off\", got %q", l)
 	}
 	return nil
 }

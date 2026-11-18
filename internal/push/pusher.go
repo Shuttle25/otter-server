@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +27,9 @@ type Tokens interface {
 type Pusher struct {
 	Every time.Duration
 	Now   func() time.Time
+
+	// outcomes since start, for monitoring (D119)
+	Sent, Failed, Unregistered atomic.Int64
 
 	sender Sender
 	tokens Tokens
@@ -88,11 +92,14 @@ func (p *Pusher) wake(ctx context.Context, user []byte, device uint32, call bool
 		}
 		switch err := p.sender.Send(ctx, tok); {
 		case err == nil:
+			p.Sent.Add(1)
 			p.log.Info("push sent", "user", tag, "device", device, "kind", kind)
 		case errors.Is(err, ErrUnregistered):
+			p.Unregistered.Add(1)
 			p.log.Info("push token unregistered: dropped", "user", tag, "device", device)
 			_ = p.tokens.DropPushToken(ctx, user, device, tok)
 		default:
+			p.Failed.Add(1)
 			p.log.Warn("push failed", "user", tag, "device", device, "kind", kind, "err", err)
 		}
 	}()

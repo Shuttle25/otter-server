@@ -24,6 +24,10 @@ site_dir = "/var/lib/otter/site"
 # [replication]
 # blob_bandwidth = "2MB/s"  # background chunk pulls from peers; "0" = unlimited
 
+# Health (D119): the node writes status.json (read by `otter-node status`) and serves Prometheus text on loopback.
+# [metrics]
+# listen = "127.0.0.1:9477"   # loopback only: a public address is refused at start; "off" disables
+
 # Push wake-ups (M5, D59). Push is off while the file is missing; deploy/push-key.sh installs it.
 [push]
 fcm_credentials = "/etc/otter/fcm.json"

@@ -50,6 +50,10 @@ type session struct {
 	caughtUp bool // peer's oplog fully received
 	cursor   int64
 	applyErr error // why applying the peer's batches stopped (ends the session)
+	// monitoring (D119): batches without records are never acked
+	recTo     int64 // LastSeq of the newest batch with records we sent
+	emptyTo   int64 // LastSeq of the newest batch without records we sent ...
+	emptyNeed int64 // ... and the recTo before it: once the peer acked that, it holds all we meant to send up to emptyTo
 
 	// blob chunk RPC (D45)
 	reqID    atomic.Uint64
@@ -97,6 +101,7 @@ func (s *session) run() error {
 		}
 		switch k := f.Kind.(type) {
 		case *pb.PeerFrame_Subscribe:
+			s.r.noteSubscribed(s.peer, k.Subscribe.Cursor)
 			if !started {
 				started = true
 				go s.serve(k.Subscribe.Cursor)
@@ -117,6 +122,8 @@ func (s *session) run() error {
 			case <-s.acks:
 			default:
 			}
+			s.r.noteAcked(s.peer, k.BatchAck.Seq)
+			s.creditEmpty()
 		case *pb.PeerFrame_BlobGet:
 			g := k.BlobGet
 			if len(g.BlobKey) != blobs.KeyLen { // hostile or broken peer: answer "missing", keep the session (C11)
@@ -260,6 +267,7 @@ func (s *session) serve(from int64) {
 		if len(entries) == 0 {
 			if !idleSent {
 				s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Batch{Batch: &pb.PeerBatch{LastSeq: cursor, CaughtUp: true}}})
+				s.sentEmpty(cursor)
 				idleSent = true
 			}
 			select {
@@ -292,8 +300,34 @@ func (s *session) serve(from int64) {
 			}
 		}
 		s.send(&pb.PeerFrame{Kind: &pb.PeerFrame_Batch{Batch: b}})
+		if len(b.Records) == 0 { // only backups skipped for a no_backups peer: it will never ack them
+			s.sentEmpty(b.LastSeq)
+		} else {
+			s.mu.Lock()
+			s.recTo = b.LastSeq
+			s.mu.Unlock()
+		}
 		cursor = b.LastSeq
 		idleSent = false
+	}
+}
+
+// sentEmpty notes a batch without records (caught up, or only backups skipped for a no_backups peer).
+func (s *session) sentEmpty(lastSeq int64) {
+	s.mu.Lock()
+	s.emptyTo, s.emptyNeed = max(s.emptyTo, lastSeq), s.recTo
+	s.mu.Unlock()
+	s.creditEmpty()
+}
+
+// creditEmpty: once the peer acked every batch with records sent before the newest empty one, it holds everything
+// we meant to send up to that batch's LastSeq. Monitoring only; a lying peer moves only its own numbers.
+func (s *session) creditEmpty() {
+	s.mu.Lock()
+	to, need := s.emptyTo, s.emptyNeed
+	s.mu.Unlock()
+	if to > 0 {
+		s.r.noteAckedIf(s.peer, need, to)
 	}
 }
 

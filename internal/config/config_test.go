@@ -194,3 +194,23 @@ func TestIPLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricsListen(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.Metrics.Listen != "127.0.0.1:9477" {
+		t.Fatalf("default: %q %v", c.Metrics.Listen, err)
+	}
+	for _, ok := range []string{"off", "[::1]:9000", "127.0.0.1:9478", "127.0.0.2:9477"} {
+		c, err := Load(write(t, valid+"[metrics]\nlisten = \""+ok+"\"\n"))
+		if err != nil || c.Metrics.Listen != ok {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	// never on a public address (D119): refuse the config instead of opening it
+	for _, bad := range []string{"0.0.0.0:9477", "203.0.113.5:9477", ":9477", "[::]:9477", "localhost:9477", "127.0.0.1", "nonsense"} {
+		_, err := Load(write(t, valid+"[metrics]\nlisten = \""+bad+"\"\n"))
+		if err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}

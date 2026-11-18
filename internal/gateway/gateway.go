@@ -69,6 +69,17 @@ func (g *Gateway) snapshot() []*session {
 	return out
 }
 
+// Sessions counts connected client sessions and the logged-in ones among them (monitoring, D119).
+func (g *Gateway) Sessions() (all, loggedIn int) {
+	for _, s := range g.snapshot() {
+		all++
+		if s.loggedIn() {
+			loggedIn++
+		}
+	}
+	return all, loggedIn
+}
+
 func (g *Gateway) add(s *session)    { g.mu.Lock(); g.sessions[s] = struct{}{}; g.mu.Unlock() }
 func (g *Gateway) remove(s *session) { g.mu.Lock(); delete(g.sessions, s); g.mu.Unlock() }
 

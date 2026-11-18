@@ -624,3 +624,127 @@ func TestImportRecordFromStdin(t *testing.T) {
 		t.Fatalf("output %q", out.String())
 	}
 }
+
+// The running node writes status.json and serves /metrics on loopback; `otter-node status` reads only the file (D119).
+func TestStatusAndMetrics(t *testing.T) {
+	cfg, manifest, _, _, _ := testNode(t)
+	mport := freePort(t)
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(f, "[metrics]\nlisten = %q\n", mport)
+	f.Close()
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"import", "--config", cfg, manifest}, &out); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	logs := &syncBuf{}
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, []string{"run", "--config", cfg}, logs) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("run did not stop")
+		}
+	}()
+	sp := filepath.Join(filepath.Dir(cfg), "data", "status.json")
+	var fi os.FileInfo
+	for i := 0; i < 250; i++ {
+		if fi, err = os.Stat(sp); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("no status.json: %v\nlogs: %s", err, logs.String())
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("status.json mode %v", fi.Mode())
+	}
+	var body string
+	for i := 0; i < 250; i++ {
+		resp, err := http.Get("http://" + mport + "/metrics")
+		if err == nil {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				body = string(b)
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, want := range []string{"otter_up 1", `otter_build_info{version="dev"} 1`, "otter_disk_free_bytes ", "otter_oplog_seq 1"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics lack %q:\n%s\nlogs: %s", want, body, logs.String())
+		}
+	}
+
+	out.Reset()
+	if err := run(context.Background(), []string{"status", "--config", cfg, "--line"}, &out); err != nil {
+		t.Fatalf("status: %v %s", err, out.String())
+	}
+	if !strings.HasPrefix(out.String(), "peers=0/0 lag=0s backlog=0 disk=ok ") || strings.Contains(out.String(), "! ") {
+		t.Fatalf("line: %q", out.String())
+	}
+	out.Reset()
+	if err := run(context.Background(), []string{"status", "--config", cfg}, &out); err != nil ||
+		!strings.HasPrefix(out.String(), "otter-node dev, up ") {
+		t.Fatalf("status: %v %q", err, out.String())
+	}
+	out.Reset()
+	if err := run(context.Background(), []string{"status", "--config", cfg, "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var js struct {
+		Version  string   `json:"version"`
+		Problems []string `json:"problems"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &js); err != nil || js.Version != "dev" || js.Problems == nil {
+		t.Fatalf("json: %v %s", err, out.String())
+	}
+
+	// problems: printed as "! " lines and exit code 2 (status.sh shows them and fails)
+	s, _ := os.ReadFile(sp)
+	var raw map[string]any
+	json.Unmarshal(s, &raw)
+	raw["at_ms"] = time.Now().Add(-5 * time.Minute).UnixMilli()
+	raw["disk_level"] = "critical"
+	stale, _ := json.Marshal(raw)
+	other := filepath.Join(t.TempDir(), "node.toml")
+	odata := filepath.Join(filepath.Dir(other), "data")
+	cb, _ := os.ReadFile(cfg)
+	os.WriteFile(other, bytes.Replace(cb, []byte(filepath.Join(filepath.Dir(cfg), "data")), []byte(odata), 1), 0o600)
+	os.MkdirAll(odata, 0o700)
+	out.Reset()
+	err = run(context.Background(), []string{"status", "--config", other, "--line"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "no status from the running node") {
+		t.Fatalf("missing file: %v", err)
+	}
+	os.WriteFile(filepath.Join(odata, "status.json"), stale, 0o600)
+	out.Reset()
+	err = run(context.Background(), []string{"status", "--config", other, "--line"}, &out)
+	var ec exitCode
+	if !errors.As(err, &ec) || ec != 2 {
+		t.Fatalf("problems: %v", err)
+	}
+	if !strings.Contains(out.String(), "\n! status is 5m old: is otter-node running?\n") || !strings.Contains(out.String(), "\n! disk critical: ") {
+		t.Fatalf("problem lines: %q", out.String())
+	}
+}
+
+// /metrics never listens anywhere but loopback: a config asking for more does not start.
+func TestMetricsRefusesPublicAddress(t *testing.T) {
+	cfg, _, _, _, _ := testNode(t)
+	f, _ := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0)
+	fmt.Fprintf(f, "[metrics]\nlisten = \"0.0.0.0:9477\"\n")
+	f.Close()
+	err := run(context.Background(), []string{"run", "--config", cfg}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("got %v", err)
+	}
+}

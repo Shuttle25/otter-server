@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Adds a node to the network and installs it; safe to re-run after a failure (docs/11 §8).
+# Adds a node to the network and installs it; safe to re-run after a failure (docs/11 §11, §14).
 # Usage: add-node.sh LABEL ROOT@HOST --ip IP [--ip IP]... [--domain NAME] [--wss-port PORT] [--ssh-port N] [--version V]
 #        [--dial-out-only|--no-dial-out-only]   (asked on a terminal when neither is given; default No)
 source "$(dirname "$0")/lib.sh"

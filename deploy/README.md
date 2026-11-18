@@ -3,6 +3,8 @@
 The full procedure (requirements, DNS, security checklist) is in the project docs: `docs/11-deployment.md`.
 Every script prints its actions (`==> …`) and stops at the first error.
 First real deployment step by step (what gets installed, every command): [FIRST-DEPLOY.md](FIRST-DEPLOY.md).
+A new network with three nodes, every command with its expected output: `docs/11-deployment.md` §14; security
+checklist (firewall table incl. TURN, SSH, updates, shared hosts, sandbox): `docs/11-deployment.md` §8.
 
 ## Build
 
@@ -13,7 +15,8 @@ make release VERSION=1.2.0      # dist/otter-node_1.2.0_linux_{amd64,arm64}, dis
 
 ## New node
 
-First node of a **new** network: follow [FIRST-DEPLOY.md](FIRST-DEPLOY.md). Every further node is one command:
+First node of a **new** network: follow [FIRST-DEPLOY.md](FIRST-DEPLOY.md) (or `docs/11-deployment.md` §14 for three
+nodes at once). Every further node is one command:
 
 ```bash
 deploy/add-node.sh fi-2 root@198.51.100.20 --ip 198.51.100.20 [--domain chat2.example.org]
@@ -48,6 +51,8 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
 | Push wake-ups | `deploy/push-key.sh fi-1 ~/fcm.json` → `otter-admin node set-push --label fi-1` → `manifest sign` + `manifest publish` |
 | No backups at rest (e.g. a node in Russia, D113) | `otter-admin node set-no-backups --label L [--off]` → `manifest sign` + `manifest publish` (nodes ≥ 0.10.0). The node then answers restores with "unavailable", gets no backups from peers, and deletes what phones upload to it once `min(2, other nodes)` nodes without the flag hold it |
+| Health on one server | `ssh root@fi-1 otter-node status --config /etc/otter/node.toml [--line\|--json]` (reads only `/var/lib/otter/status.json`, written every 15 s; exit 0 healthy, 2 problems as `! ` lines, 1 no status; D119) |
+| Metrics (loopback only) | `ssh root@fi-1 'curl -s 127.0.0.1:9477/metrics'` (`[metrics] listen`, default `127.0.0.1:9477`, `"off"` disables; never open 9477 in a firewall) |
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` (7 copies, 0600 in the 0700 `/var/backups/otter`) |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 

@@ -113,6 +113,8 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 	}
 	svc.Apks = apks
 	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes}
+	svc.Disk = &service.DiskGuard{Dir: cfg.DataDir, Floor: cfg.DiskFloorBytes} // D118
+	svc.Disk.Check()
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
 }
 
@@ -338,6 +340,7 @@ func serve(ctx context.Context, a *app) error {
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go repl.RunBackupHandoff(ctx) // D113: only acts while this node is marked no_backups
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
+	go a.svc.Disk.Run(ctx, 10*time.Second, a.log) // D118: re-measure free space, log level changes
 	// before serving: sessions read svc.Turn without a lock
 	if a.cfg.TurnEnabled() {
 		if ts, iss, err := startTurn(a); err != nil {

@@ -79,6 +79,18 @@ func TestLimits(t *testing.T) {
 	if err != nil || c.UserQuotaBytes != 1<<20 || c.MaxBlobBytes != 500_000 || c.BlobBytesPerSec != 0 {
 		t.Fatalf("set: %d %d %d %v", c.UserQuotaBytes, c.MaxBlobBytes, c.BlobBytesPerSec, err)
 	}
+	if c.DiskFloorBytes != 1<<30 {
+		t.Fatalf("disk_floor default: %d", c.DiskFloorBytes)
+	}
+	for in, want := range map[string]int64{"2GiB": 2 << 30, "0": 0} {
+		c, err = Load(write(t, valid+"[limits]\ndisk_floor = \""+in+"\"\n"))
+		if err != nil || c.DiskFloorBytes != want {
+			t.Fatalf("disk_floor %q: %d %v", in, c.DiskFloorBytes, err)
+		}
+	}
+	if _, err := Load(write(t, valid+"[limits]\ndisk_floor = \"lots\"\n")); err == nil || !strings.Contains(err.Error(), "limits.disk_floor") {
+		t.Fatalf("bad disk_floor: %v", err)
+	}
 	for _, bad := range []string{
 		"[limits]\nuser_quota = \"lots\"\n", "[limits]\nmax_blob = \"200MiB\"\n", "[limits]\nmax_blob = \"-1MiB\"\n",
 		"[replication]\nblob_bandwidth = \"2MB\"\n",

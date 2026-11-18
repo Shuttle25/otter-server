@@ -15,6 +15,9 @@ import (
 // Returns ErrRetryLater if the author is not known yet (its directory entry hasn't arrived);
 // a PREKEY_CONSUMED from a node outside our manifest is skipped instead.
 func (s *Service) ApplyReplicated(ctx context.Context, from []byte, rec *pb.Record) (bool, error) {
+	if err := s.diskRefuses(DiskFull); err != nil { // the session stops without advancing its cursor (D118)
+		return false, err
+	}
 	body, err := s.validator(nil).Validate(rec)
 	switch {
 	case errors.Is(err, records.ErrUnknownAuthor) && isPrekeyConsumed(rec):

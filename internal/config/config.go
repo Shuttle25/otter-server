@@ -26,10 +26,11 @@ type Mesh struct {
 	AllowPlain bool `toml:"allow_plain"`
 }
 
-// Limits for blobs (D44); sizes like "2GiB", "100MiB", "500KB".
+// Limits for blobs (D44) and the disk floor (D118); sizes like "2GiB", "100MiB", "500KB".
 type Limits struct {
 	UserQuota string `toml:"user_quota"`
 	MaxBlob   string `toml:"max_blob"`
+	DiskFloor string `toml:"disk_floor"` // free space under data_dir; "0" = only the 64 MiB reserve
 }
 
 // Replication tuning; blob_bandwidth like "2MB/s", "0" = unlimited.
@@ -93,6 +94,7 @@ type Config struct {
 	UserQuotaBytes  int64 `toml:"-"`
 	MaxBlobBytes    int64 `toml:"-"`
 	BlobBytesPerSec int64 `toml:"-"` // 0 = unlimited
+	DiskFloorBytes  int64 `toml:"-"` // 0 = no low/critical levels (D118)
 }
 
 func Load(path string) (*Config, error) {
@@ -133,6 +135,9 @@ func (c *Config) validate() error {
 	}
 	if c.MaxBlobBytes, err = sizeOr(c.Limits.MaxBlob, "100MiB"); err != nil {
 		return fmt.Errorf("config: limits.max_blob: %w", err)
+	}
+	if c.DiskFloorBytes, err = sizeOr(c.Limits.DiskFloor, "1GiB"); err != nil {
+		return fmt.Errorf("config: limits.disk_floor: %w", err)
 	}
 	if c.MaxBlobBytes > MaxBlobLimit {
 		return fmt.Errorf("config: limits.max_blob is above the protocol limit of 100MiB")

@@ -17,8 +17,23 @@ import (
 // submitRates: records per author per hour accepted from clients (C8, D107); replication is bounded by the budgets.
 var submitRates = map[pb.RecordType]int{pb.RecordType_PREKEYS: 20, pb.RecordType_PUSH_TOKEN: 30}
 
+// freesSpace: acks let the node drop delivered envelopes and fetched blobs, so they pass even at a critical disk level.
+func freesSpace(allowed []pb.RecordType) bool {
+	for _, t := range allowed {
+		if t != pb.RecordType_ACK && t != pb.RecordType_BLOB_FETCHED {
+			return false
+		}
+	}
+	return len(allowed) > 0
+}
+
 // Submit validates and applies a client-authored record of one of the allowed types.
 func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allowed ...pb.RecordType) (*pb.RecordBody, error) {
+	if !freesSpace(allowed) {
+		if err := s.diskRefuses(DiskCritical); err != nil { // D118
+			return nil, err
+		}
+	}
 	body, err := s.validator(nil).Validate(rec)
 	if err != nil {
 		return nil, invalid(err)

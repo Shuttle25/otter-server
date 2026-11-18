@@ -12,6 +12,9 @@ import (
 
 // UpdateDirectoryEntry applies a newer version of the caller's own directory entry (profile edit, D39/D40).
 func (s *Service) UpdateDirectoryEntry(ctx context.Context, user []byte, rec *pb.Record) error {
+	if err := s.diskRefuses(DiskCritical); err != nil {
+		return err
+	}
 	body, err := s.validator(nil).Validate(rec)
 	if err != nil {
 		return invalid(err)

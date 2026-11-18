@@ -15,6 +15,9 @@ import (
 // Register creates an account from an invite chain (D100). The INVITE travels inside the entry, so any node can
 // register it, and the link secret never reaches a node. Returns the new user_id.
 func (s *Service) Register(ctx context.Context, req *pb.RegisterRequest) ([]byte, error) {
+	if err := s.diskRefuses(DiskCritical); err != nil {
+		return nil, err
+	}
 	if req.DirectoryEntry == nil || req.Prekeys == nil || req.InviteUsed == nil {
 		return nil, fmt.Errorf("%w: incomplete registration", ErrInvalid)
 	}

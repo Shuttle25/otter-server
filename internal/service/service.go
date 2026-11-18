@@ -75,6 +75,7 @@ type Service struct {
 	Apks        ApkSource    // APK files (D68); nil = apk.get unavailable
 	Turn        TurnIssuer   // TURN credentials (D77); nil = turn.credentials unavailable
 	Limits      Limits
+	Disk        *DiskGuard // free-space floor (D118); nil = no checks
 
 	sweep      chan struct{}
 	mu         sync.RWMutex

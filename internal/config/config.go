@@ -26,10 +26,12 @@ type Mesh struct {
 	AllowPlain bool `toml:"allow_plain"`
 }
 
-// Limits for blobs (D44), the disk floor (D118) and per source IP (D116); sizes like "2GiB", "100MiB", "500KB".
+// Limits for blobs (D44), the disk floor (D118), per source IP (D116) and undelivered messages per author (D117);
+// sizes like "2GiB", "100MiB", "500KB".
 type Limits struct {
 	UserQuota     string `toml:"user_quota"`
 	MaxBlob       string `toml:"max_blob"`
+	UserPending   string `toml:"user_pending"`    // undelivered envelope bytes per author; "0" = no cap
 	DiskFloor     string `toml:"disk_floor"`      // free space under data_dir; "0" = only the 64 MiB reserve
 	ConnsPerIP    int    `toml:"conns_per_ip"`    // concurrent connections per source; 0 = 32
 	RequestsPerIP int    `toml:"requests_per_ip"` // client requests per second per source (burst 10×); 0 = 50
@@ -93,10 +95,11 @@ type Config struct {
 	Turn         Turn        `toml:"turn"`
 
 	// parsed by Load
-	UserQuotaBytes  int64 `toml:"-"`
-	MaxBlobBytes    int64 `toml:"-"`
-	BlobBytesPerSec int64 `toml:"-"` // 0 = unlimited
-	DiskFloorBytes  int64 `toml:"-"` // 0 = no low/critical levels (D118)
+	UserQuotaBytes   int64 `toml:"-"`
+	MaxBlobBytes     int64 `toml:"-"`
+	BlobBytesPerSec  int64 `toml:"-"` // 0 = unlimited
+	DiskFloorBytes   int64 `toml:"-"` // 0 = no low/critical levels (D118)
+	UserPendingBytes int64 `toml:"-"` // 0 = no cap (D117)
 }
 
 func Load(path string) (*Config, error) {
@@ -140,6 +143,9 @@ func (c *Config) validate() error {
 	}
 	if c.DiskFloorBytes, err = sizeOr(c.Limits.DiskFloor, "1GiB"); err != nil {
 		return fmt.Errorf("config: limits.disk_floor: %w", err)
+	}
+	if c.UserPendingBytes, err = sizeOr(c.Limits.UserPending, "256MiB"); err != nil {
+		return fmt.Errorf("config: limits.user_pending: %w", err)
 	}
 	if c.Limits.ConnsPerIP < 0 || c.Limits.RequestsPerIP < 0 {
 		return fmt.Errorf("config: limits.conns_per_ip and limits.requests_per_ip must not be negative")

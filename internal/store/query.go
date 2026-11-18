@@ -218,3 +218,15 @@ func (s *Store) RecordKeys(ctx context.Context) ([][]byte, error) {
 	}
 	return out, rows.Err()
 }
+
+// pendingQuery: the (type, author) lookup uses records_type_author (0013), so no index of its own is needed.
+const pendingQuery = `SELECT COALESCE(SUM(length(raw)),0) FROM records
+	WHERE author=? AND type=? AND (expires_ms = 0 OR expires_ms > ?)`
+
+// PendingEnvelopeBytes is the size of the author's ENVELOPE records still stored here: not yet acked by every
+// recipient device and not expired (D117).
+func (s *Store) PendingEnvelopeBytes(ctx context.Context, author []byte) (int64, error) {
+	var n int64
+	err := s.r.QueryRowContext(ctx, pendingQuery, author, int32(pb.RecordType_ENVELOPE), s.now().UnixMilli()).Scan(&n)
+	return n, err
+}

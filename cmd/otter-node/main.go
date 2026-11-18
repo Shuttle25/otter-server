@@ -113,7 +113,7 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 		return nil, err
 	}
 	svc.Apks = apks
-	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes}
+	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes, UserPending: cfg.UserPendingBytes}
 	svc.Disk = &service.DiskGuard{Dir: cfg.DataDir, Floor: cfg.DiskFloorBytes} // D118
 	svc.Disk.Check()
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
@@ -313,6 +313,7 @@ func serve(ctx context.Context, a *app) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)
+	a.svc.Rejected = gw.Rejected // one counter set: otter_rejected_total{kind} (D116, D117, D118)
 	if a.cfg.PushEnabled() {
 		raw, err := os.ReadFile(a.cfg.Push.FCMCredentials)
 		if err != nil {

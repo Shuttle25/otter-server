@@ -16,10 +16,11 @@ import (
 	"ottermsg/server/internal/store"
 )
 
-// Limits for blobs (D44), from the node config.
+// Limits for blobs (D44) and undelivered messages (D117), from the node config.
 type Limits struct {
-	UserQuota int64 // live blob bytes per author
-	MaxBlob   int64
+	UserQuota   int64 // live blob bytes per author
+	MaxBlob     int64
+	UserPending int64 // undelivered envelope bytes per author submitted here (D117); 0 = no cap
 }
 
 // ChunkFetcher asks connected peers for a chunk this node lacks (the replicator).

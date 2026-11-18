@@ -131,6 +131,9 @@ var errDiskLow = fmt.Errorf("%w: node storage low", ErrRetryLater)
 // diskRefuses returns ErrRetryLater when free space has fallen to level `at` or below it (D118).
 func (s *Service) diskRefuses(at DiskLevel) error {
 	if s.Disk.Level() >= at {
+		if s.Rejected != nil {
+			s.Rejected.Disk.Add(1)
+		}
 		return errDiskLow
 	}
 	return nil

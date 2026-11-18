@@ -88,6 +88,18 @@ func TestLimits(t *testing.T) {
 			t.Fatalf("disk_floor %q: %d %v", in, c.DiskFloorBytes, err)
 		}
 	}
+	if c.UserPendingBytes != 256<<20 {
+		t.Fatalf("user_pending default: %d", c.UserPendingBytes)
+	}
+	for in, want := range map[string]int64{"64MiB": 64 << 20, "0": 0} {
+		c, err = Load(write(t, valid+"[limits]\nuser_pending = \""+in+"\"\n"))
+		if err != nil || c.UserPendingBytes != want {
+			t.Fatalf("user_pending %q: %d %v", in, c.UserPendingBytes, err)
+		}
+	}
+	if _, err := Load(write(t, valid+"[limits]\nuser_pending = \"lots\"\n")); err == nil || !strings.Contains(err.Error(), "limits.user_pending") {
+		t.Fatalf("bad user_pending: %v", err)
+	}
 	if _, err := Load(write(t, valid+"[limits]\ndisk_floor = \"lots\"\n")); err == nil || !strings.Contains(err.Error(), "limits.disk_floor") {
 		t.Fatalf("bad disk_floor: %v", err)
 	}

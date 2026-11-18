@@ -113,3 +113,44 @@ func TestTunnelSessionsKeyedByRelay(t *testing.T) {
 		t.Fatalf("another relay refused: %s", msg)
 	}
 }
+
+// A logged-in member floods write calls: after the burst they are refused, reads still pass (D116).
+func TestUserWriteRate(t *testing.T) {
+	n := startNode(t, func(g *Gateway) { g.UserWrites = limits.NewKeyed(0.001, 3) })
+	anna, _ := newTestUser(t, n, "anna")
+	boris, cb := newTestUser(t, n, "boris")
+	login(t, cb, boris)
+	send := func() (pb.Status, string) {
+		env := sign(t, pb.RecordType_ENVELOPE, boris.id, &pb.Envelope{SenderUser: boris.id, SenderDevice: 1, Kind: pb.Envelope_SIGNAL,
+			Recipients: []*pb.Recipient{{User: anna.id, Device: 1, Content: []byte("hi")}}}, boris.priv)
+		return cb.call("msg.send", &pb.RecordRequest{Record: env}, nil)
+	}
+	for i := 0; i < 3; i++ {
+		if st, msg := send(); st != pb.Status_STATUS_OK {
+			t.Fatalf("send %d: %v %s", i, st, msg)
+		}
+	}
+	if st, msg := send(); !tooMany(st, msg) {
+		t.Fatalf("4th send: %v %s", st, msg)
+	}
+	if st, msg := cb.call("directory.sync", &pb.Empty{}, nil); st != pb.Status_STATUS_OK {
+		t.Fatalf("read after the write limit: %v %s", st, msg)
+	}
+	if gw := n.svc.Notify.(*Gateway); gw.Rejected.UserRate.Load() != 1 {
+		t.Fatalf("counters %+v", gw.Rejected.Map())
+	}
+}
+
+// Over the undelivered quota msg.send answers STATUS_QUOTA (D117).
+func TestUndeliveredQuotaStatus(t *testing.T) {
+	n := startNode(t)
+	n.svc.Limits.UserPending = 1000
+	anna, _ := newTestUser(t, n, "anna")
+	boris, cb := newTestUser(t, n, "boris")
+	login(t, cb, boris)
+	env := sign(t, pb.RecordType_ENVELOPE, boris.id, &pb.Envelope{SenderUser: boris.id, SenderDevice: 1, Kind: pb.Envelope_SIGNAL,
+		Recipients: []*pb.Recipient{{User: anna.id, Device: 1, Content: make([]byte, 2000)}}}, boris.priv)
+	if st, msg := cb.call("msg.send", &pb.RecordRequest{Record: env}, nil); st != pb.Status_STATUS_QUOTA {
+		t.Fatalf("over the quota: %v %s", st, msg)
+	}
+}

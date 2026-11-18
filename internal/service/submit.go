@@ -70,6 +70,21 @@ func (s *Service) Submit(ctx context.Context, user []byte, rec *pb.Record, allow
 				return nil, fmt.Errorf("%w: recipient %x", ErrNotFound, r.User)
 			}
 		}
+		if s.Limits.UserPending > 0 { // D117: only on submit; replicated envelopes are bounded by the disk floor
+			mu := &s.pendingMu[user[0]&63] // check and apply as one step per author on this node
+			mu.Lock()
+			defer mu.Unlock() // held across ApplyFrom below
+			used, err := s.Store.PendingEnvelopeBytes(ctx, user)
+			if err != nil {
+				return nil, err
+			}
+			if used+int64(len(rec.Body)) > s.Limits.UserPending {
+				if s.Rejected != nil {
+					s.Rejected.Pending.Add(1)
+				}
+				return nil, fmt.Errorf("%w: %d of %d bytes of undelivered messages", ErrQuota, used, s.Limits.UserPending)
+			}
+		}
 	case pb.RecordType_INVITE:
 		var inv pb.Invite
 		if err := proto.Unmarshal(body.Payload, &inv); err != nil || len(inv.RedeemPub) != ed25519.PublicKeySize {

@@ -91,6 +91,8 @@ for v in a b; do
   vm $v ssh "runuser -u otter -- /usr/local/bin/otter-node status --config /etc/otter/node.toml --line; [ \$? -ne 1 ]" ||
     fail "$v: no status.json under the sandbox"
   vm $v ssh "systemctl start otter-backup.service && ls /var/backups/otter/node-*.db >/dev/null" || fail "$v: backup unit"
-  vm $v ssh 'bash -s' < deploy/bundle/harden-report.sh | grep -q '^PASS sandbox' || fail "$v: harden report"
+  # the report exits 1 on any FAIL (a test VM has no firewall or unattended-upgrades); only the sandbox line matters here
+  report=$(vm $v ssh 'bash -s' < deploy/bundle/harden-report.sh || true); echo "$report"
+  grep -q '^PASS sandbox' <<< "$report" || fail "$v: harden report"
 done
 printf '\ne2e-mesh: all steps passed\n'

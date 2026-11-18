@@ -165,3 +165,20 @@ vless_uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
 		t.Fatalf("no [reality]: %v", err)
 	}
 }
+
+// D116: per-IP limits default to 32 connections and 50 requests/s; 0 = default, negative is refused.
+func TestIPLimits(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.ConnsPerIP() != 32 || c.RequestsPerIP() != 50 {
+		t.Fatalf("defaults: %d %d %v", c.ConnsPerIP(), c.RequestsPerIP(), err)
+	}
+	c, err = Load(write(t, valid+"[limits]\nconns_per_ip = 8\nrequests_per_ip = 200\n"))
+	if err != nil || c.ConnsPerIP() != 8 || c.RequestsPerIP() != 200 {
+		t.Fatalf("set: %d %d %v", c.ConnsPerIP(), c.RequestsPerIP(), err)
+	}
+	for _, bad := range []string{"[limits]\nconns_per_ip = -1\n", "[limits]\nrequests_per_ip = -5\n"} {
+		if _, err := Load(write(t, valid+bad)); err == nil || !strings.Contains(err.Error(), "limits.") {
+			t.Errorf("accepted %q: %v", bad, err)
+		}
+	}
+}

@@ -83,7 +83,10 @@ type mesh struct {
 	cancel  context.CancelFunc
 }
 
-func newMesh(t *testing.T, n int, gated bool) *mesh {
+func newMesh(t *testing.T, n int, gated bool) *mesh { return newMeshWrapped(t, n, gated, nil) }
+
+// newMeshWrapped lets wrap (nil = none) mount more routes on a node's mux and put a handler in front of it.
+func newMeshWrapped(t *testing.T, n int, gated bool, wrap func(*tnode, *http.ServeMux) http.Handler) *mesh {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	m := &mesh{t: t, netPub: pub, netPriv: priv}
 	if gated {
@@ -104,7 +107,11 @@ func newMesh(t *testing.T, n int, gated bool) *mesh {
 		nd.repl = New(svc, nd.gate, quiet)
 		mux := http.NewServeMux()
 		mux.Handle("/x/peer", nd.repl)
-		nd.srv = httptest.NewServer(mux)
+		var h http.Handler = mux
+		if wrap != nil {
+			h = wrap(nd, mux)
+		}
+		nd.srv = httptest.NewServer(h)
 		u, _ := url.Parse(nd.srv.URL)
 		port, _ := strconv.Atoi(u.Port())
 		infos = append(infos, &pb.NodeInfo{NodeId: nd.id, NodePub: k.Public().(ed25519.PublicKey), Label: fmt.Sprintf("n%d", i),

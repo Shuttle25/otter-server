@@ -26,11 +26,13 @@ type Mesh struct {
 	AllowPlain bool `toml:"allow_plain"`
 }
 
-// Limits for blobs (D44) and the disk floor (D118); sizes like "2GiB", "100MiB", "500KB".
+// Limits for blobs (D44), the disk floor (D118) and per source IP (D116); sizes like "2GiB", "100MiB", "500KB".
 type Limits struct {
-	UserQuota string `toml:"user_quota"`
-	MaxBlob   string `toml:"max_blob"`
-	DiskFloor string `toml:"disk_floor"` // free space under data_dir; "0" = only the 64 MiB reserve
+	UserQuota     string `toml:"user_quota"`
+	MaxBlob       string `toml:"max_blob"`
+	DiskFloor     string `toml:"disk_floor"`      // free space under data_dir; "0" = only the 64 MiB reserve
+	ConnsPerIP    int    `toml:"conns_per_ip"`    // concurrent connections per source; 0 = 32
+	RequestsPerIP int    `toml:"requests_per_ip"` // client requests per second per source (burst 10×); 0 = 50
 }
 
 // Replication tuning; blob_bandwidth like "2MB/s", "0" = unlimited.
@@ -139,6 +141,9 @@ func (c *Config) validate() error {
 	if c.DiskFloorBytes, err = sizeOr(c.Limits.DiskFloor, "1GiB"); err != nil {
 		return fmt.Errorf("config: limits.disk_floor: %w", err)
 	}
+	if c.Limits.ConnsPerIP < 0 || c.Limits.RequestsPerIP < 0 {
+		return fmt.Errorf("config: limits.conns_per_ip and limits.requests_per_ip must not be negative")
+	}
 	if c.MaxBlobBytes > MaxBlobLimit {
 		return fmt.Errorf("config: limits.max_blob is above the protocol limit of 100MiB")
 	}
@@ -219,6 +224,22 @@ func (c *Config) validateTurn() error {
 		return fmt.Errorf("config: turn.tls_listen needs [wss] tls_cert/tls_key")
 	}
 	return nil
+}
+
+// ConnsPerIP is [limits] conns_per_ip, default 32 (D116).
+func (c *Config) ConnsPerIP() int {
+	if c.Limits.ConnsPerIP == 0 {
+		return 32
+	}
+	return c.Limits.ConnsPerIP
+}
+
+// RequestsPerIP is [limits] requests_per_ip, default 50 per second (D116).
+func (c *Config) RequestsPerIP() int {
+	if c.Limits.RequestsPerIP == 0 {
+		return 50
+	}
+	return c.Limits.RequestsPerIP
 }
 
 // TurnEnabled reports whether the embedded TURN relay is on ([turn] enabled = true).

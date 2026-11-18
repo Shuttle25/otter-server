@@ -29,6 +29,7 @@ import (
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/limits"
 	"ottermsg/server/internal/netlog"
 	"ottermsg/server/internal/nodecheck"
 	"ottermsg/server/internal/probe"
@@ -354,6 +355,12 @@ func serve(ctx context.Context, a *app) error {
 	}
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
 	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"), http.HandlerFunc(repl.ServeTunnel))
+	// D116: per source IP on the public listener (clients, peers, tunnels, the decoy site). The REALITY inner server
+	// (loopback) and relayed restore streams (limited by the relay, keyed "tunnel:<relay>" in the gateway) are not wrapped.
+	rpi := float64(a.cfg.RequestsPerIP())
+	gw.IPRequests = limits.NewKeyed(rpi, 10*rpi)
+	conns := &limits.Conns{PerIP: a.cfg.ConnsPerIP(), Rate: limits.NewKeyed(30.0/60, 20), Count: gw.Rejected, ExemptLoopback: true}
+	srv.Handler = conns.Wrap(srv.Handler)
 	errc := make(chan error, 2)
 	go func() { errc <- wss.Serve(srv, wcfg) }()
 	if a.cfg.WSS.TLSCert != "" { // D114: restore streams relayed by a node marked no_backups end here, under our WSS certificate

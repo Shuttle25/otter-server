@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
+	"ottermsg/server/internal/limits"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/service"
 )
@@ -23,6 +24,8 @@ const (
 	deliverBatch      = 100
 	deliverBatchBytes = 768 << 10 // one envelopes event; phones refuse frames over 4 MiB (D93)
 	writeTimeout      = 10 * time.Second
+	// DefaultRequestsPerIP: requests per second of one source on client sessions, burst 10× (D116)
+	DefaultRequestsPerIP = 50
 )
 
 type Gateway struct {
@@ -34,6 +37,13 @@ type Gateway struct {
 	PingInterval time.Duration
 	PingTimeout  time.Duration
 
+	// Limits (D116). IPRequests: all requests of a source (limits.Source: IPv4, IPv6 /64, or a relayed restore's
+	// "tunnel:<node>"); IPPublic: the unauthenticated methods in publicLimited; UserWrites: write methods per
+	// logged-in user (Task 63). Loopback (REALITY's inner listener) is exempt unless ExemptLoopback is false (tests).
+	IPRequests, IPPublic, UserWrites *limits.Keyed
+	Rejected                         *limits.Counters
+	ExemptLoopback                   bool
+
 	svc      *service.Service
 	log      *slog.Logger
 	mu       sync.Mutex
@@ -42,6 +52,8 @@ type Gateway struct {
 
 func New(svc *service.Service, log *slog.Logger) *Gateway {
 	g := &Gateway{PingInterval: 30 * time.Second, PingTimeout: 60 * time.Second,
+		IPRequests: limits.NewKeyed(DefaultRequestsPerIP, 10*DefaultRequestsPerIP), IPPublic: limits.NewKeyed(20.0/60, 20),
+		UserWrites: limits.NewKeyed(1, 300), Rejected: &limits.Counters{}, ExemptLoopback: true,
 		svc: svc, log: log, sessions: map[*session]struct{}{}}
 	svc.Notify = g
 	return g
@@ -139,6 +151,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s := &session{g: g, conn: c, out: make(chan *pb.Frame, 64), wake: make(chan struct{}, 1), nonce: nonce, ctx: ctx, cancel: cancel,
 		source:  service.SourceOf(r.RemoteAddr),
 		blobSem: make(chan struct{}, 4)}
+	if ip := limits.ClientIP(r); !(g.ExemptLoopback && limits.IsLoopback(ip)) {
+		s.ip = ip
+	}
 	defer func() {
 		cancel()
 		g.remove(s)

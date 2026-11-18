@@ -17,6 +17,8 @@ site_dir = "/var/lib/otter/site"
 # user_quota = "2GiB"     # live blobs per member
 # max_blob   = "100MiB"   # one blob (protocol maximum)
 # disk_floor = "1GiB"     # free space; below: no photos/backups; below 1/4: no messages either (D118)
+# conns_per_ip    = 32    # concurrent connections per source address (IPv6: per /64); loopback exempt (D116)
+# requests_per_ip = 50    # client requests per second per source, burst 10x (D116)
 #
 # [replication]
 # blob_bandwidth = "2MB/s"  # background chunk pulls from peers; "0" = unlimited

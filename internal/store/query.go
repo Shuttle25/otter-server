@@ -218,3 +218,24 @@ func (s *Store) RecordKeys(ctx context.Context) ([][]byte, error) {
 	}
 	return out, rows.Err()
 }
+
+// pendingQuery: the (type, author) lookup uses records_type_author (0013), so no index of its own is needed.
+const pendingQuery = `SELECT COALESCE(SUM(length(raw)),0) FROM records
+	WHERE author=? AND type=? AND (expires_ms = 0 OR expires_ms > ?)`
+
+// PendingEnvelopeBytes is the size of the author's ENVELOPE records still stored here: not yet acked by every
+// recipient device and not expired (D117).
+func (s *Store) PendingEnvelopeBytes(ctx context.Context, author []byte) (int64, error) {
+	var n int64
+	err := s.r.QueryRowContext(ctx, pendingQuery, author, int32(pb.RecordType_ENVELOPE), s.now().UnixMilli()).Scan(&n)
+	return n, err
+}
+
+// OplogAfter counts the oplog entries after seq that can still be sent (their record is stored) and returns the
+// received_ms of the oldest of them: a peer's backlog and lag (D119). Rows of records deleted since (delivered
+// envelopes, replaced tokens) wait for the janitor and are not counted. At most 1,000,000 rows are counted.
+func (s *Store) OplogAfter(ctx context.Context, seq int64) (n, oldestMs int64, err error) {
+	err = s.r.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(received_ms), 0) FROM (SELECT o.received_ms FROM oplog o
+		JOIN records r ON r.record_key=o.record_key WHERE o.seq>? ORDER BY o.seq LIMIT 1000000)`, seq).Scan(&n, &oldestMs)
+	return n, oldestMs, err
+}

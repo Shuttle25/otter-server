@@ -145,6 +145,9 @@ func (s *Service) BackupFetch(ctx context.Context, username, source string, secr
 
 // PublishBackup stores a BACKUP_META whose blob is one of the author's persistent blobs.
 func (s *Service) PublishBackup(ctx context.Context, user []byte, rec *pb.Record) error {
+	if err := s.diskRefuses(DiskLow); err != nil {
+		return err
+	}
 	body, err := s.validator(nil).Validate(rec)
 	if err != nil {
 		return invalid(err)

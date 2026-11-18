@@ -47,7 +47,7 @@ if [[ -x /usr/local/bin/otter-node ]] && ! cmp -s "otter-node-$arch" /usr/local/
   cp -p /usr/local/bin/otter-node /usr/local/bin/otter-node.prev
 fi
 install -o root -g root -m 0755 "otter-node-$arch" /usr/local/bin/otter-node
-install -o root -g root -m 0755 install.sh uninstall.sh backup.sh health.sh /usr/local/lib/otter/
+install -o root -g root -m 0755 install.sh uninstall.sh backup.sh health.sh harden-report.sh /usr/local/lib/otter/
 install -o root -g root -m 0644 otter-node.service otter-backup.service otter-backup.timer /etc/systemd/system/
 
 turn=0; if grep -q '^\[turn\]' /etc/otter/node.toml; then turn=1; fi

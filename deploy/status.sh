@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # One row per node: reachability, version, health, database counts (+ TURN allocations), disk, push, TURN relay
 # (on/off; "-" = no [turn] in node.toml, e.g. nodes below 0.8.0); then each node's last 5
-# connectivity log lines (otter-node netlog, 0.7.0+; older nodes print none). Usage: status.sh
+# connectivity log lines (otter-node netlog, 0.7.0+; older nodes print none); then each node's health line and
+# problems (otter-node status, 0.10.1+; older nodes get a note). Exit 1 when a node is unreachable, not active,
+# fails the hello probe or reports a problem ("! " line). Usage: status.sh
 source "$(dirname "$0")/lib.sh"
 bad=0
 netlogs=""
+health=""
 printf '%-12s %-22s %-10s %-6s %-8s %-48s %-6s %-6s %s\n' LABEL TARGET VERSION HELLO SERVICE STATS DISK PUSH TURN
 for label in $(node_labels); do
   node_env "$label"
@@ -24,11 +27,22 @@ for label in $(node_labels); do
            journalctl -u otter-node -b --no-pager -o cat 2>/dev/null | grep -oE "\"msg\":\"turn o(n|ff)" | tail -n1 |
              grep -q "on\$" && echo on || echo off;
          else echo -; fi;
+         echo --status--; runuser -u otter -- /usr/local/bin/otter-node status --config /etc/otter/node.toml --line 2>/dev/null || true;
          echo --netlog--; runuser -u otter -- /usr/local/bin/otter-node netlog --config /etc/otter/node.toml --limit 5 2>/dev/null || true' 2>/dev/null); then
       version="" service="" stats="" disk="" push="" turn=""
       { read -r version || true; read -r service || true; read -r stats || true; read -r disk || true; read -r push || true
         read -r turn || true; } <<< "$out"
-      [[ "$turn" != --netlog-- ]] || turn=""   # nodes answering without the TURN line
+      [[ "$turn" != --* ]] || turn=""   # nodes answering without the TURN line
+      # health: the lines between --status-- and --netlog--; "! " lines are problems (D119)
+      hl=$(sed -n '/^--status--$/,/^--netlog--$/p' <<< "$out" | sed '1d; /^--netlog--$/d; /^$/d')
+      if [[ -n "$hl" ]]; then
+        if grep -q '^! ' <<< "$hl"; then bad=1; fi
+      elif version_ge "${version:-}" 0.10.1; then
+        hl="! no status from the running node (run otter-node status on $label)"; bad=1
+      else
+        hl="- no health line: otter-node ${version:--} has no status command (0.10.1+)"
+      fi
+      health+=$(sed "s/^/  $label  /" <<< "$hl")$'\n'
       nl=$(sed -n '/^--netlog--$/,$p' <<< "$out" | sed "1d; /^\$/d; s/^/  $label  /")
       [[ -z "$nl" ]] || netlogs+="$nl"$'\n'
       : "${version:=-}" "${service:=-}" "${stats:=-}" "${disk:=-}" "${push:=-}" "${turn:=-}"
@@ -41,5 +55,8 @@ for label in $(node_labels); do
 done
 if [[ -n "$netlogs" ]]; then
   printf '\nconnectivity log (newest first):\n%s' "$netlogs"
+fi
+if [[ -n "$health" ]]; then
+  printf '\nhealth (otter-node status; "!" = needs attention):\n%s' "$health"
 fi
 exit $bad

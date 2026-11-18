@@ -45,6 +45,9 @@ type Replicator struct {
 // peerSeen is what monitoring needs to know about a peer across sessions.
 type peerSeen struct {
 	pingFails int64
+	acked     int64 // highest seq of ours the peer confirmed (subscribe cursor, batch acks); clamped to ≥ 0
+	ackKnown  bool  // the peer subscribed at least once since start
+	lastUpMs  int64 // last time a session with it was up, either side dialed (D132); 0 = never since start
 }
 
 func (r *Replicator) peer(id []byte) *peerSeen { // callers hold seenMu
@@ -62,6 +65,39 @@ func (r *Replicator) peer(id []byte) *peerSeen { // callers hold seenMu
 func (r *Replicator) notePingFail(id []byte) {
 	r.seenMu.Lock()
 	r.peer(id).pingFails++
+	r.seenMu.Unlock()
+}
+
+// noteSubscribed: the peer's subscribe cursor is what it holds of our oplog (it may go back after a restore). A
+// hostile peer can claim anything here; that changes only its own backlog number (D119).
+func (r *Replicator) noteSubscribed(id []byte, cursor int64) {
+	r.seenMu.Lock()
+	p := r.peer(id)
+	p.acked, p.ackKnown = max(cursor, 0), true
+	r.seenMu.Unlock()
+}
+
+// noteAcked: the peer confirmed our oplog up to seq; it never moves back within a subscription.
+func (r *Replicator) noteAcked(id []byte, seq int64) {
+	r.seenMu.Lock()
+	if p := r.peer(id); seq > p.acked || !p.ackKnown {
+		p.acked, p.ackKnown = max(seq, 0), true
+	}
+	r.seenMu.Unlock()
+}
+
+// noteAckedIf raises the peer's ack to seq when it already confirmed need.
+func (r *Replicator) noteAckedIf(id []byte, need, seq int64) {
+	r.seenMu.Lock()
+	if p := r.peer(id); p.ackKnown && p.acked >= need && seq > p.acked {
+		p.acked = seq
+	}
+	r.seenMu.Unlock()
+}
+
+func (r *Replicator) noteUp(id []byte) {
+	r.seenMu.Lock()
+	r.peer(id).lastUpMs = time.Now().UnixMilli()
 	r.seenMu.Unlock()
 }
 
@@ -154,6 +190,8 @@ func (r *Replicator) runSession(c *websocket.Conn, peer, dialer []byte, ep *pb.E
 		return
 	}
 	defer r.reg.remove(s)
+	r.noteUp(peer)
+	defer r.noteUp(peer) // "last up" = when the session ended
 	r.log.Info("peer session up", "peer", fmt.Sprintf("%x", peer), "dialer", fmt.Sprintf("%x", dialer))
 	err := s.run()
 	r.log.Info("peer session down", "peer", fmt.Sprintf("%x", peer), "err", err)
@@ -319,9 +357,15 @@ func (r *Replicator) pruneSessions(m *pb.Manifest) {
 
 type PeerStatus struct {
 	Node      []byte
-	Connected bool
-	CaughtUp  bool
-	Cursor    int64
+	Label     string
+	Connected bool  // a session is up, whichever side dialed it
+	CaughtUp  bool  // we received the peer's whole oplog
+	Cursor    int64 // how far we received the peer's oplog
+	// monitoring (D119): what the peer confirmed of ours, and since when it is gone
+	Acked        int64
+	AckKnown     bool
+	LastUpMs     int64
+	PingFailures int64
 }
 
 func (r *Replicator) Status() []PeerStatus {
@@ -334,7 +378,10 @@ func (r *Replicator) Status() []PeerStatus {
 		if bytes.Equal(n.NodeId, r.svc.NodeID) {
 			continue
 		}
-		ps := PeerStatus{Node: n.NodeId}
+		ps := PeerStatus{Node: n.NodeId, Label: n.Label}
+		if ps.Label == "" {
+			ps.Label = fmt.Sprintf("%x", n.NodeId)
+		}
 		r.reg.mu.Lock()
 		if s := r.reg.byPeer[string(n.NodeId)]; s != nil {
 			s.mu.Lock()
@@ -342,9 +389,27 @@ func (r *Replicator) Status() []PeerStatus {
 			s.mu.Unlock()
 		}
 		r.reg.mu.Unlock()
+		r.seenMu.Lock()
+		if p := r.seen[string(n.NodeId)]; p != nil {
+			ps.Acked, ps.AckKnown, ps.LastUpMs, ps.PingFailures = p.acked, p.ackKnown, p.lastUpMs, p.pingFails
+		}
+		r.seenMu.Unlock()
 		out = append(out, ps)
 	}
 	return out
+}
+
+// Backlog returns how many of our records peer p has not confirmed and the age in seconds of the oldest of them
+// (D119); records = -1 until the peer has subscribed once since start. Only p's own claims enter p's numbers.
+func (r *Replicator) Backlog(ctx context.Context, p PeerStatus, now time.Time) (records, lagS int64, err error) {
+	if !p.AckKnown {
+		return -1, 0, nil
+	}
+	n, oldest, err := r.st.OplogAfter(ctx, max(p.Acked, 0))
+	if err != nil || n == 0 {
+		return n, 0, err
+	}
+	return n, max(now.UnixMilli()-oldest, 0) / 1000, nil
 }
 
 // DropPeer closes the session with node id, if any (used to simulate a cut link; the next dial may reconnect).

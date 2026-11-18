@@ -3,6 +3,10 @@
 One VPS, a **new** family network, your own domain. Everything runs from this PC (the "admin machine") in
 `otter-server/`; the server only receives a bundle over SSH. Background and reasons: `docs/11-deployment.md`.
 
+**More than one node** (the usual case: three nodes, one of them inside a censored network): follow
+`docs/11-deployment.md` §14 "Three nodes from scratch" instead — the same steps for three servers, with the expected
+output after each command, the firewall and SSH hardening (§8) and the checks at the end.
+
 Replace the placeholders everywhere:
 
 | Placeholder | Example | Meaning |
@@ -40,8 +44,10 @@ page); 0.8.0+ also on the TURN relay ports for calls: UDP/TCP 3478, TCP 5349, UD
 - Debian 12/13 or Ubuntu 22.04/24.04, amd64 or arm64, ≥ 1 GB RAM.
 - Root SSH login with a key from this PC works: `ssh root@IP true`.
   Non-standard port or key file: `export OTTER_SSH_PORT=2222 OTTER_SSH_OPTS="-i ~/.ssh/otter"` before the scripts.
-- Provider/cloud firewall: allow inbound **TCP 22** (or your SSH port) and **TCP 27443**; nothing else is needed.
-- Recommended: `apt install unattended-upgrades`, `PermitRootLogin prohibit-password` in sshd.
+- Provider/cloud firewall: allow inbound **TCP 22** (or your SSH port), **TCP 27443** and, for calls, UDP 3478,
+  TCP 3478, TCP 5349, UDP 49160–49200 (the table in `docs/11-deployment.md` §8); nothing else.
+- SSH key-only, `unattended-upgrades`, ufw: the commands in `docs/11-deployment.md` §8; after the install
+  `deploy/harden-check.sh` (read-only) shows what is still missing.
 
 ## 1. Build (this PC)
 
@@ -163,7 +169,9 @@ place where this runbook or `docs/11-deployment.md` didn't match reality.
 | Task | Command |
 |------|---------|
 | Logs | `ssh root@IP journalctl -u otter-node -f` |
-| All nodes at a glance | `deploy/status.sh` |
+| All nodes at a glance | `deploy/status.sh` (health line per node; `!` lines = problems) |
+| Health on the server | `ssh root@IP otter-node status --config /etc/otter/node.toml` |
+| Hardening report (read-only) | `deploy/harden-check.sh` |
 | Push wake-ups | `deploy/push-key.sh LABEL ~/fcm.json` → `bin/otter-admin node set-push --label LABEL` → `manifest sign` + `manifest publish` |
 | Health | `deploy/check.sh LABEL root@IP` |
 | Server IP changed | `bin/otter-admin node set-ip --label LABEL --ip NEW` → update DNS → `deploy/push.sh LABEL root@NEW` (pin unchanged) |

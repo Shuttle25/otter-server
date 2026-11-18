@@ -3,6 +3,8 @@
 The full procedure (requirements, DNS, security checklist) is in the project docs: `docs/11-deployment.md`.
 Every script prints its actions (`==> …`) and stops at the first error.
 First real deployment step by step (what gets installed, every command): [FIRST-DEPLOY.md](FIRST-DEPLOY.md).
+A new network with three nodes, every command with its expected output: `docs/11-deployment.md` §14; security
+checklist (firewall table incl. TURN, SSH, updates, shared hosts, sandbox): `docs/11-deployment.md` §8.
 
 ## Build
 
@@ -13,7 +15,8 @@ make release VERSION=1.2.0      # dist/otter-node_1.2.0_linux_{amd64,arm64}, dis
 
 ## New node
 
-First node of a **new** network: follow [FIRST-DEPLOY.md](FIRST-DEPLOY.md). Every further node is one command:
+First node of a **new** network: follow [FIRST-DEPLOY.md](FIRST-DEPLOY.md) (or `docs/11-deployment.md` §14 for three
+nodes at once). Every further node is one command:
 
 ```bash
 deploy/add-node.sh fi-2 root@198.51.100.20 --ip 198.51.100.20 [--domain chat2.example.org]
@@ -37,15 +40,19 @@ successful install; pending bootstrap invites go into the bundle and move to `~/
 |------|---------|
 | Health checks | `deploy/check.sh fi-1 root@203.0.113.10` |
 | Upgrade (auto rollback) | `deploy/upgrade.sh root@203.0.113.10 dist/otter-node_1.2.1_linux_amd64` (exit 0 ok, 2 rolled back, 3 manual; a rollback also restores `node.toml` from `node.toml.prev`; the DB copy is 0600, the newest 3 `pre-upgrade-*.db` are kept, and the copy, pruning and restore run as `otter`, D82/D84) |
-| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts (+ `turn_allocs=`), disk, push, TURN, then the last 5 connectivity log lines per node; exit 1 on any problem) |
+| All nodes at a glance | `deploy/status.sh` (target, version, hello, service, DB counts (+ `turn_allocs=`), disk, push, TURN, then the last 5 connectivity log lines per node, then each node's `otter-node status --line` health line and `!` problems (0.10.1+; older nodes get a note); exit 1 on any problem) |
+| Hardening report (read-only) | `deploy/harden-check.sh [fi-1 ...]` (SSH settings, unattended-upgrades, pending reboot, firewall, public listeners that are not `otter-node`/`sshd` (WARN by address, port and process), `/metrics` on loopback, unit sandbox exposure ≤ 2.0, the `otter` user, root-owned binary and keys, NTP; prints `PASS/WARN/FAIL`, exit 1 on a FAIL; changes nothing, fixes are separate steps; D120) |
+| Sandboxed units (D120) on a node | `deploy/sandbox-setup.sh fi-1 [--if-older]` (installs the 0.10.1 `otter-node.service` / `otter-backup.service`, exposure 1.5 / 0.5; keeps `*.service.prev`, restarts, health = service active + hello probe + `"turn on"`/`"reality on"` when configured — never `otter-node status`, so a down peer does not count; on failure the previous units come back: exit 2; `upgrade-all.sh` runs it for 0.10.1+) |
 | TURN relay (calls) on a node | `deploy/turn-setup.sh fi-1 [--if-missing] [--force]` (0.8.0+; `upgrade-all.sh` runs it; below) |
 | REALITY on a node | `deploy/reality-setup.sh fi-1 --dest dl.google.com [--port 443] [--force]` → `manifest sign` + `manifest publish` (below) |
-| Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1] [--no-news] [--no-turn]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual; 0.8.0+: TURN on each node unless `--no-turn`; then offers the news dialog) |
+| Upgrade every node | `deploy/upgrade-all.sh 1.2.1 [--only fi-1] [--no-news] [--no-turn] [--no-sandbox]` (builds the release if missing, skips nodes already on it, stops at the first rollback; exit 0 / 2 rolled back / 3 manual; 0.8.0+: TURN on each node unless `--no-turn`; 0.10.1+: `sandbox-setup.sh --if-older` unless `--no-sandbox`, a sandbox failure shows `SANDBOX NOT INSTALLED` and the rollout goes on; then offers the news dialog) |
 | SSH target of a node | `deploy/hosts.sh set fi-1 root@203.0.113.10 [port]` / `get` / `list` / `rm` |
 | New IP | `otter-admin node set-ip --label fi-1 --ip 198.51.100.7` → DNS → `push.sh` |
 | Rotate TLS | `node rotate-tls` → `manifest sign` + `manifest publish` → apps update → `push.sh` → `node drop-old-pins` → `manifest sign` + `publish` |
 | Push wake-ups | `deploy/push-key.sh fi-1 ~/fcm.json` → `otter-admin node set-push --label fi-1` → `manifest sign` + `manifest publish` |
 | No backups at rest (e.g. a node in Russia, D113) | `otter-admin node set-no-backups --label L [--off]` → `manifest sign` + `manifest publish` (nodes ≥ 0.10.0). The node then answers restores with "unavailable", gets no backups from peers, and deletes what phones upload to it once `min(2, other nodes)` nodes without the flag hold it |
+| Health on one server | `ssh root@fi-1 otter-node status --config /etc/otter/node.toml [--line\|--json]` (reads only `/var/lib/otter/status.json`, written every 15 s; exit 0 healthy, 2 problems as `! ` lines, 1 no status; D119) |
+| Metrics (loopback only) | `ssh root@fi-1 'curl -s 127.0.0.1:9477/metrics'` (`[metrics] listen`, default `127.0.0.1:9477`, `"off"` disables; never open 9477 in a firewall) |
 | Daily DB backups | on the server: `/usr/local/lib/otter/backup.sh --install` (7 copies, 0600 in the 0700 `/var/backups/otter`) |
 | Uninstall | on the server: `/usr/local/lib/otter/uninstall.sh [--purge]` |
 
@@ -302,8 +309,8 @@ ssh root@ru-1 'journalctl -u otter-node --since "-1h" -o cat | grep -E "revocati
 
 ```bash
 deploy/test/bundle_test.sh      # offline: bundle contents and `otter-node check`
-deploy/test/scripts_test.sh     # offline: hosts, add-node, status, upgrade-all, release-apk, news dialog, reality-setup, turn-setup (stubbed ssh)
+deploy/test/scripts_test.sh     # offline: hosts, add-node, status, upgrade-all, release-apk, news dialog, reality-setup, turn-setup, sandbox-setup + unit exposure (stubbed ssh)
 deploy/test/e2e.sh [--keep]     # disposable Debian 12 VM (QEMU/KVM): install, upgrade, rollback, backup, uninstall
-deploy/test/e2e-mesh.sh [--keep] # two VMs: add-node, replication, status, upgrade-all (needs internet in the VMs)
+deploy/test/e2e-mesh.sh [--keep] # two VMs: add-node, replication, status, upgrade-all, sandbox (needs internet in the VMs)
 make deploy-test                # all four: scripts, bundle, e2e, e2e-mesh
 ```

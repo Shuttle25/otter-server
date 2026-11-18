@@ -26,10 +26,15 @@ type Mesh struct {
 	AllowPlain bool `toml:"allow_plain"`
 }
 
-// Limits for blobs (D44); sizes like "2GiB", "100MiB", "500KB".
+// Limits for blobs (D44), the disk floor (D118), per source IP (D116) and undelivered messages per author (D117);
+// sizes like "2GiB", "100MiB", "500KB".
 type Limits struct {
-	UserQuota string `toml:"user_quota"`
-	MaxBlob   string `toml:"max_blob"`
+	UserQuota     string `toml:"user_quota"`
+	MaxBlob       string `toml:"max_blob"`
+	UserPending   string `toml:"user_pending"`    // undelivered envelope bytes per author; "0" = no cap
+	DiskFloor     string `toml:"disk_floor"`      // free space under data_dir; "0" = only the 64 MiB reserve
+	ConnsPerIP    int    `toml:"conns_per_ip"`    // concurrent connections per source; 0 = 32
+	RequestsPerIP int    `toml:"requests_per_ip"` // client requests per second per source (burst 10×); 0 = 50
 }
 
 // Replication tuning; blob_bandwidth like "2MB/s", "0" = unlimited.
@@ -75,6 +80,14 @@ const DefaultTurnSecretFile = "/etc/otter/turn.secret"
 // MaxBlobLimit equals records.MaxBlobSize (kept here to avoid an import cycle).
 const MaxBlobLimit = 100 << 20
 
+// Metrics: Prometheus text on a loopback address only (D119); "off" disables it.
+type Metrics struct {
+	Listen string `toml:"listen"`
+}
+
+// DefaultMetricsListen is used when [metrics] listen is not set.
+const DefaultMetricsListen = "127.0.0.1:9477"
+
 type Config struct {
 	DataDir      string      `toml:"data_dir"`
 	NodeKey      string      `toml:"node_key"`
@@ -88,11 +101,14 @@ type Config struct {
 	Push         Push        `toml:"push"`
 	Reality      Reality     `toml:"reality"`
 	Turn         Turn        `toml:"turn"`
+	Metrics      Metrics     `toml:"metrics"`
 
 	// parsed by Load
-	UserQuotaBytes  int64 `toml:"-"`
-	MaxBlobBytes    int64 `toml:"-"`
-	BlobBytesPerSec int64 `toml:"-"` // 0 = unlimited
+	UserQuotaBytes   int64 `toml:"-"`
+	MaxBlobBytes     int64 `toml:"-"`
+	BlobBytesPerSec  int64 `toml:"-"` // 0 = unlimited
+	DiskFloorBytes   int64 `toml:"-"` // 0 = no low/critical levels (D118)
+	UserPendingBytes int64 `toml:"-"` // 0 = no cap (D117)
 }
 
 func Load(path string) (*Config, error) {
@@ -134,6 +150,15 @@ func (c *Config) validate() error {
 	if c.MaxBlobBytes, err = sizeOr(c.Limits.MaxBlob, "100MiB"); err != nil {
 		return fmt.Errorf("config: limits.max_blob: %w", err)
 	}
+	if c.DiskFloorBytes, err = sizeOr(c.Limits.DiskFloor, "1GiB"); err != nil {
+		return fmt.Errorf("config: limits.disk_floor: %w", err)
+	}
+	if c.UserPendingBytes, err = sizeOr(c.Limits.UserPending, "256MiB"); err != nil {
+		return fmt.Errorf("config: limits.user_pending: %w", err)
+	}
+	if c.Limits.ConnsPerIP < 0 || c.Limits.RequestsPerIP < 0 {
+		return fmt.Errorf("config: limits.conns_per_ip and limits.requests_per_ip must not be negative")
+	}
 	if c.MaxBlobBytes > MaxBlobLimit {
 		return fmt.Errorf("config: limits.max_blob is above the protocol limit of 100MiB")
 	}
@@ -159,10 +184,32 @@ func (c *Config) validate() error {
 	if err := c.validateTurn(); err != nil {
 		return err
 	}
+	if err := c.validateMetrics(); err != nil {
+		return err
+	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("config: log_level %q (debug|info|warn|error)", c.LogLevel)
+	}
+	return nil
+}
+
+// validateMetrics: /metrics only ever listens on a loopback IP (D119); a config that would open it elsewhere is
+// refused rather than started. "off" disables it.
+func (c *Config) validateMetrics() error {
+	l := strings.TrimSpace(c.Metrics.Listen)
+	if l == "" {
+		l = DefaultMetricsListen
+	}
+	c.Metrics.Listen = l
+	if l == "off" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(l)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil || !ip.IsLoopback() || port == "" {
+		return fmt.Errorf("config: metrics.listen must be a loopback address (127.0.0.1:PORT or [::1]:PORT) or \"off\", got %q", l)
 	}
 	return nil
 }
@@ -214,6 +261,22 @@ func (c *Config) validateTurn() error {
 		return fmt.Errorf("config: turn.tls_listen needs [wss] tls_cert/tls_key")
 	}
 	return nil
+}
+
+// ConnsPerIP is [limits] conns_per_ip, default 32 (D116).
+func (c *Config) ConnsPerIP() int {
+	if c.Limits.ConnsPerIP == 0 {
+		return 32
+	}
+	return c.Limits.ConnsPerIP
+}
+
+// RequestsPerIP is [limits] requests_per_ip, default 50 per second (D116).
+func (c *Config) RequestsPerIP() int {
+	if c.Limits.RequestsPerIP == 0 {
+		return 50
+	}
+	return c.Limits.RequestsPerIP
 }
 
 // TurnEnabled reports whether the embedded TURN relay is on ([turn] enabled = true).

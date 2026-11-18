@@ -84,6 +84,10 @@ func TestPusherCoalescesAndDrops(t *testing.T) {
 	if tok, _ := toks.PushToken(ctx, []byte("alice"), 1); tok != "tok-b" {
 		t.Fatalf("token dropped on a transient error")
 	}
+	// monitoring counts outcomes (D119): coalesced and token-less wake-ups are not counted
+	if p.Sent.Load() != 1 || p.Unregistered.Load() != 1 || p.Failed.Load() != 1 {
+		t.Fatalf("counters sent=%d unregistered=%d failed=%d", p.Sent.Load(), p.Unregistered.Load(), p.Failed.Load())
+	}
 }
 
 func TestPusherWakeCallBypassesCoalescing(t *testing.T) {

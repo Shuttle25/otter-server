@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/ed25519"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,10 @@ type node struct {
 	netPriv ed25519.PrivateKey
 }
 
-func startNode(t *testing.T, opts ...func(*Gateway)) *node {
+func startNode(t *testing.T, opts ...func(*Gateway)) *node { return startNodeWrapped(t, nil, opts...) }
+
+// startNodeWrapped serves the gateway behind wrap (nil = directly), e.g. to rewrite the remote address.
+func startNodeWrapped(t *testing.T, wrap func(http.Handler) http.Handler, opts ...func(*Gateway)) *node {
 	st, err := store.Open(filepath.Join(t.TempDir(), "n.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +47,11 @@ func startNode(t *testing.T, opts ...func(*Gateway)) *node {
 	for _, o := range opts {
 		o(gw)
 	}
-	srv := httptest.NewServer(gw)
+	var h http.Handler = gw
+	if wrap != nil {
+		h = wrap(gw)
+	}
+	srv := httptest.NewServer(h)
 	t.Cleanup(func() { srv.Close(); st.Close() })
 	return &node{url: "ws" + strings.TrimPrefix(srv.URL, "http"), svc: svc, netPriv: priv}
 }

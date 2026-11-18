@@ -16,10 +16,11 @@ import (
 	"ottermsg/server/internal/store"
 )
 
-// Limits for blobs (D44), from the node config.
+// Limits for blobs (D44) and undelivered messages (D117), from the node config.
 type Limits struct {
-	UserQuota int64 // live blob bytes per author
-	MaxBlob   int64
+	UserQuota   int64 // live blob bytes per author
+	MaxBlob     int64
+	UserPending int64 // undelivered envelope bytes per author submitted here (D117); 0 = no cap
 }
 
 // ChunkFetcher asks connected peers for a chunk this node lacks (the replicator).
@@ -47,6 +48,9 @@ func (s *Service) status(ctx context.Context, b *store.Blob) (*pb.BlobStatus, er
 
 // CreateBlob accepts a BLOB_META from its author and returns which chunks the node still needs. Idempotent.
 func (s *Service) CreateBlob(ctx context.Context, user []byte, rec *pb.Record) (*pb.BlobStatus, error) {
+	if err := s.diskRefuses(DiskLow); err != nil {
+		return nil, err
+	}
 	if s.Blobs == nil {
 		return nil, fmt.Errorf("%w: blobs disabled", ErrInvalid)
 	}
@@ -114,8 +118,11 @@ func ChunkOK(b *store.Blob, idx uint32, data []byte) bool {
 	return bytes.Equal(h[:], b.Hashes[idx])
 }
 
-// StoreChunk verifies, writes and marks one chunk.
+// StoreChunk verifies, writes and marks one chunk (uploads, the puller and proxied reads). Refused below the disk floor.
 func (s *Service) StoreChunk(ctx context.Context, b *store.Blob, idx uint32, data []byte) error {
+	if err := s.diskRefuses(DiskLow); err != nil {
+		return err
+	}
 	if !ChunkOK(b, idx, data) {
 		return fmt.Errorf("%w: chunk %d does not match the blob meta", ErrInvalid, idx)
 	}
@@ -187,7 +194,9 @@ func (s *Service) GetChunk(ctx context.Context, user, key []byte, idx uint32) ([
 	if err != nil {
 		return nil, fmt.Errorf("%w: chunk not available yet: %v", ErrRetryLater, err)
 	}
-	if err := s.StoreChunk(ctx, b, idx, data); err != nil {
+	if err := s.StoreChunk(ctx, b, idx, data); errors.Is(err, errDiskLow) {
+		s.Log.Debug("not keeping a proxied chunk: disk below the floor", "blob", hex.EncodeToString(key), "idx", idx)
+	} else if err != nil {
 		s.Log.Warn("keeping a proxied chunk failed", "blob", hex.EncodeToString(key), "idx", idx, "err", err)
 	}
 	return data, nil

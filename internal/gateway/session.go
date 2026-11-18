@@ -20,6 +20,7 @@ type session struct {
 	wake   chan struct{}
 	nonce  []byte
 	source string // restore rate-limit source of this connection (service.SourceOf, D105)
+	ip     string // request-limit key (limits.ClientIP, D116); "" = not limited (loopback)
 	ctx    context.Context
 	cancel context.CancelFunc
 	// blob.get may wait on a peer (proxy): run up to 4 off the read loop

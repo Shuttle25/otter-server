@@ -141,6 +141,10 @@ func (r *Replicator) RunPuller(ctx context.Context, bytesPerSec int64) {
 			}
 			failed := false
 			for _, idx := range g.Missing {
+				if r.svc.Disk.Level() >= service.DiskLow { // D118: StoreChunk would refuse; don't fetch for nothing
+					failed = true
+					break
+				}
 				data, err := r.FetchChunk(ctx, g.Key, idx, func(d []byte) bool { return service.ChunkOK(b, idx, d) })
 				if err == nil {
 					err = r.svc.StoreChunk(ctx, b, idx, data)

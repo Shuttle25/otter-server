@@ -12,22 +12,37 @@ Restart=always
 RestartSec=3
 LimitNOFILE=65536
 
-# hardening
+UMask=0077
+
+# sandbox (D120). Offline exposure (systemd-analyze security --offline=true): 1.5; the 0.8.x unit scored 3.8.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+PrivateIPC=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+# No ProcSubset=pid: it hides /proc/sys/net/core/somaxconn and Go would listen with a backlog of 128 (score unchanged).
 # AF_NETLINK: listing network interfaces (Go net.Interfaces), needed by the TURN relay (M8)
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-# :443 for REALITY (D72) without root
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+# (Go raises RLIMIT_NOFILE with prlimit64, which @system-service allows; LimitNOFILE above sets it anyway.)
+# :443 for REALITY (D72) without root. No PrivateUsers=: the capability would then not count on the host network.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ReadWritePaths=/var/lib/otter

@@ -13,6 +13,36 @@ import (
 	"ottermsg/server/internal/service"
 )
 
+var (
+	errTooMany = fmt.Errorf("%w: too many requests", service.ErrRetryLater)
+	// throttled hardest: no login needed, so a stranger can call them (D116). ping and manifest.get are cheap reads.
+	publicLimited = map[string]bool{"register": true, "auth.login": true, "backup.auth": true, "backup.fetch": true,
+		"manifest.publish": true, "news.publish": true, "network.publish": true, "admin.users": true}
+	// per-user write budget (Task 63)
+	userWrites = map[string]bool{"msg.send": true, "prekeys.upload": true, "invite.create": true, "push.register": true,
+		"directory.update": true, "backup.publish": true, "blob.create": true}
+)
+
+// limit applies the request limits (D116); the refused request is answered RETRY_LATER and the session stays open.
+func (s *session) limit(method string) error {
+	g := s.g
+	if !g.IPRequests.Allow(s.ip) {
+		g.Rejected.ReqRate.Add(1)
+		return errTooMany
+	}
+	if publicLimited[method] && !g.IPPublic.Allow(s.ip) {
+		g.Rejected.PublicRate.Add(1)
+		return errTooMany
+	}
+	if userWrites[method] {
+		if u := s.userID(); u != nil && !g.UserWrites.Allow(string(u)) {
+			g.Rejected.UserRate.Add(1)
+			return errTooMany
+		}
+	}
+	return nil
+}
+
 var public = map[string]bool{"ping": true, "manifest.get": true, "manifest.publish": true, "register": true,
 	"auth.login": true, "backup.auth": true, "backup.fetch": true, "news.publish": true,
 	"network.publish": true, "admin.users": true}
@@ -80,6 +110,9 @@ func decode(b []byte, m proto.Message) error {
 }
 
 func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message, error) {
+	if err := s.limit(req.Method); err != nil {
+		return nil, err
+	}
 	if !public[req.Method] && !s.loggedIn() && !(req.Method == "blob.get" && s.hasGrant()) {
 		return nil, fmt.Errorf("%w: login required", service.ErrUnauthorized)
 	}

@@ -6,3 +6,35 @@ Type=oneshot
 User=otter
 Group=otter
 ExecStart=/usr/local/lib/otter/backup.sh --run
+UMask=0077
+
+# sandbox (D120): no network, no capabilities. Offline exposure 0.5 (the 0.8.x unit scored 9.0).
+# SQLite needs /var/lib/otter writable for its -shm/-wal files.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+PrivateIPC=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/otter /var/backups/otter

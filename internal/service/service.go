@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"ottermsg/server/internal/blobs"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/limits"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/store"
@@ -75,6 +76,9 @@ type Service struct {
 	Apks        ApkSource    // APK files (D68); nil = apk.get unavailable
 	Turn        TurnIssuer   // TURN credentials (D77); nil = turn.credentials unavailable
 	Limits      Limits
+	Disk        *DiskGuard // free-space floor (D118); nil = no checks
+	// Rejected counts refusals (otter_rejected_total{kind}): the gateway's counter set, shared; nil = not counted.
+	Rejected *limits.Counters
 
 	sweep      chan struct{}
 	mu         sync.RWMutex
@@ -82,15 +86,16 @@ type Service struct {
 	onManifest []func(*pb.Manifest)
 	// TURN user tag → account id of revoked or disabled accounts (RefreshRevoked)
 	revokedTags map[string][]byte
-	refusals    windowCounter // "login refused" / "turn refused" log lines per user (one a minute)
-	submits     windowCounter // local submit rates per author (C8, D107)
-	callWakes   windowCounter // call pushes per (sender, recipient device) (D108)
+	refusals    windowCounter  // "login refused" / "turn refused" log lines per user (one a minute)
+	submits     windowCounter  // local submit rates per author (C8, D107)
+	callWakes   windowCounter  // call pushes per (sender, recipient device) (D108)
+	pendingMu   [64]sync.Mutex // per-author stripes: the undelivered quota is checked and applied as one step (D117)
 }
 
 func New(st *store.Store, nodeKey ed25519.PrivateKey, networkPub ed25519.PublicKey) *Service {
 	return &Service{Store: st, NodeKeyPriv: nodeKey, NodeID: keys.ID16(nodeKey.Public().(ed25519.PublicKey)),
 		NetworkPub: networkPub, Notify: nopNotifier{}, Now: time.Now, Log: slog.Default(),
-		Limits: Limits{UserQuota: 2 << 30, MaxBlob: 100 << 20}, sweep: make(chan struct{}, 1)}
+		Limits: Limits{UserQuota: 2 << 30, MaxBlob: 100 << 20, UserPending: 256 << 20}, sweep: make(chan struct{}, 1)}
 }
 
 // OnManifest registers a callback fired whenever the cached manifest version changes.

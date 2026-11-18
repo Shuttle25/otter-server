@@ -79,6 +79,30 @@ func TestLimits(t *testing.T) {
 	if err != nil || c.UserQuotaBytes != 1<<20 || c.MaxBlobBytes != 500_000 || c.BlobBytesPerSec != 0 {
 		t.Fatalf("set: %d %d %d %v", c.UserQuotaBytes, c.MaxBlobBytes, c.BlobBytesPerSec, err)
 	}
+	if c.DiskFloorBytes != 1<<30 {
+		t.Fatalf("disk_floor default: %d", c.DiskFloorBytes)
+	}
+	for in, want := range map[string]int64{"2GiB": 2 << 30, "0": 0} {
+		c, err = Load(write(t, valid+"[limits]\ndisk_floor = \""+in+"\"\n"))
+		if err != nil || c.DiskFloorBytes != want {
+			t.Fatalf("disk_floor %q: %d %v", in, c.DiskFloorBytes, err)
+		}
+	}
+	if c.UserPendingBytes != 256<<20 {
+		t.Fatalf("user_pending default: %d", c.UserPendingBytes)
+	}
+	for in, want := range map[string]int64{"64MiB": 64 << 20, "0": 0} {
+		c, err = Load(write(t, valid+"[limits]\nuser_pending = \""+in+"\"\n"))
+		if err != nil || c.UserPendingBytes != want {
+			t.Fatalf("user_pending %q: %d %v", in, c.UserPendingBytes, err)
+		}
+	}
+	if _, err := Load(write(t, valid+"[limits]\nuser_pending = \"lots\"\n")); err == nil || !strings.Contains(err.Error(), "limits.user_pending") {
+		t.Fatalf("bad user_pending: %v", err)
+	}
+	if _, err := Load(write(t, valid+"[limits]\ndisk_floor = \"lots\"\n")); err == nil || !strings.Contains(err.Error(), "limits.disk_floor") {
+		t.Fatalf("bad disk_floor: %v", err)
+	}
 	for _, bad := range []string{
 		"[limits]\nuser_quota = \"lots\"\n", "[limits]\nmax_blob = \"200MiB\"\n", "[limits]\nmax_blob = \"-1MiB\"\n",
 		"[replication]\nblob_bandwidth = \"2MB\"\n",
@@ -151,5 +175,42 @@ vless_uuid = "d6a3f0b2-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
 	c, err = Load(write(t, valid))
 	if err != nil || c.RealityEnabled() {
 		t.Fatalf("no [reality]: %v", err)
+	}
+}
+
+// D116: per-IP limits default to 32 connections and 50 requests/s; 0 = default, negative is refused.
+func TestIPLimits(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.ConnsPerIP() != 32 || c.RequestsPerIP() != 50 {
+		t.Fatalf("defaults: %d %d %v", c.ConnsPerIP(), c.RequestsPerIP(), err)
+	}
+	c, err = Load(write(t, valid+"[limits]\nconns_per_ip = 8\nrequests_per_ip = 200\n"))
+	if err != nil || c.ConnsPerIP() != 8 || c.RequestsPerIP() != 200 {
+		t.Fatalf("set: %d %d %v", c.ConnsPerIP(), c.RequestsPerIP(), err)
+	}
+	for _, bad := range []string{"[limits]\nconns_per_ip = -1\n", "[limits]\nrequests_per_ip = -5\n"} {
+		if _, err := Load(write(t, valid+bad)); err == nil || !strings.Contains(err.Error(), "limits.") {
+			t.Errorf("accepted %q: %v", bad, err)
+		}
+	}
+}
+
+func TestMetricsListen(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil || c.Metrics.Listen != "127.0.0.1:9477" {
+		t.Fatalf("default: %q %v", c.Metrics.Listen, err)
+	}
+	for _, ok := range []string{"off", "[::1]:9000", "127.0.0.1:9478", "127.0.0.2:9477"} {
+		c, err := Load(write(t, valid+"[metrics]\nlisten = \""+ok+"\"\n"))
+		if err != nil || c.Metrics.Listen != ok {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	// never on a public address (D119): refuse the config instead of opening it
+	for _, bad := range []string{"0.0.0.0:9477", "203.0.113.5:9477", ":9477", "[::]:9477", "localhost:9477", "127.0.0.1", "nonsense"} {
+		_, err := Load(write(t, valid+"[metrics]\nlisten = \""+bad+"\"\n"))
+		if err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
 	}
 }

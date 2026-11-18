@@ -29,6 +29,7 @@ import (
 	"ottermsg/server/internal/config"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/limits"
 	"ottermsg/server/internal/netlog"
 	"ottermsg/server/internal/nodecheck"
 	"ottermsg/server/internal/probe"
@@ -61,11 +62,17 @@ const usage = `usage: otter-node <command>
   turn keygen --config FILE [--force]  write the TURN secret file (once; never printed)
   reality-check HOST...        test camouflage candidates from this machine (TLS 1.3, h2, valid certificate)
   netlog --config FILE [--limit 50] [--json]   connectivity log (safe while running)
+  status --config FILE [--line|--json]  health from the running node's status.json (safe while running;
+                               exit 0 healthy, 2 problems shown as "! " lines, 1 no status)
   probe --url URL --pin B64 [--pin B64]... [--addr HOST:PORT] [--insecure] [--expect-node HEX] [--timeout 10s]
   version`
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout); err != nil {
+		var ec exitCode
+		if errors.As(err, &ec) { // already reported on stdout
+			os.Exit(int(ec))
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -112,7 +119,9 @@ func open(cfgPath string, out io.Writer) (*app, error) {
 		return nil, err
 	}
 	svc.Apks = apks
-	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes}
+	svc.Limits = service.Limits{UserQuota: cfg.UserQuotaBytes, MaxBlob: cfg.MaxBlobBytes, UserPending: cfg.UserPendingBytes}
+	svc.Disk = &service.DiskGuard{Dir: cfg.DataDir, Floor: cfg.DiskFloorBytes} // D118
+	svc.Disk.Check()
 	return &app{cfg: cfg, st: st, svc: svc, log: log, close: func() { st.Close() }}, nil
 }
 
@@ -204,7 +213,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	cfgPath := fs.String("config", "/etc/otter/node.toml", "config file")
 	outPath := fs.String("out", "", "backup file (backup)")
 	limit := fs.Int("limit", 50, "lines (netlog)")
-	asJSON := fs.Bool("json", false, "JSON output (netlog)")
+	asJSON := fs.Bool("json", false, "JSON output (netlog, status)")
+	line := fs.Bool("line", false, "one-line summary (status)")
 	force := fs.Bool("force", false, "replace an existing secret (turn keygen)")
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -224,6 +234,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if cmd == "turn" { // must not touch the database
 		return turnKeygen(*cfgPath, *force, out)
+	}
+	if cmd == "status" { // must not touch the database
+		return printStatus(*cfgPath, *line, *asJSON, out)
 	}
 	if cmd != "run" && cmd != "import" && cmd != "backup" && cmd != "stats" && cmd != "netlog" {
 		return errors.New(usage)
@@ -310,6 +323,8 @@ func serve(ctx context.Context, a *app) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)
+	a.svc.Rejected = gw.Rejected // one counter set: otter_rejected_total{kind} (D116, D117, D118)
+	var pusher *push.Pusher      // nil: push off
 	if a.cfg.PushEnabled() {
 		raw, err := os.ReadFile(a.cfg.Push.FCMCredentials)
 		if err != nil {
@@ -319,7 +334,8 @@ func serve(ctx context.Context, a *app) error {
 		if err != nil {
 			return err
 		}
-		a.svc.Waker = push.New(fcm, a.st, a.log)
+		pusher = push.New(fcm, a.st, a.log)
+		a.svc.Waker = pusher
 		a.log.Info("push on", "project", fcm.ProjectID())
 	} else {
 		a.log.Info("push off (no fcm_credentials file)")
@@ -338,7 +354,9 @@ func serve(ctx context.Context, a *app) error {
 	go repl.RunPuller(ctx, a.cfg.BlobBytesPerSec)
 	go repl.RunBackupHandoff(ctx) // D113: only acts while this node is marked no_backups
 	go a.svc.RunJanitor(ctx, 10*time.Minute)
+	go a.svc.Disk.Run(ctx, 10*time.Second, a.log) // D118: re-measure free space, log level changes
 	// before serving: sessions read svc.Turn without a lock
+	var turnSrv *turnsrv.Server // nil: TURN off
 	if a.cfg.TurnEnabled() {
 		if ts, iss, err := startTurn(a); err != nil {
 			a.log.Error("turn off: could not start", "err", err)
@@ -347,10 +365,19 @@ func serve(ctx context.Context, a *app) error {
 		} else {
 			defer ts.Close()
 			a.svc.Turn = iss
+			turnSrv = ts
 		}
 	}
+	// D119: status.json every 15 s and /metrics on loopback
+	go (&live{a: a, repl: repl, gw: gw, pusher: pusher, turn: turnSrv, started: time.Now()}).run(ctx)
 	wcfg := wss.Config{Listen: a.cfg.WSS.Listen, Path: a.cfg.WSS.Path, TLSCert: a.cfg.WSS.TLSCert, TLSKey: a.cfg.WSS.TLSKey, SiteDir: a.cfg.WSS.SiteDir}
 	srv := wss.NewServer(wcfg, gw, replication.WithListener(repl, "wss"), http.HandlerFunc(repl.ServeTunnel))
+	// D116: per source IP on the public listener (clients, peers, tunnels, the decoy site). The REALITY inner server
+	// (loopback) and relayed restore streams (limited by the relay, keyed "tunnel:<relay>" in the gateway) are not wrapped.
+	rpi := float64(a.cfg.RequestsPerIP())
+	gw.IPRequests = limits.NewKeyed(rpi, 10*rpi)
+	conns := &limits.Conns{PerIP: a.cfg.ConnsPerIP(), Rate: limits.NewKeyed(30.0/60, 20), Count: gw.Rejected, ExemptLoopback: true}
+	srv.Handler = conns.Wrap(srv.Handler)
 	errc := make(chan error, 2)
 	go func() { errc <- wss.Serve(srv, wcfg) }()
 	if a.cfg.WSS.TLSCert != "" { // D114: restore streams relayed by a node marked no_backups end here, under our WSS certificate

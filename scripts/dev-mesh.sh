@@ -9,6 +9,7 @@ dev="$root/.dev-mesh"
 host="10.0.2.2"; host_set=0; reset=0; yes=0
 labels=(a b c)
 port_of() { case "$1" in a) echo 8081 ;; b) echo 8082 ;; c) echo 8083 ;; *) echo "unknown node $1" >&2; exit 2 ;; esac; }
+metrics_of() { echo $(( $(port_of "$1") + 1396 )); }   # /metrics on loopback: a 9477, b 9478, c 9479 (D119)
 export OTTER_ADMIN_PASSPHRASE="dev-only-passphrase"
 node="$root/bin/otter-node"
 admin="$root/bin/otter-admin --dir $dev/admin"
@@ -80,6 +81,8 @@ listen = "0.0.0.0:$(port_of "$n")"
 path = "$path"
 [mesh]
 allow_plain = true
+[metrics]
+listen = "127.0.0.1:$(metrics_of "$n")"
 TOML
     $node import --config "$dev/$n.toml" "$dev/admin/manifest.bin" >/dev/null
   done

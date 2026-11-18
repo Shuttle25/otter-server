@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,7 +83,10 @@ type mesh struct {
 	cancel  context.CancelFunc
 }
 
-func newMesh(t *testing.T, n int, gated bool) *mesh {
+func newMesh(t *testing.T, n int, gated bool) *mesh { return newMeshWrapped(t, n, gated, nil) }
+
+// newMeshWrapped lets wrap (nil = none) mount more routes on a node's mux and put a handler in front of it.
+func newMeshWrapped(t *testing.T, n int, gated bool, wrap func(*tnode, *http.ServeMux) http.Handler) *mesh {
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	m := &mesh{t: t, netPub: pub, netPriv: priv}
 	if gated {
@@ -103,7 +107,11 @@ func newMesh(t *testing.T, n int, gated bool) *mesh {
 		nd.repl = New(svc, nd.gate, quiet)
 		mux := http.NewServeMux()
 		mux.Handle("/x/peer", nd.repl)
-		nd.srv = httptest.NewServer(mux)
+		var h http.Handler = mux
+		if wrap != nil {
+			h = wrap(nd, mux)
+		}
+		nd.srv = httptest.NewServer(h)
 		u, _ := url.Parse(nd.srv.URL)
 		port, _ := strconv.Atoi(u.Port())
 		infos = append(infos, &pb.NodeInfo{NodeId: nd.id, NodePub: k.Public().(ed25519.PublicKey), Label: fmt.Sprintf("n%d", i),
@@ -379,4 +387,40 @@ func TestRetryLaterDoesNotLoseRecords(t *testing.T) {
 	if known(a, x) == false {
 		eventually(t, "X reaches A via B", func() bool { return known(a, x) })
 	}
+}
+
+// D118: a node whose disk is full refuses replicated records without advancing its cursor, and catches up
+// once space is freed; the peer pushing data cannot fill the last 64 MiB SQLite needs.
+func TestFullDiskRefusesReplicatedRecords(t *testing.T) {
+	m := newMesh(t, 2, false)
+	a, b := m.nodes[0], m.nodes[1]
+	ctx := context.Background()
+	x, xEntry := m.entry("xenia")
+	y, yEntry := m.entry("yuri")
+	for _, nd := range m.nodes {
+		inject(t, nd, xEntry)
+		inject(t, nd, yEntry)
+	}
+	var free atomic.Int64
+	free.Store(32 << 20)
+	b.svc.Disk = &service.DiskGuard{Floor: 1 << 30, Free: func(string) (int64, int64, error) { return free.Load(), 20 << 30, nil }}
+	if l := b.svc.Disk.Check(); l != service.DiskFull {
+		t.Fatalf("level %v", l)
+	}
+	if _, err := a.svc.Submit(ctx, x.id, m.envelope(x, y), pb.RecordType_ENVELOPE); err != nil {
+		t.Fatal(err)
+	}
+	m.start()
+	eventually(t, "B connected to A", func() bool { return b.repl.reg.has(a.id) || a.repl.reg.has(b.id) })
+	time.Sleep(500 * time.Millisecond)
+	cur, err := b.st.PeerCursor(ctx, a.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boxLen(b, y) != 0 || cur != 0 {
+		t.Fatalf("full disk: mailbox %d, cursor %d", boxLen(b, y), cur)
+	}
+	free.Store(10 << 30)
+	b.svc.Disk.Check()
+	eventually(t, "envelope on B after space was freed", func() bool { return boxLen(b, y) == 1 })
 }

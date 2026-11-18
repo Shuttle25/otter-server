@@ -20,7 +20,7 @@ tar -C "$work" -xzf dist/bundle-t1.tar.gz
 b="$work/bundle-t1"
 (cd "$b" && sha256sum --quiet -c SHA256SUMS)
 for f in otter-node-amd64 otter-node-arm64 node.key tls.crt tls.key manifest.bin node.toml probe.env otter-node.service \
-         otter-backup.service otter-backup.timer site/index.html install.sh uninstall.sh backup.sh health.sh; do
+         otter-backup.service otter-backup.timer site/index.html install.sh uninstall.sh backup.sh health.sh harden-report.sh; do
   [[ -e "$b/$f" ]] || fail "missing $f"
 done
 ls "$b"/invites/*.bin >/dev/null || fail "no invite"

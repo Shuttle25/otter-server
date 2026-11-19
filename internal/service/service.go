@@ -249,23 +249,40 @@ func (s *Service) VerifyLogin(ctx context.Context, nonce []byte, req *pb.LoginRe
 	return resp, nil
 }
 
+// Directory is the whole directory: every entry, then membershipRecords. admin.users uses it; phones get
+// VisibleDirectory (M9.5, D135).
 func (s *Service) Directory(ctx context.Context) ([]*pb.Record, error) {
 	raws, err := s.Store.DirectoryEntries(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// phones verify revocations and invite rights with the network key themselves (D99, D104)
-	more, err := s.Store.MembershipRecords(ctx)
+	out, err := unmarshalRecords(raws)
 	if err != nil {
 		return nil, err
 	}
-	raws = append(raws, more...)
-	// and the winning REKEYs, after the entries they refer to (D111)
+	more, err := s.membershipRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, more...), nil
+}
+
+// membershipRecords is every REVOCATION and INVITE_RIGHTS, then the winning REKEYs. Every directory answer ends with
+// them: phones verify revocations and invite rights with the network key themselves (D99, D104), and the REKEYs come
+// after the entries they refer to (D111).
+func (s *Service) membershipRecords(ctx context.Context) ([]*pb.Record, error) {
+	raws, err := s.Store.MembershipRecords(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rekeys, err := s.Store.Rekeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	raws = append(raws, rekeys...)
+	return unmarshalRecords(append(raws, rekeys...))
+}
+
+func unmarshalRecords(raws [][]byte) ([]*pb.Record, error) {
 	out := make([]*pb.Record, 0, len(raws))
 	for _, raw := range raws {
 		r := &pb.Record{}

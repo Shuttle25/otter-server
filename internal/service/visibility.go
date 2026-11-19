@@ -2,6 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	pb "ottermsg/server/internal/proto/otterv1"
@@ -141,4 +146,69 @@ func (s *Service) VisibleDirectory(ctx context.Context, user []byte) ([]*pb.Reco
 		return nil, err
 	}
 	return append(out, extra...), nil
+}
+
+// Limits of D137.
+const (
+	MaxDirectoryGet = 256
+	LookupsPerHour  = 30
+	LookupsPerDay   = 200
+)
+
+// lookupRe is a username (records' usernameRe) with an optional clash tag of 8 hex digits (D103).
+var lookupRe = regexp.MustCompile(`^[a-z0-9_]{3,32}(#[0-9a-f]{8})?$`)
+
+// DirectoryGet returns the entries of known ids plus their ancestry (D137). Ids are random 16 bytes learned from a
+// chat or group, so there is no extra limit; unknown ids are skipped.
+func (s *Service) DirectoryGet(ctx context.Context, ids [][]byte) ([]*pb.Record, error) {
+	if len(ids) > MaxDirectoryGet {
+		return nil, fmt.Errorf("%w: at most %d ids", ErrInvalid, MaxDirectoryGet)
+	}
+	seeds := idSet{}
+	seeds.add(ids...)
+	keep, err := s.closure(ctx, seeds)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.Store.DirectoryRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.entries(ctx, rows, keep)
+}
+
+// LookupUsername finds one exact username ("name" or "name#1a2b3c4d", any case, an optional "@") for user and
+// returns its entry plus ancestry (D137). Every call counts, found or not; a revoked account is not found.
+func (s *Service) LookupUsername(ctx context.Context, user []byte, typed string) ([]*pb.Record, error) {
+	now, key := s.Now(), hex.EncodeToString(user)
+	if !s.lookupsHour.allow(now, time.Hour, key, LookupsPerHour) || !s.lookupsDay.allow(now, 24*time.Hour, key, LookupsPerDay) {
+		return nil, fmt.Errorf("%w: at most %d username lookups an hour and %d a day", ErrQuota, LookupsPerHour, LookupsPerDay)
+	}
+	q := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(typed), "@"))
+	if !lookupRe.MatchString(q) {
+		return nil, fmt.Errorf("%w: user", ErrNotFound)
+	}
+	stored := q
+	if strings.Contains(q, "#") { // the clash winner is stored as plain "name", the loser as "name#tag" (D103)
+		name, _, err := s.Store.ResolveUsername(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		stored = name
+	}
+	id, err := s.Store.UsernameOwner(ctx, stored) // nil, nil when nobody holds the name
+	if err != nil {
+		return nil, err
+	}
+	if id == nil {
+		return nil, fmt.Errorf("%w: user", ErrNotFound)
+	}
+	u, err := s.Store.UserByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if u == nil || u.Revoked {
+		return nil, fmt.Errorf("%w: user", ErrNotFound)
+	}
+	return s.DirectoryGet(ctx, [][]byte{id})
 }

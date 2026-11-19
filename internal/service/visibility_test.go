@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -105,5 +107,89 @@ func TestVisibleDirectoryFollowsRekey(t *testing.T) {
 	}
 	if got, _ := entryUsers(t, recs); !got[string(a.id)] || !got[string(b.id)] || len(got) != 3 {
 		t.Fatalf("boris2 sees anna=%v old boris=%v (%d entries)", got[string(a.id)], got[string(b.id)], len(got))
+	}
+}
+
+func TestDirectoryGet(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	b := f.mustRegister(f.invite(a, time.Hour), "boris")
+	recs, err := f.svc.DirectoryGet(ctx, [][]byte{b.id, []byte("unknown-id-16byt")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, other := entryUsers(t, recs); len(got) != 2 || !got[string(a.id)] || !got[string(b.id)] || other != 0 {
+		t.Fatalf("get boris: %d entries (want boris + inviter anna), %d other", len(got), other)
+	}
+	if _, err := f.svc.DirectoryGet(ctx, make([][]byte, MaxDirectoryGet+1)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("too many ids: %v", err)
+	}
+}
+
+func TestLookupUsername(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	b := f.mustRegister(f.invite(nil, time.Hour), "boris")
+	recs, err := f.svc.LookupUsername(ctx, a.id, "  @Boris ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := entryUsers(t, recs); !got[string(b.id)] {
+		t.Fatal("boris not found")
+	}
+	tagged := "boris#" + fmt.Sprintf("%x", b.id[:4])
+	if recs, err := f.svc.LookupUsername(ctx, a.id, tagged); err != nil {
+		t.Fatalf("%s: %v", tagged, err)
+	} else if got, _ := entryUsers(t, recs); !got[string(b.id)] {
+		t.Fatalf("%s did not find boris", tagged)
+	}
+	for _, q := range []string{"nobody", "x", "boris#zz", "boris#00000000", ""} {
+		if _, err := f.svc.LookupUsername(ctx, a.id, q); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%q: %v, want not found", q, err)
+		}
+	}
+	f.netRecord(pb.RecordType_REVOCATION, &pb.Revocation{UserId: b.id, Reason: "test"})
+	if _, err := f.svc.LookupUsername(ctx, a.id, "boris"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoked: %v", err)
+	}
+}
+
+func TestLookupLimit(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	for i := 0; i < LookupsPerHour-1; i++ {
+		if _, err := f.svc.LookupUsername(ctx, a.id, fmt.Sprintf("nobody%d", i)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("lookup %d: %v", i, err)
+		}
+	}
+	if _, err := f.svc.LookupUsername(ctx, a.id, "anna"); err != nil {
+		t.Fatalf("30th lookup: %v", err)
+	}
+	if _, err := f.svc.LookupUsername(ctx, a.id, "anna"); !errors.Is(err, ErrQuota) {
+		t.Fatalf("31st lookup: %v, want quota", err)
+	}
+}
+
+func TestLookupDayLimit(t *testing.T) {
+	f := newFx(t)
+	ctx := context.Background()
+	a := f.mustRegister(f.invite(nil, time.Hour), "anna")
+	t0 := time.Now()
+	at := func(i int) { // a fresh hour every LookupsPerHour lookups
+		now := t0.Add(time.Duration(i/LookupsPerHour) * 61 * time.Minute)
+		f.svc.Now = func() time.Time { return now }
+	}
+	for i := 0; i < LookupsPerDay; i++ {
+		at(i)
+		if _, err := f.svc.LookupUsername(ctx, a.id, fmt.Sprintf("nobody%d", i)); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("lookup %d: %v", i, err)
+		}
+	}
+	at(LookupsPerDay) // the hour still has room
+	if _, err := f.svc.LookupUsername(ctx, a.id, "anna"); !errors.Is(err, ErrQuota) {
+		t.Fatalf("lookup %d in a day: %v, want quota", LookupsPerDay+1, err)
 	}
 }

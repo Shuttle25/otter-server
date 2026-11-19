@@ -88,6 +88,8 @@ type Service struct {
 	revokedTags map[string][]byte
 	refusals    windowCounter  // "login refused" / "turn refused" log lines per user (one a minute)
 	submits     windowCounter  // local submit rates per author (C8, D107)
+	lookupsHour windowCounter  // directory.lookup per account per hour (D137)
+	lookupsDay  windowCounter  // directory.lookup per account per day (D137)
 	callWakes   windowCounter  // call pushes per (sender, recipient device) (D108)
 	pendingMu   [64]sync.Mutex // per-author stripes: the undelivered quota is checked and applied as one step (D117)
 }

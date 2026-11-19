@@ -20,7 +20,8 @@ var (
 		"manifest.publish": true, "news.publish": true, "network.publish": true, "admin.users": true}
 	// per-user write budget (Task 63)
 	userWrites = map[string]bool{"msg.send": true, "prekeys.upload": true, "invite.create": true, "push.register": true,
-		"directory.update": true, "backup.publish": true, "blob.create": true}
+		"directory.update": true, "backup.publish": true, "blob.create": true,
+		"directory.lookup": true} // directory.lookup: a second brake behind its own limit (D137)
 )
 
 // limit applies the request limits (D116); the refused request is answered RETRY_LATER and the session stays open.
@@ -161,6 +162,7 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 				s.event("prekeys_low", &pb.PrekeysLow{Remaining: uint32(l.Remaining), OwnerNode: l.Node})
 			}
 		}
+		login.ServerVersion = s.g.Version // members only: hello goes out before login (D139)
 		return login, nil
 	case "manifest.publish":
 		var r pb.RecordRequest
@@ -218,8 +220,28 @@ func (s *session) dispatch(ctx context.Context, req *pb.Request) (proto.Message,
 			return nil, err
 		}
 		return &pb.ApkChunk{Data: data, TotalSize: total}, nil
-	case "directory.sync":
-		recs, err := svc.Directory(ctx)
+	case "directory.sync", "directory.list": // M9.5 (D135): the same filtered set for old and new apps
+		recs, err := svc.VisibleDirectory(ctx, s.user)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.RecordBatch{Records: recs}, nil
+	case "directory.get": // M9.5 (D137): chat and group partners by id, with their ancestry
+		var r pb.DirectoryGetRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		recs, err := svc.DirectoryGet(ctx, r.UserIds)
+		if err != nil {
+			return nil, err
+		}
+		return &pb.RecordBatch{Records: recs}, nil
+	case "directory.lookup": // M9.5 (D137): one exact username, limited per account
+		var r pb.DirectoryLookupRequest
+		if err := decode(req.Body, &r); err != nil {
+			return nil, err
+		}
+		recs, err := svc.LookupUsername(ctx, s.user, r.Username)
 		if err != nil {
 			return nil, err
 		}

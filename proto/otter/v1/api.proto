@@ -78,6 +78,16 @@ message RecordBatch {
   repeated Record records = 1;
 }
 
+// directory.get (M9.5, D137): entries for known ids, at most 256.
+message DirectoryGetRequest {
+  repeated bytes user_ids = 1;
+}
+
+// directory.lookup (M9.5, D137): one exact username, "name" or "name#1a2b3c4d"; answer is a RecordBatch.
+message DirectoryLookupRequest {
+  string username = 1;
+}
+
 message PreKeyFetchRequest {
   bytes user_id = 1;
   uint32 device_id = 2;
@@ -119,6 +129,7 @@ message LoginResponse {
   uint32 registration_id = 1;  // of the newest install this node knows (D52); unsigned, ignored by 0.9.0+ phones (C14)
   int64 installed_ms = 2;      // unsigned, ignored by 0.9.0+ phones (C14)
   Record install = 3;          // the newest INSTALL record of the account, if this node has one (M9.1, C14)
+  string server_version = 4;   // M9.5 (D139): the node's release, e.g. "0.11.0"; members only, information only (a node can lie)
 }
 
 message BackupAuthRequest { string username = 1; }

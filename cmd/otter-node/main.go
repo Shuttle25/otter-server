@@ -323,6 +323,7 @@ func serve(ctx context.Context, a *app) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	gw := gateway.New(a.svc, a.log)
+	gw.Version = version         // told to logged-in members only (D139)
 	a.svc.Rejected = gw.Rejected // one counter set: otter_rejected_total{kind} (D116, D117, D118)
 	var pusher *push.Pusher      // nil: push off
 	if a.cfg.PushEnabled() {

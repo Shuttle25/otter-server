@@ -314,6 +314,7 @@ type DirectoryEntry struct {
 	RegisteredMs  int64                  `protobuf:"varint,9,opt,name=registered_ms,json=registeredMs,proto3" json:"registered_ms,omitempty"` // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
 	InviteRecord  []byte                 `protobuf:"bytes,10,opt,name=invite_record,json=inviteRecord,proto3" json:"invite_record,omitempty"` // M9.2 (D100): the inviter's signed INVITE Record (serialized); copied into later versions
 	InviteProof   []byte                 `protobuf:"bytes,11,opt,name=invite_proof,json=inviteProof,proto3" json:"invite_proof,omitempty"`    // M9.2 (D100): Ed25519 by the invite's redeem key over RedeemMessage(invite_id, user_id, account_pub)
+	Listed        bool                   `protobuf:"varint,12,opt,name=listed,proto3" json:"listed,omitempty"`                                // M9.5 (D135): «Показывать меня в каталоге сети»; signed by the account, default off
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -423,6 +424,13 @@ func (x *DirectoryEntry) GetInviteProof() []byte {
 		return x.InviteProof
 	}
 	return nil
+}
+
+func (x *DirectoryEntry) GetListed() bool {
+	if x != nil {
+		return x.Listed
+	}
+	return false
 }
 
 type Revocation struct {
@@ -1362,7 +1370,7 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"created_ms\x18\x04 \x01(\x03R\tcreatedMs\x12\x1d\n" +
 	"\n" +
 	"expires_ms\x18\x05 \x01(\x03R\texpiresMs\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\xf5\x02\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\"\x8d\x03\n" +
 	"\x0eDirectoryEntry\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +
@@ -1377,7 +1385,8 @@ const file_otter_v1_records_proto_rawDesc = "" +
 	"\rregistered_ms\x18\t \x01(\x03R\fregisteredMs\x12#\n" +
 	"\rinvite_record\x18\n" +
 	" \x01(\fR\finviteRecord\x12!\n" +
-	"\finvite_proof\x18\v \x01(\fR\vinviteProof\"=\n" +
+	"\finvite_proof\x18\v \x01(\fR\vinviteProof\x12\x16\n" +
+	"\x06listed\x18\f \x01(\bR\x06listed\"=\n" +
 	"\n" +
 	"Revocation\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x16\n" +

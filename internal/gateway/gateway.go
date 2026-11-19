@@ -44,6 +44,10 @@ type Gateway struct {
 	Rejected                         *limits.Counters
 	ExemptLoopback                   bool
 
+	// Version is this node's release, told to logged-in members only in LoginResponse.server_version (M9.5, D139);
+	// set by otter-node. Information only: a node can lie about it.
+	Version string
+
 	svc      *service.Service
 	log      *slog.Logger
 	mu       sync.Mutex

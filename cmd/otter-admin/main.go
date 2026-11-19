@@ -27,12 +27,14 @@ import (
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/client"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netcode"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 )
 
 const usage = `usage: otter-admin [--dir DIR] <command>
   network init
+  network code                 print the 15-digit network code members compare when joining
   node add --label L --wss-host H [--ip A]... [--wss-port 27443] [--wss-path /p] [--cdn] [--push] [--plain]
   node list
   node remove --label L
@@ -143,6 +145,13 @@ func run(args []string, out io.Writer, in io.Reader) error {
 		}
 		st, _ := admin.LoadState(*dir)
 		fmt.Fprintf(out, "network created in %s\nnetwork_pub %x\nKeep a backup of network.key.enc and its passphrase.\n", *dir, st.NetworkPub)
+	case "network code":
+		st, err := admin.LoadState(*dir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "network code: %s\n", netcode.Code(st.NetworkPub))
+		return nil
 	case "node add":
 		fs := flag.NewFlagSet("node add", flag.ContinueOnError)
 		var s admin.NodeSpec

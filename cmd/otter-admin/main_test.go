@@ -23,6 +23,7 @@ import (
 	"ottermsg/server/internal/admin"
 	"ottermsg/server/internal/gateway"
 	"ottermsg/server/internal/keys"
+	"ottermsg/server/internal/netcode"
 	pb "ottermsg/server/internal/proto/otterv1"
 	"ottermsg/server/internal/records"
 	"ottermsg/server/internal/service"
@@ -54,6 +55,27 @@ func TestCLIFlow(t *testing.T) {
 	if !strings.Contains(out.String(), "signature OK") || !strings.Contains(out.String(), "chat.example.org") ||
 		!strings.Contains(out.String(), "otter://join/") || !strings.Contains(out.String(), "otter-node import") {
 		t.Fatalf("output: %s", out.String())
+	}
+}
+
+func TestNetworkCode(t *testing.T) {
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "a very long passphrase")
+	dir := t.TempDir()
+	var out bytes.Buffer
+	if err := run([]string{"--dir", dir, "network", "init"}, &out, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := admin.LoadState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OTTER_ADMIN_PASSPHRASE", "") // the code needs no passphrase
+	out.Reset()
+	if err := run([]string{"--dir", dir, "network", "code"}, &out, strings.NewReader("")); err != nil {
+		t.Fatal(err)
+	}
+	if want := "network code: " + netcode.Code(st.NetworkPub) + "\n"; out.String() != want {
+		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 }
 

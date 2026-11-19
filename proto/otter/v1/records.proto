@@ -54,6 +54,7 @@ message DirectoryEntry {
   int64 registered_ms = 9; // first registration (copied into later versions); username clash rank (D40). 0 = record created_ms
   bytes invite_record = 10; // M9.2 (D100): the inviter's signed INVITE Record (serialized); copied into later versions
   bytes invite_proof = 11;  // M9.2 (D100): Ed25519 by the invite's redeem key over RedeemMessage(invite_id, user_id, account_pub)
+  bool listed = 12;          // M9.5 (D135): «Показывать меня в каталоге сети»; signed by the account, default off
 }
 
 message Revocation {

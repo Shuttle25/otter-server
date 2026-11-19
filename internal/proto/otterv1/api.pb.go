@@ -671,6 +671,96 @@ func (x *RecordBatch) GetRecords() []*Record {
 	return nil
 }
 
+// directory.get (M9.5, D137): entries for known ids, at most 256.
+type DirectoryGetRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserIds       [][]byte               `protobuf:"bytes,1,rep,name=user_ids,json=userIds,proto3" json:"user_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DirectoryGetRequest) Reset() {
+	*x = DirectoryGetRequest{}
+	mi := &file_otter_v1_api_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DirectoryGetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DirectoryGetRequest) ProtoMessage() {}
+
+func (x *DirectoryGetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DirectoryGetRequest.ProtoReflect.Descriptor instead.
+func (*DirectoryGetRequest) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DirectoryGetRequest) GetUserIds() [][]byte {
+	if x != nil {
+		return x.UserIds
+	}
+	return nil
+}
+
+// directory.lookup (M9.5, D137): one exact username, "name" or "name#1a2b3c4d"; answer is a RecordBatch.
+type DirectoryLookupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DirectoryLookupRequest) Reset() {
+	*x = DirectoryLookupRequest{}
+	mi := &file_otter_v1_api_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DirectoryLookupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DirectoryLookupRequest) ProtoMessage() {}
+
+func (x *DirectoryLookupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_otter_v1_api_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DirectoryLookupRequest.ProtoReflect.Descriptor instead.
+func (*DirectoryLookupRequest) Descriptor() ([]byte, []int) {
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DirectoryLookupRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
 type PreKeyFetchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        []byte                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -681,7 +771,7 @@ type PreKeyFetchRequest struct {
 
 func (x *PreKeyFetchRequest) Reset() {
 	*x = PreKeyFetchRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[9]
+	mi := &file_otter_v1_api_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -693,7 +783,7 @@ func (x *PreKeyFetchRequest) String() string {
 func (*PreKeyFetchRequest) ProtoMessage() {}
 
 func (x *PreKeyFetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[9]
+	mi := &file_otter_v1_api_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -706,7 +796,7 @@ func (x *PreKeyFetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreKeyFetchRequest.ProtoReflect.Descriptor instead.
 func (*PreKeyFetchRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{9}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PreKeyFetchRequest) GetUserId() []byte {
@@ -732,7 +822,7 @@ type ManifestResponse struct {
 
 func (x *ManifestResponse) Reset() {
 	*x = ManifestResponse{}
-	mi := &file_otter_v1_api_proto_msgTypes[10]
+	mi := &file_otter_v1_api_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -744,7 +834,7 @@ func (x *ManifestResponse) String() string {
 func (*ManifestResponse) ProtoMessage() {}
 
 func (x *ManifestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[10]
+	mi := &file_otter_v1_api_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -757,7 +847,7 @@ func (x *ManifestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManifestResponse.ProtoReflect.Descriptor instead.
 func (*ManifestResponse) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{10}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ManifestResponse) GetManifest() *Record {
@@ -777,7 +867,7 @@ type PrekeysLow struct {
 
 func (x *PrekeysLow) Reset() {
 	*x = PrekeysLow{}
-	mi := &file_otter_v1_api_proto_msgTypes[11]
+	mi := &file_otter_v1_api_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -789,7 +879,7 @@ func (x *PrekeysLow) String() string {
 func (*PrekeysLow) ProtoMessage() {}
 
 func (x *PrekeysLow) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[11]
+	mi := &file_otter_v1_api_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -802,7 +892,7 @@ func (x *PrekeysLow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrekeysLow.ProtoReflect.Descriptor instead.
 func (*PrekeysLow) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{11}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PrekeysLow) GetRemaining() uint32 {
@@ -827,7 +917,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_otter_v1_api_proto_msgTypes[12]
+	mi := &file_otter_v1_api_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -839,7 +929,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[12]
+	mi := &file_otter_v1_api_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +942,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{12}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{14}
 }
 
 type BlobPutRequest struct {
@@ -866,7 +956,7 @@ type BlobPutRequest struct {
 
 func (x *BlobPutRequest) Reset() {
 	*x = BlobPutRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[13]
+	mi := &file_otter_v1_api_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +968,7 @@ func (x *BlobPutRequest) String() string {
 func (*BlobPutRequest) ProtoMessage() {}
 
 func (x *BlobPutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[13]
+	mi := &file_otter_v1_api_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +981,7 @@ func (x *BlobPutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobPutRequest.ProtoReflect.Descriptor instead.
 func (*BlobPutRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{13}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *BlobPutRequest) GetBlobKey() []byte {
@@ -925,7 +1015,7 @@ type BlobGetRequest struct {
 
 func (x *BlobGetRequest) Reset() {
 	*x = BlobGetRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[14]
+	mi := &file_otter_v1_api_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -937,7 +1027,7 @@ func (x *BlobGetRequest) String() string {
 func (*BlobGetRequest) ProtoMessage() {}
 
 func (x *BlobGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[14]
+	mi := &file_otter_v1_api_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -950,7 +1040,7 @@ func (x *BlobGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobGetRequest.ProtoReflect.Descriptor instead.
 func (*BlobGetRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{14}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *BlobGetRequest) GetBlobKey() []byte {
@@ -976,7 +1066,7 @@ type BlobChunk struct {
 
 func (x *BlobChunk) Reset() {
 	*x = BlobChunk{}
-	mi := &file_otter_v1_api_proto_msgTypes[15]
+	mi := &file_otter_v1_api_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -988,7 +1078,7 @@ func (x *BlobChunk) String() string {
 func (*BlobChunk) ProtoMessage() {}
 
 func (x *BlobChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[15]
+	mi := &file_otter_v1_api_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1001,7 +1091,7 @@ func (x *BlobChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobChunk.ProtoReflect.Descriptor instead.
 func (*BlobChunk) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{15}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *BlobChunk) GetData() []byte {
@@ -1022,7 +1112,7 @@ type BlobStatus struct {
 
 func (x *BlobStatus) Reset() {
 	*x = BlobStatus{}
-	mi := &file_otter_v1_api_proto_msgTypes[16]
+	mi := &file_otter_v1_api_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1034,7 +1124,7 @@ func (x *BlobStatus) String() string {
 func (*BlobStatus) ProtoMessage() {}
 
 func (x *BlobStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[16]
+	mi := &file_otter_v1_api_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1137,7 @@ func (x *BlobStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlobStatus.ProtoReflect.Descriptor instead.
 func (*BlobStatus) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{16}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *BlobStatus) GetChunks() uint32 {
@@ -1069,13 +1159,14 @@ type LoginResponse struct {
 	RegistrationId uint32                 `protobuf:"varint,1,opt,name=registration_id,json=registrationId,proto3" json:"registration_id,omitempty"` // of the newest install this node knows (D52); unsigned, ignored by 0.9.0+ phones (C14)
 	InstalledMs    int64                  `protobuf:"varint,2,opt,name=installed_ms,json=installedMs,proto3" json:"installed_ms,omitempty"`          // unsigned, ignored by 0.9.0+ phones (C14)
 	Install        *Record                `protobuf:"bytes,3,opt,name=install,proto3" json:"install,omitempty"`                                      // the newest INSTALL record of the account, if this node has one (M9.1, C14)
+	ServerVersion  string                 `protobuf:"bytes,4,opt,name=server_version,json=serverVersion,proto3" json:"server_version,omitempty"`     // M9.5 (D139): the node's release, e.g. "0.11.0"; members only, information only (a node can lie)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *LoginResponse) Reset() {
 	*x = LoginResponse{}
-	mi := &file_otter_v1_api_proto_msgTypes[17]
+	mi := &file_otter_v1_api_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1087,7 +1178,7 @@ func (x *LoginResponse) String() string {
 func (*LoginResponse) ProtoMessage() {}
 
 func (x *LoginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[17]
+	mi := &file_otter_v1_api_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1100,7 +1191,7 @@ func (x *LoginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LoginResponse.ProtoReflect.Descriptor instead.
 func (*LoginResponse) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{17}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *LoginResponse) GetRegistrationId() uint32 {
@@ -1124,6 +1215,13 @@ func (x *LoginResponse) GetInstall() *Record {
 	return nil
 }
 
+func (x *LoginResponse) GetServerVersion() string {
+	if x != nil {
+		return x.ServerVersion
+	}
+	return ""
+}
+
 type BackupAuthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
@@ -1133,7 +1231,7 @@ type BackupAuthRequest struct {
 
 func (x *BackupAuthRequest) Reset() {
 	*x = BackupAuthRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[18]
+	mi := &file_otter_v1_api_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1145,7 +1243,7 @@ func (x *BackupAuthRequest) String() string {
 func (*BackupAuthRequest) ProtoMessage() {}
 
 func (x *BackupAuthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[18]
+	mi := &file_otter_v1_api_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1158,7 +1256,7 @@ func (x *BackupAuthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupAuthRequest.ProtoReflect.Descriptor instead.
 func (*BackupAuthRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{18}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *BackupAuthRequest) GetUsername() string {
@@ -1181,7 +1279,7 @@ type BackupAuthResponse struct {
 
 func (x *BackupAuthResponse) Reset() {
 	*x = BackupAuthResponse{}
-	mi := &file_otter_v1_api_proto_msgTypes[19]
+	mi := &file_otter_v1_api_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1193,7 +1291,7 @@ func (x *BackupAuthResponse) String() string {
 func (*BackupAuthResponse) ProtoMessage() {}
 
 func (x *BackupAuthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[19]
+	mi := &file_otter_v1_api_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1206,7 +1304,7 @@ func (x *BackupAuthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupAuthResponse.ProtoReflect.Descriptor instead.
 func (*BackupAuthResponse) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{19}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BackupAuthResponse) GetSalt() []byte {
@@ -1255,7 +1353,7 @@ type AdminRequest struct {
 
 func (x *AdminRequest) Reset() {
 	*x = AdminRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[20]
+	mi := &file_otter_v1_api_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1267,7 +1365,7 @@ func (x *AdminRequest) String() string {
 func (*AdminRequest) ProtoMessage() {}
 
 func (x *AdminRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[20]
+	mi := &file_otter_v1_api_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1280,7 +1378,7 @@ func (x *AdminRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminRequest.ProtoReflect.Descriptor instead.
 func (*AdminRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{20}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AdminRequest) GetTsMs() int64 {
@@ -1307,7 +1405,7 @@ type BackupFetchRequest struct {
 
 func (x *BackupFetchRequest) Reset() {
 	*x = BackupFetchRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[21]
+	mi := &file_otter_v1_api_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1319,7 +1417,7 @@ func (x *BackupFetchRequest) String() string {
 func (*BackupFetchRequest) ProtoMessage() {}
 
 func (x *BackupFetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[21]
+	mi := &file_otter_v1_api_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1430,7 @@ func (x *BackupFetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupFetchRequest.ProtoReflect.Descriptor instead.
 func (*BackupFetchRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{21}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *BackupFetchRequest) GetUsername() string {
@@ -1359,7 +1457,7 @@ type BackupFetchResponse struct {
 
 func (x *BackupFetchResponse) Reset() {
 	*x = BackupFetchResponse{}
-	mi := &file_otter_v1_api_proto_msgTypes[22]
+	mi := &file_otter_v1_api_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1371,7 +1469,7 @@ func (x *BackupFetchResponse) String() string {
 func (*BackupFetchResponse) ProtoMessage() {}
 
 func (x *BackupFetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[22]
+	mi := &file_otter_v1_api_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1384,7 +1482,7 @@ func (x *BackupFetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackupFetchResponse.ProtoReflect.Descriptor instead.
 func (*BackupFetchResponse) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{22}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *BackupFetchResponse) GetBackupMeta() *Record {
@@ -1412,7 +1510,7 @@ type ApkGetRequest struct {
 
 func (x *ApkGetRequest) Reset() {
 	*x = ApkGetRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[23]
+	mi := &file_otter_v1_api_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1424,7 +1522,7 @@ func (x *ApkGetRequest) String() string {
 func (*ApkGetRequest) ProtoMessage() {}
 
 func (x *ApkGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[23]
+	mi := &file_otter_v1_api_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1437,7 +1535,7 @@ func (x *ApkGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApkGetRequest.ProtoReflect.Descriptor instead.
 func (*ApkGetRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{23}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ApkGetRequest) GetSha256() []byte {
@@ -1464,7 +1562,7 @@ type ApkChunk struct {
 
 func (x *ApkChunk) Reset() {
 	*x = ApkChunk{}
-	mi := &file_otter_v1_api_proto_msgTypes[24]
+	mi := &file_otter_v1_api_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1476,7 +1574,7 @@ func (x *ApkChunk) String() string {
 func (*ApkChunk) ProtoMessage() {}
 
 func (x *ApkChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[24]
+	mi := &file_otter_v1_api_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1489,7 +1587,7 @@ func (x *ApkChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApkChunk.ProtoReflect.Descriptor instead.
 func (*ApkChunk) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{24}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ApkChunk) GetData() []byte {
@@ -1519,7 +1617,7 @@ type TurnCredentials struct {
 
 func (x *TurnCredentials) Reset() {
 	*x = TurnCredentials{}
-	mi := &file_otter_v1_api_proto_msgTypes[25]
+	mi := &file_otter_v1_api_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1531,7 +1629,7 @@ func (x *TurnCredentials) String() string {
 func (*TurnCredentials) ProtoMessage() {}
 
 func (x *TurnCredentials) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[25]
+	mi := &file_otter_v1_api_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1544,7 +1642,7 @@ func (x *TurnCredentials) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TurnCredentials.ProtoReflect.Descriptor instead.
 func (*TurnCredentials) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{25}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TurnCredentials) GetUsername() string {
@@ -1585,7 +1683,7 @@ type PushStatusRequest struct {
 
 func (x *PushStatusRequest) Reset() {
 	*x = PushStatusRequest{}
-	mi := &file_otter_v1_api_proto_msgTypes[26]
+	mi := &file_otter_v1_api_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1597,7 +1695,7 @@ func (x *PushStatusRequest) String() string {
 func (*PushStatusRequest) ProtoMessage() {}
 
 func (x *PushStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[26]
+	mi := &file_otter_v1_api_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1610,7 +1708,7 @@ func (x *PushStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushStatusRequest.ProtoReflect.Descriptor instead.
 func (*PushStatusRequest) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{26}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PushStatusRequest) GetUserId() []byte {
@@ -1629,7 +1727,7 @@ type PushStatus struct {
 
 func (x *PushStatus) Reset() {
 	*x = PushStatus{}
-	mi := &file_otter_v1_api_proto_msgTypes[27]
+	mi := &file_otter_v1_api_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1641,7 +1739,7 @@ func (x *PushStatus) String() string {
 func (*PushStatus) ProtoMessage() {}
 
 func (x *PushStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_otter_v1_api_proto_msgTypes[27]
+	mi := &file_otter_v1_api_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1654,7 +1752,7 @@ func (x *PushStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushStatus.ProtoReflect.Descriptor instead.
 func (*PushStatus) Descriptor() ([]byte, []int) {
-	return file_otter_v1_api_proto_rawDescGZIP(), []int{27}
+	return file_otter_v1_api_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PushStatus) GetHasPush() bool {
@@ -1706,7 +1804,11 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\rRecordRequest\x12(\n" +
 	"\x06record\x18\x01 \x01(\v2\x10.otter.v1.RecordR\x06record\"9\n" +
 	"\vRecordBatch\x12*\n" +
-	"\arecords\x18\x01 \x03(\v2\x10.otter.v1.RecordR\arecords\"J\n" +
+	"\arecords\x18\x01 \x03(\v2\x10.otter.v1.RecordR\arecords\"0\n" +
+	"\x13DirectoryGetRequest\x12\x19\n" +
+	"\buser_ids\x18\x01 \x03(\fR\auserIds\"4\n" +
+	"\x16DirectoryLookupRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"J\n" +
 	"\x12PreKeyFetchRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\fR\x06userId\x12\x1b\n" +
 	"\tdevice_id\x18\x02 \x01(\rR\bdeviceId\"@\n" +
@@ -1730,11 +1832,12 @@ const file_otter_v1_api_proto_rawDesc = "" +
 	"\n" +
 	"BlobStatus\x12\x16\n" +
 	"\x06chunks\x18\x01 \x01(\rR\x06chunks\x12\x18\n" +
-	"\amissing\x18\x02 \x03(\rR\amissing\"\x87\x01\n" +
+	"\amissing\x18\x02 \x03(\rR\amissing\"\xae\x01\n" +
 	"\rLoginResponse\x12'\n" +
 	"\x0fregistration_id\x18\x01 \x01(\rR\x0eregistrationId\x12!\n" +
 	"\finstalled_ms\x18\x02 \x01(\x03R\vinstalledMs\x12*\n" +
-	"\ainstall\x18\x03 \x01(\v2\x10.otter.v1.RecordR\ainstall\"/\n" +
+	"\ainstall\x18\x03 \x01(\v2\x10.otter.v1.RecordR\ainstall\x12%\n" +
+	"\x0eserver_version\x18\x04 \x01(\tR\rserverVersion\"/\n" +
 	"\x11BackupAuthRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\"\x8e\x01\n" +
 	"\x12BackupAuthResponse\x12\x12\n" +
@@ -1800,53 +1903,55 @@ func file_otter_v1_api_proto_rawDescGZIP() []byte {
 }
 
 var file_otter_v1_api_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_otter_v1_api_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_otter_v1_api_proto_goTypes = []any{
-	(Status)(0),                 // 0: otter.v1.Status
-	(*Frame)(nil),               // 1: otter.v1.Frame
-	(*Request)(nil),             // 2: otter.v1.Request
-	(*Response)(nil),            // 3: otter.v1.Response
-	(*Event)(nil),               // 4: otter.v1.Event
-	(*Hello)(nil),               // 5: otter.v1.Hello
-	(*LoginRequest)(nil),        // 6: otter.v1.LoginRequest
-	(*RegisterRequest)(nil),     // 7: otter.v1.RegisterRequest
-	(*RecordRequest)(nil),       // 8: otter.v1.RecordRequest
-	(*RecordBatch)(nil),         // 9: otter.v1.RecordBatch
-	(*PreKeyFetchRequest)(nil),  // 10: otter.v1.PreKeyFetchRequest
-	(*ManifestResponse)(nil),    // 11: otter.v1.ManifestResponse
-	(*PrekeysLow)(nil),          // 12: otter.v1.PrekeysLow
-	(*Empty)(nil),               // 13: otter.v1.Empty
-	(*BlobPutRequest)(nil),      // 14: otter.v1.BlobPutRequest
-	(*BlobGetRequest)(nil),      // 15: otter.v1.BlobGetRequest
-	(*BlobChunk)(nil),           // 16: otter.v1.BlobChunk
-	(*BlobStatus)(nil),          // 17: otter.v1.BlobStatus
-	(*LoginResponse)(nil),       // 18: otter.v1.LoginResponse
-	(*BackupAuthRequest)(nil),   // 19: otter.v1.BackupAuthRequest
-	(*BackupAuthResponse)(nil),  // 20: otter.v1.BackupAuthResponse
-	(*AdminRequest)(nil),        // 21: otter.v1.AdminRequest
-	(*BackupFetchRequest)(nil),  // 22: otter.v1.BackupFetchRequest
-	(*BackupFetchResponse)(nil), // 23: otter.v1.BackupFetchResponse
-	(*ApkGetRequest)(nil),       // 24: otter.v1.ApkGetRequest
-	(*ApkChunk)(nil),            // 25: otter.v1.ApkChunk
-	(*TurnCredentials)(nil),     // 26: otter.v1.TurnCredentials
-	(*PushStatusRequest)(nil),   // 27: otter.v1.PushStatusRequest
-	(*PushStatus)(nil),          // 28: otter.v1.PushStatus
-	(*Record)(nil),              // 29: otter.v1.Record
+	(Status)(0),                    // 0: otter.v1.Status
+	(*Frame)(nil),                  // 1: otter.v1.Frame
+	(*Request)(nil),                // 2: otter.v1.Request
+	(*Response)(nil),               // 3: otter.v1.Response
+	(*Event)(nil),                  // 4: otter.v1.Event
+	(*Hello)(nil),                  // 5: otter.v1.Hello
+	(*LoginRequest)(nil),           // 6: otter.v1.LoginRequest
+	(*RegisterRequest)(nil),        // 7: otter.v1.RegisterRequest
+	(*RecordRequest)(nil),          // 8: otter.v1.RecordRequest
+	(*RecordBatch)(nil),            // 9: otter.v1.RecordBatch
+	(*DirectoryGetRequest)(nil),    // 10: otter.v1.DirectoryGetRequest
+	(*DirectoryLookupRequest)(nil), // 11: otter.v1.DirectoryLookupRequest
+	(*PreKeyFetchRequest)(nil),     // 12: otter.v1.PreKeyFetchRequest
+	(*ManifestResponse)(nil),       // 13: otter.v1.ManifestResponse
+	(*PrekeysLow)(nil),             // 14: otter.v1.PrekeysLow
+	(*Empty)(nil),                  // 15: otter.v1.Empty
+	(*BlobPutRequest)(nil),         // 16: otter.v1.BlobPutRequest
+	(*BlobGetRequest)(nil),         // 17: otter.v1.BlobGetRequest
+	(*BlobChunk)(nil),              // 18: otter.v1.BlobChunk
+	(*BlobStatus)(nil),             // 19: otter.v1.BlobStatus
+	(*LoginResponse)(nil),          // 20: otter.v1.LoginResponse
+	(*BackupAuthRequest)(nil),      // 21: otter.v1.BackupAuthRequest
+	(*BackupAuthResponse)(nil),     // 22: otter.v1.BackupAuthResponse
+	(*AdminRequest)(nil),           // 23: otter.v1.AdminRequest
+	(*BackupFetchRequest)(nil),     // 24: otter.v1.BackupFetchRequest
+	(*BackupFetchResponse)(nil),    // 25: otter.v1.BackupFetchResponse
+	(*ApkGetRequest)(nil),          // 26: otter.v1.ApkGetRequest
+	(*ApkChunk)(nil),               // 27: otter.v1.ApkChunk
+	(*TurnCredentials)(nil),        // 28: otter.v1.TurnCredentials
+	(*PushStatusRequest)(nil),      // 29: otter.v1.PushStatusRequest
+	(*PushStatus)(nil),             // 30: otter.v1.PushStatus
+	(*Record)(nil),                 // 31: otter.v1.Record
 }
 var file_otter_v1_api_proto_depIdxs = []int32{
 	2,  // 0: otter.v1.Frame.request:type_name -> otter.v1.Request
 	3,  // 1: otter.v1.Frame.response:type_name -> otter.v1.Response
 	4,  // 2: otter.v1.Frame.event:type_name -> otter.v1.Event
 	0,  // 3: otter.v1.Response.status:type_name -> otter.v1.Status
-	29, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
-	29, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
-	29, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
-	29, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
-	29, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
-	29, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
-	29, // 10: otter.v1.LoginResponse.install:type_name -> otter.v1.Record
-	29, // 11: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
-	29, // 12: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
+	31, // 4: otter.v1.RegisterRequest.directory_entry:type_name -> otter.v1.Record
+	31, // 5: otter.v1.RegisterRequest.prekeys:type_name -> otter.v1.Record
+	31, // 6: otter.v1.RegisterRequest.invite_used:type_name -> otter.v1.Record
+	31, // 7: otter.v1.RecordRequest.record:type_name -> otter.v1.Record
+	31, // 8: otter.v1.RecordBatch.records:type_name -> otter.v1.Record
+	31, // 9: otter.v1.ManifestResponse.manifest:type_name -> otter.v1.Record
+	31, // 10: otter.v1.LoginResponse.install:type_name -> otter.v1.Record
+	31, // 11: otter.v1.BackupFetchResponse.backup_meta:type_name -> otter.v1.Record
+	31, // 12: otter.v1.BackupFetchResponse.blob_meta:type_name -> otter.v1.Record
 	13, // [13:13] is the sub-list for method output_type
 	13, // [13:13] is the sub-list for method input_type
 	13, // [13:13] is the sub-list for extension type_name
@@ -1871,7 +1976,7 @@ func file_otter_v1_api_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_otter_v1_api_proto_rawDesc), len(file_otter_v1_api_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   28,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -55,7 +55,7 @@ func TestRevocationReplicatesAndBlocks(t *testing.T) {
 	s := newSimWith(t, map[string]nodeOpts{"c": {turn: true}}, "a", "b", "c")
 	a, b, c := s.node("a"), s.node("b"), s.node("c")
 	anna := s.register(a, "anna")
-	boris := s.register(a, "boris")
+	boris := s.registerWith(a, "boris", s.memberInvite(anna)) // anna's invitee: her directory.sync shows him (D135)
 	eventually(t, "users everywhere", func() bool { return s.all(func(n *simNode) bool { return n.knows(anna) && n.knows(boris) }) })
 	borisC := s.login(c, boris)
 	var creds pb.TurnCredentials

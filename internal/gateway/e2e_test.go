@@ -80,13 +80,18 @@ func registerReq(t *testing.T, n *node, tk *ticket, name string) (*acct, *pb.Reg
 		InviteUsed:     sign(t, pb.RecordType_INVITE_USED, id, &pb.InviteUsed{InviteId: sum[:], UserId: id}, priv)}
 }
 
-func login(t *testing.T, c *client, a *acct) {
+func login(t *testing.T, c *client, a *acct) { loginResp(t, c, a) }
+
+// loginResp logs a in on c and returns the decoded answer.
+func loginResp(t *testing.T, c *client, a *acct) *pb.LoginResponse {
 	ts := time.Now().UnixMilli()
+	var resp pb.LoginResponse
 	st, msg := c.call("auth.login", &pb.LoginRequest{UserId: a.id, DeviceId: 1, TsMs: ts,
-		Signature: ed25519.Sign(a.priv, keys.AuthMessage(c.hello.NodeId, c.hello.Nonce, ts))}, nil)
+		Signature: ed25519.Sign(a.priv, keys.AuthMessage(c.hello.NodeId, c.hello.Nonce, ts))}, &resp)
 	if st != pb.Status_STATUS_OK {
 		t.Fatalf("login: %v %s", st, msg)
 	}
+	return &resp
 }
 
 func TestEndToEnd(t *testing.T) {
